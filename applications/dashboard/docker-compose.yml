@@ -72,6 +72,7 @@ services:
     volumes:
       - ./backend:/app:cached
       - uploads_data:/app/uploads
+      - D:/Documents/Pop/AI Agents/InvestmentAgent01/investmentPlan:/app/investment_data:ro
     ports:
       - "8000:8000"
     healthcheck:

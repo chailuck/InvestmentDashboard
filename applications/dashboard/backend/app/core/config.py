@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     ai_default_model: str = "claude-sonnet-4-6"
 
+    # First-run admin seed (leave blank to skip seeding)
+    admin_email: str = ""
+    admin_password: str = ""
+    admin_name: str = "Administrator"
+
+    # Portfolio data
+    investment_excel_path: str = ""   # path inside container, e.g. /app/investment_data/Investment tracking.xlsx
+
     # File upload
     upload_dir: str = "./uploads"
     max_upload_size_mb: int = 50

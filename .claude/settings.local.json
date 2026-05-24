@@ -5,7 +5,17 @@
       "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"admin@demo.com\",\"password\":\"password\"}')",
       "Bash(python3 -c \"import sys,json; print\\(json.load\\(sys.stdin\\)\\)\")",
       "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"analyst@demo.com\",\"password\":\"analyst123\"}')",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Status: {d.get\\(\\\\\"detail\\\\\",\\\\\"OK\\\\\"\\)}'\\)\")"
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Status: {d.get\\(\\\\\"detail\\\\\",\\\\\"OK\\\\\"\\)}'\\)\")",
+      "Bash(Get-ChildItem -Path \"D:\\\\Documents\\\\Pop\\\\AI Agents\\\\InvestmentAgent01\\\\\" -Recurse -File | Select-Object -ExpandProperty FullName)",
+      "Bash(Get-ChildItem -Path 'D:\\\\Documents\\\\Pop\\\\AI Agents\\\\InvestmentAgent01' -Recurse -File)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(find 'D:\\\\Documents\\\\Pop\\\\AI Agents\\\\InvestmentAgent01' -type f)",
+      "Read(//d/Documents/Pop/AI Agents/InvestmentAgent01/**)",
+      "Bash(python3)",
+      "Bash(ls -la 'D:\\\\Documents\\\\Pop\\\\AI Agents\\\\InvestmentDashboard\\\\applications\\\\dashboard\\\\backend\\\\app\\\\\\\\')",
+      "Bash(xargs ls -lh)",
+      "Bash(docker-compose ps *)",
+      "Bash(docker-compose up *)"
     ]
   }
 }

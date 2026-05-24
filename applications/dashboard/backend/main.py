@@ -43,17 +43,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
         await conn.run_sync(Base.metadata.create_all)
 
-    async with engine.begin() as conn:
-        await conn.execute(
-            text("""
-                INSERT INTO users (id, email, name, hashed_password, role, is_active)
-                VALUES (uuid_generate_v4(), :email, :name, :pwd, :role, true)
-                ON CONFLICT (email) DO NOTHING
-            """),
-            {"email": "admin@demo.com", "name": "Demo Admin",
-             "pwd": hash_password("password"), "role": "admin"},
-        )
-        log.info("Demo user seed applied", email="admin@demo.com")
+    # Seed first admin from env vars (skipped if ADMIN_EMAIL not set)
+    if settings.admin_email and settings.admin_password:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO users (id, email, name, hashed_password, role, is_active)
+                    VALUES (uuid_generate_v4(), :email, :name, :pwd, 'admin', true)
+                    ON CONFLICT (email) DO NOTHING
+                """),
+                {"email": settings.admin_email,
+                 "name": settings.admin_name,
+                 "pwd": hash_password(settings.admin_password)},
+            )
+            log.info("Admin seed applied", email=settings.admin_email)
 
     yield
 
