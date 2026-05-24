@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Eye, EyeOff, TrendingUp, Lock, Mail, AlertCircle } from 'lucide-react'
@@ -94,9 +95,9 @@ export default function LoginPage() {
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-xs font-medium text-ink-secondary">Password</label>
-                <button type="button" className="text-xs text-brand-400 hover:text-brand-300 transition-colors">
+                <Link href="/forgot-password" className="text-xs text-brand-400 hover:text-brand-300 transition-colors">
                   Forgot password?
-                </button>
+                </Link>
               </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" />

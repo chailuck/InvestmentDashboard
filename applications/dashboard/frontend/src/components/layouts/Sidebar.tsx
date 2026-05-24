@@ -1,12 +1,11 @@
 'use client'
 
-import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings,
-  ChevronLeft, ChevronRight, LogOut, Bell, Shield, Menu, X,
+  ChevronLeft, ChevronRight, LogOut, Shield, X, Users,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
@@ -16,6 +15,7 @@ interface NavItem {
   label: string
   icon: React.ElementType
   badge?: string | number
+  adminOnly?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -24,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/analytics',   label: 'Analytics',   icon: BarChart3 },
   { href: '/ai-copilot',  label: 'AI Copilot',  icon: Bot, badge: 'AI' },
   { href: '/settings',    label: 'Settings',    icon: Settings },
+  { href: '/admin/users', label: 'Users',       icon: Users, adminOnly: true },
 ]
 
 interface SidebarProps {
@@ -61,7 +62,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
 
       {/* Navigation */}
       <nav className="flex-1 py-4 px-2 space-y-0.5 overflow-y-auto no-scrollbar">
-        {NAV_ITEMS.map(({ href, label, icon: Icon, badge }) => {
+        {NAV_ITEMS.filter(item => !item.adminOnly || user?.role === 'admin').map(({ href, label, icon: Icon, badge }) => {
           const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
           return (
             <Link

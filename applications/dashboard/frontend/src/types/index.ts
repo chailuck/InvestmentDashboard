@@ -18,6 +18,22 @@ export interface AuthTokens {
   expiresIn: number
 }
 
+export interface UserDetail {
+  id: string
+  email: string
+  name: string
+  role: 'admin' | 'analyst' | 'viewer'
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  last_login_at: string | null
+}
+
+export interface UserListResponse {
+  users: UserDetail[]
+  total: number
+}
+
 // ── Portfolio ─────────────────────────────────────────────
 export interface Portfolio {
   id: string
