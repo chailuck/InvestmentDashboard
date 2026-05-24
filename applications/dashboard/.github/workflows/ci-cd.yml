@@ -1,0 +1,214 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BACKEND: ghcr.io/${{ github.repository_owner }}/investment-backend
+  IMAGE_FRONTEND: ghcr.io/${{ github.repository_owner }}/investment-frontend
+
+jobs:
+  # ── Backend CI ────────────────────────────────────────────
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports: ["5432:5432"]
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+        ports: ["6379:6379"]
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: applications/dashboard/backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: applications/dashboard/backend
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        working-directory: applications/dashboard/backend
+        run: pip install ruff && ruff check . --select E,F,W,I
+
+      - name: Type check (mypy)
+        working-directory: applications/dashboard/backend
+        run: pip install mypy && mypy app --ignore-missing-imports
+
+      - name: Security scan (bandit)
+        working-directory: applications/dashboard/backend
+        run: pip install bandit && bandit -r app -ll
+
+      - name: Run tests
+        working-directory: applications/dashboard/backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+          APP_SECRET_KEY: test-secret-key
+        run: pytest tests/ -v --cov=app --cov-report=xml --cov-fail-under=70
+
+      - uses: codecov/codecov-action@v4
+        with:
+          file: applications/dashboard/backend/coverage.xml
+
+  # ── Frontend CI ───────────────────────────────────────────
+  frontend-test:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: applications/dashboard/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: applications/dashboard/frontend
+        run: npm ci
+
+      - name: Type check
+        working-directory: applications/dashboard/frontend
+        run: npm run type-check
+
+      - name: Lint
+        working-directory: applications/dashboard/frontend
+        run: npm run lint
+
+      - name: Build
+        working-directory: applications/dashboard/frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_WS_URL: ws://localhost:8000
+        run: npm run build
+
+  # ── Docker Build & Push ───────────────────────────────────
+  docker-build:
+    name: Build & Push Images
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version tag
+        id: version
+        run: echo "tag=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: applications/dashboard
+          file: applications/dashboard/docker/Dockerfile.backend
+          push: true
+          tags: |
+            ${{ env.IMAGE_BACKEND }}:latest
+            ${{ env.IMAGE_BACKEND }}:${{ steps.version.outputs.tag }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: applications/dashboard
+          file: applications/dashboard/docker/Dockerfile.frontend
+          push: true
+          tags: |
+            ${{ env.IMAGE_FRONTEND }}:latest
+            ${{ env.IMAGE_FRONTEND }}:${{ steps.version.outputs.tag }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_WS_URL=${{ vars.NEXT_PUBLIC_WS_URL }}
+
+      - name: Security scan (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_BACKEND }}:${{ steps.version.outputs.tag }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL
+
+  # ── Deploy to Kubernetes ──────────────────────────────────
+  deploy:
+    name: Deploy to K8s
+    needs: docker-build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v3
+        with:
+          version: v1.29.0
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+
+      - name: Apply manifests
+        run: kubectl apply -f applications/dashboard/k8s/ --namespace investment-dashboard
+
+      - name: Update images
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          kubectl set image deployment/backend \
+            backend=${{ env.IMAGE_BACKEND }}:${SHORT_SHA} \
+            -n investment-dashboard
+          kubectl set image deployment/frontend \
+            frontend=${{ env.IMAGE_FRONTEND }}:${SHORT_SHA} \
+            -n investment-dashboard
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/backend -n investment-dashboard --timeout=300s
+          kubectl rollout status deployment/frontend -n investment-dashboard --timeout=300s
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: "Deployment failed for ${{ github.sha }}"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}

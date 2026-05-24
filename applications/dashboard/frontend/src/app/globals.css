@@ -1,0 +1,225 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Custom Properties ──────────────────────────────────────── */
+:root {
+  --surface-base: #0B0F1A;
+  --surface-card: #131929;
+  --surface-elevated: #1C2333;
+  --surface-overlay: #232D45;
+
+  --border: #2A3450;
+  --border-muted: #1E2940;
+  --border-focus: #3B82F6;
+
+  --ink-primary: #E2E8F0;
+  --ink-secondary: #94A3B8;
+  --ink-muted: #64748B;
+  --ink-disabled: #334155;
+
+  --brand: #3B82F6;
+  --gain: #22C55E;
+  --loss: #EF4444;
+  --warning: #F59E0B;
+  --info: #06B6D4;
+
+  --radius: 0.5rem;
+  --sidebar-width: 240px;
+  --header-height: 60px;
+}
+
+/* ─── Reset / Base ────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  height: 100%;
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100%;
+  background-color: var(--surface-base);
+  color: var(--ink-primary);
+  font-feature-settings: 'ss01', 'ss02', 'cv01', 'cv09';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Scrollbar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface-card); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-muted); }
+
+/* ─── Selection ───────────────────────────────────────────────────── */
+::selection { background: rgba(59, 130, 246, 0.3); color: var(--ink-primary); }
+
+/* ─── Focus ───────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ─── Components ──────────────────────────────────────────────────── */
+@layer components {
+  /* Cards */
+  .card {
+    @apply bg-surface-card border border-border/60 rounded-xl shadow-card;
+  }
+  .card-hover {
+    @apply card transition-all duration-200 hover:shadow-card-hover hover:border-border-focus/40 cursor-pointer;
+  }
+  .card-elevated {
+    @apply bg-surface-elevated border border-border/60 rounded-xl;
+  }
+
+  /* Buttons */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600
+           text-white font-medium rounded-lg transition-colors duration-150 disabled:opacity-50
+           disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-brand-500/50;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 text-ink-secondary
+           hover:text-ink-primary hover:bg-surface-elevated rounded-lg transition-colors duration-150;
+  }
+  .btn-icon {
+    @apply inline-flex items-center justify-center w-8 h-8 rounded-lg text-ink-muted
+           hover:text-ink-primary hover:bg-surface-elevated transition-colors duration-150;
+  }
+
+  /* Badges */
+  .badge-gain {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold
+           bg-gain/10 text-gain;
+  }
+  .badge-loss {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold
+           bg-loss/10 text-loss;
+  }
+  .badge-neutral {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium
+           bg-surface-elevated text-ink-secondary;
+  }
+
+  /* Metric tiles */
+  .metric-value {
+    @apply text-2xl font-bold text-ink-primary tabular-nums;
+  }
+  .metric-label {
+    @apply text-xs text-ink-muted uppercase tracking-wider font-medium;
+  }
+  .metric-change-up {
+    @apply text-sm font-semibold text-gain flex items-center gap-0.5;
+  }
+  .metric-change-down {
+    @apply text-sm font-semibold text-loss flex items-center gap-0.5;
+  }
+
+  /* Table */
+  .data-table {
+    @apply w-full text-sm;
+  }
+  .data-table th {
+    @apply text-left text-ink-muted font-medium uppercase tracking-wider text-xs
+           px-4 py-3 border-b border-border/50;
+  }
+  .data-table td {
+    @apply px-4 py-3 border-b border-border/30 text-ink-primary;
+  }
+  .data-table tr:hover td {
+    @apply bg-surface-elevated/50;
+  }
+
+  /* Input */
+  .input {
+    @apply w-full bg-surface-elevated border border-border rounded-lg px-3 py-2
+           text-ink-primary placeholder:text-ink-muted text-sm
+           focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus/30
+           transition-colors duration-150;
+  }
+
+  /* Skeleton */
+  .skeleton {
+    @apply bg-surface-elevated rounded animate-shimmer;
+    background: linear-gradient(90deg, #1C2333 25%, #232D45 50%, #1C2333 75%);
+    background-size: 200% 100%;
+  }
+
+  /* Glow effects */
+  .glow-brand { box-shadow: 0 0 20px rgba(59,130,246,0.2); }
+  .glow-gain-effect { box-shadow: 0 0 15px rgba(34,197,94,0.15); }
+  .glow-loss-effect { box-shadow: 0 0 15px rgba(239,68,68,0.15); }
+
+  /* Live indicator */
+  .live-dot {
+    @apply w-2 h-2 rounded-full bg-gain animate-pulse-slow;
+  }
+
+  /* Number animation */
+  .number-flash-up { animation: numberFlashUp 0.4s ease-out; }
+  .number-flash-down { animation: numberFlashDown 0.4s ease-out; }
+}
+
+/* ─── Utilities ───────────────────────────────────────────────────── */
+@layer utilities {
+  .text-gradient {
+    background: linear-gradient(135deg, #60A5FA, #A78BFA);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .glass {
+    background: rgba(19, 25, 41, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(42, 52, 80, 0.5);
+  }
+  .tabular { font-variant-numeric: tabular-nums; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
+
+/* ─── Chart overrides ─────────────────────────────────────────────── */
+.echarts-for-react canvas { border-radius: 0 !important; }
+
+/* ─── AG Grid dark theme override ────────────────────────────────── */
+.ag-theme-alpine-dark {
+  --ag-background-color: transparent;
+  --ag-header-background-color: var(--surface-elevated);
+  --ag-odd-row-background-color: rgba(28, 35, 51, 0.3);
+  --ag-border-color: var(--border);
+  --ag-header-foreground-color: var(--ink-secondary);
+  --ag-foreground-color: var(--ink-primary);
+  --ag-row-hover-color: rgba(59, 130, 246, 0.08);
+  --ag-selected-row-background-color: rgba(59, 130, 246, 0.15);
+  --ag-font-size: 13px;
+}
+
+/* ─── React-Grid-Layout ───────────────────────────────────────────── */
+.react-grid-item.react-grid-placeholder {
+  background: rgba(59, 130, 246, 0.15) !important;
+  border: 2px dashed rgba(59, 130, 246, 0.5) !important;
+  border-radius: 12px !important;
+}
+.react-resizable-handle::after {
+  border-color: rgba(59, 130, 246, 0.5) !important;
+}
+
+@keyframes numberFlashUp {
+  0% { color: var(--ink-primary); }
+  30% { color: var(--gain); }
+  100% { color: var(--ink-primary); }
+}
+@keyframes numberFlashDown {
+  0% { color: var(--ink-primary); }
+  30% { color: var(--loss); }
+  100% { color: var(--ink-primary); }
+}
