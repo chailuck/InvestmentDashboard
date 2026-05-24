@@ -45,6 +45,6 @@ export const useDashboardStore = create<DashboardState>()(
 
       resetLayout: () => set({ widgets: DEFAULT_WIDGETS }),
     }),
-    { name: 'dashboard-layout' }
+    { name: 'dashboard-layout-v2' }
   )
 )

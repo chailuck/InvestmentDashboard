@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 import { format, subMonths } from 'date-fns'
@@ -22,7 +22,28 @@ const fmt = (n: number, d = 2) =>
 const fmtPnl = (n: number) => `${n >= 0 ? '+' : ''}${fmt(n, 0)}`
 const fmtPct = (n: number) => `${n >= 0 ? '+' : ''}${fmt(n, 2)}%`
 const todayStr = () => format(new Date(), 'yyyy-MM-dd')
-const oneMonthAgoStr = () => format(subMonths(new Date(), 1), 'yyyy-MM-dd')
+
+function getDefaultMonths(): number {
+  if (typeof window === 'undefined') return 3
+  return parseInt(localStorage.getItem('portfolio_default_months') ?? '3', 10) || 3
+}
+
+function defaultFromDate(): string {
+  return format(subMonths(new Date(), getDefaultMonths()), 'yyyy-MM-dd')
+}
+
+function loadCriteria() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem('portfolio_criteria')
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+
+function saveCriteria(fromDate: string, toDate: string, statusFilter: StatusFilter) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem('portfolio_criteria', JSON.stringify({ fromDate, toDate, statusFilter }))
+}
 
 // ── Shared sub-components ──────────────────────────────────────────────────────
 
@@ -208,7 +229,7 @@ function PerformanceChart({ data, period, onPeriodChange, loading }: {
   return (
     <div className="card p-4">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-ink-primary">Daily Performance</h2>
+        <h2 className="text-sm font-semibold text-ink-primary">Performance History</h2>
         <PeriodSelector value={period} onChange={onPeriodChange} />
       </div>
       {loading ? (
@@ -225,7 +246,7 @@ function PerformanceChart({ data, period, onPeriodChange, loading }: {
 // ── Section 3: Performance by Date table ──────────────────────────────────────
 
 function PerformanceByDateTable({ data, period }: {
-  data: { period: string; label: string; net: number; wins: number; losses: number; total: number; winRate: number }[]
+  data: { period: string; label: string; net: number; accumulatedPnl?: number; wins: number; losses: number; total: number; winRate: number }[]
   period: Period
 }) {
   return (
@@ -234,18 +255,23 @@ function PerformanceByDateTable({ data, period }: {
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border/50 text-ink-muted">
-              {['Period', 'Net P&L', 'Wins', 'Losses', 'Total', 'Win Rate'].map(h => (
-                <th key={h} className="px-3 py-2.5 text-left font-medium">{h}</th>
+              {['Period', 'Net P&L', 'Accumulated P&L', 'Wins', 'Losses', 'Total', 'Win Rate'].map(h => (
+                <th key={h} className="px-3 py-2.5 text-left font-medium whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {data.length === 0 ? (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-ink-muted">No data.</td></tr>
+              <tr><td colSpan={7} className="px-3 py-6 text-center text-ink-muted">No data.</td></tr>
             ) : data.map(row => (
               <tr key={row.period} className="border-b border-border/30 hover:bg-surface-elevated/50 transition-colors">
                 <td className="px-3 py-2 text-ink-secondary">{row.label}</td>
                 <td className="px-3 py-2"><PnlCell value={row.net} /></td>
+                <td className="px-3 py-2">
+                  {row.accumulatedPnl !== undefined
+                    ? <PnlCell value={row.accumulatedPnl} />
+                    : <span className="text-ink-muted">—</span>}
+                </td>
                 <td className="px-3 py-2 text-gain">{row.wins}</td>
                 <td className="px-3 py-2 text-loss">{row.losses}</td>
                 <td className="px-3 py-2 text-ink-secondary">{row.total}</td>
@@ -312,7 +338,7 @@ function PerformanceByStockChart({ data }: {
 // ── Section 5: Performance by Stock table ─────────────────────────────────────
 
 function PerformanceByStockTable({ data }: {
-  data: { symbol: string; net: number; wins: number; losses: number; total: number; winRate: number }[]
+  data: { symbol: string; net: number; investment: number; currentValue: number; pnlPct: number; wins: number; losses: number; total: number; winRate: number }[]
 }) {
   return (
     <CollapsibleSection title="Performance by Stock — Detail">
@@ -320,25 +346,31 @@ function PerformanceByStockTable({ data }: {
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border/50 text-ink-muted">
-              {['Symbol', 'Net P&L', 'Wins', 'Losses', 'Total', 'Win Rate'].map(h => (
-                <th key={h} className="px-3 py-2.5 text-left font-medium">{h}</th>
+              {['Symbol', 'Investment', 'Current Value', 'Net P&L', 'P&L %', 'Wins', 'Losses', 'Win Rate'].map(h => (
+                <th key={h} className="px-3 py-2.5 text-left font-medium whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {data.length === 0 ? (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-ink-muted">No data.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-muted">No data.</td></tr>
             ) : data.map(row => (
               <tr key={row.symbol} className="border-b border-border/30 hover:bg-surface-elevated/50 transition-colors">
                 <td className="px-3 py-2 font-semibold text-ink-primary">{row.symbol}</td>
+                <td className="px-3 py-2 text-ink-secondary tabular-nums">{fmt(row.investment, 0)}</td>
+                <td className="px-3 py-2 text-ink-primary font-medium tabular-nums">{fmt(row.currentValue, 0)}</td>
                 <td className="px-3 py-2"><PnlCell value={row.net} /></td>
+                <td className="px-3 py-2">
+                  <span className={cn('font-semibold tabular-nums', row.pnlPct >= 0 ? 'text-gain' : 'text-loss')}>
+                    {fmtPct(row.pnlPct)}
+                  </span>
+                </td>
                 <td className="px-3 py-2 text-gain">{row.wins}</td>
                 <td className="px-3 py-2 text-loss">{row.losses}</td>
-                <td className="px-3 py-2 text-ink-secondary">{row.total}</td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className={cn('font-medium', row.winRate >= 50 ? 'text-gain' : 'text-loss')}>{row.winRate}%</span>
-                    <div className="flex-1 h-1.5 bg-surface-elevated rounded-full overflow-hidden">
+                    <div className="w-16 h-1.5 bg-surface-elevated rounded-full overflow-hidden">
                       <div className="h-full bg-brand-500/60 rounded-full" style={{ width: `${row.winRate}%` }} />
                     </div>
                   </div>
@@ -356,10 +388,14 @@ function PerformanceByStockTable({ data }: {
 
 export default function PortfolioPage() {
   const queryClient = useQueryClient()
-  const [fromDate, setFromDate] = useState(oneMonthAgoStr())
-  const [toDate, setToDate] = useState(todayStr())
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active')
+  const saved = loadCriteria()
+  const [fromDate, setFromDate] = useState(saved?.fromDate ?? defaultFromDate())
+  const [toDate, setToDate] = useState(saved?.toDate ?? todayStr())
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(saved?.statusFilter ?? 'active')
   const [period, setPeriod] = useState<Period>('daily')
+
+  // Persist criteria on change
+  useEffect(() => { saveCriteria(fromDate, toDate, statusFilter) }, [fromDate, toDate, statusFilter])
 
   const params = { from_date: fromDate, to_date: toDate }
 
@@ -391,7 +427,10 @@ export default function PortfolioPage() {
     mutationFn: () => portfolioTrackerService.refresh(),
     onSuccess: () => {
       toast.success('Excel refreshed — reloading data…')
-      queryClient.invalidateQueries({ queryKey: ['portfolio'] })
+      queryClient.invalidateQueries({ queryKey: ['portfolio-positions'] })
+      queryClient.invalidateQueries({ queryKey: ['portfolio-performance'] })
+      queryClient.invalidateQueries({ queryKey: ['portfolio-by-date'] })
+      queryClient.invalidateQueries({ queryKey: ['portfolio-by-stock'] })
     },
     onError: () => toast.error('Refresh failed — check the source path in Settings'),
   })

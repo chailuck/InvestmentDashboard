@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { Responsive, WidthProvider, type Layout } from 'react-grid-layout'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { Responsive, type Layout } from 'react-grid-layout'
 import { motion } from 'framer-motion'
 import { LayoutGrid, RotateCcw, Lock, Unlock } from 'lucide-react'
 import 'react-grid-layout/css/styles.css'
@@ -17,8 +17,6 @@ import { AIInsightsWidget } from '@/components/dashboard/AIInsightsWidget'
 import type { WidgetConfig, WidgetType } from '@/types'
 import { cn } from '@/lib/utils'
 
-const ResponsiveGridLayout = WidthProvider(Responsive)
-
 const WIDGET_MAP: Record<WidgetType, React.ComponentType<{ config: WidgetConfig }>> = {
   portfolio_summary:  PortfolioSummaryWidget,
   portfolio_chart:    PortfolioChartWidget,
@@ -32,10 +30,29 @@ const WIDGET_MAP: Record<WidgetType, React.ComponentType<{ config: WidgetConfig 
   news_feed:          () => null,
 }
 
+function useContainerWidth(ref: React.RefObject<HTMLDivElement>) {
+  const [width, setWidth] = useState(1200)
+
+  useEffect(() => {
+    if (!ref.current) return
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width
+      if (w && w > 0) setWidth(w)
+    })
+    ro.observe(ref.current)
+    setWidth(ref.current.offsetWidth || 1200)
+    return () => ro.disconnect()
+  }, [ref])
+
+  return width
+}
+
 export default function DashboardPage() {
   const { widgets, editMode, toggleEditMode, updateWidgetLayout, resetLayout } = useDashboardStore()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const width = useContainerWidth(containerRef)
 
-  const handleLayoutChange = useCallback(
+  const saveLayout = useCallback(
     (currentLayout: Layout[]) => {
       updateWidgetLayout(
         currentLayout.map(({ i, x, y, w, h }) => ({ i, x, y, w, h }))
@@ -53,7 +70,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-full">
+    <div ref={containerRef} className="min-h-full">
       {/* Toolbar */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
@@ -69,20 +86,14 @@ export default function DashboardPage() {
 
         <div className="flex items-center gap-2">
           {editMode && (
-            <button
-              onClick={resetLayout}
-              className="btn-ghost text-xs gap-1.5 py-1.5"
-            >
+            <button onClick={resetLayout} className="btn-ghost text-xs gap-1.5 py-1.5">
               <RotateCcw className="w-3.5 h-3.5" />
               Reset layout
             </button>
           )}
           <button
             onClick={toggleEditMode}
-            className={cn(
-              'btn-ghost text-xs gap-1.5 py-1.5',
-              editMode && 'text-warning hover:text-warning'
-            )}
+            className={cn('btn-ghost text-xs gap-1.5 py-1.5', editMode && 'text-warning hover:text-warning')}
           >
             {editMode ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
             {editMode ? 'Lock layout' : 'Edit layout'}
@@ -91,7 +102,8 @@ export default function DashboardPage() {
       </div>
 
       {/* Grid */}
-      <ResponsiveGridLayout
+      <Responsive
+        width={width}
         className="layout"
         layouts={layouts}
         breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
@@ -99,7 +111,8 @@ export default function DashboardPage() {
         rowHeight={60}
         margin={[12, 12]}
         containerPadding={[0, 0]}
-        onLayoutChange={handleLayoutChange}
+        onDragStop={saveLayout}
+        onResizeStop={saveLayout}
         isDraggable={editMode}
         isResizable={editMode}
         draggableHandle=".drag-handle"
@@ -117,15 +130,13 @@ export default function DashboardPage() {
             </div>
           )
         })}
-      </ResponsiveGridLayout>
+      </Responsive>
     </div>
   )
 }
 
 function WidgetWrapper({
-  config,
-  editMode,
-  children,
+  config, editMode, children,
 }: {
   config: WidgetConfig
   editMode: boolean
@@ -142,7 +153,6 @@ function WidgetWrapper({
         editMode && 'ring-1 ring-brand-500/40 ring-offset-1 ring-offset-surface-base'
       )}
     >
-      {/* Widget header */}
       <div className={cn(
         'flex items-center justify-between px-4 py-3 border-b border-border/40 shrink-0',
         editMode && 'drag-handle cursor-grab active:cursor-grabbing'
@@ -159,7 +169,6 @@ function WidgetWrapper({
         )}
       </div>
 
-      {/* Widget content */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {children}
       </div>

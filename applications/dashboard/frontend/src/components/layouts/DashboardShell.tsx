@@ -8,11 +8,13 @@ import { useAuthStore } from '@/store/auth'
 import { useRouter } from 'next/navigation'
 
 const PAGE_TITLES: Record<string, string> = {
-  '/dashboard':   'Dashboard',
-  '/portfolio':   'Portfolio',
-  '/analytics':  'Analytics',
-  '/ai-copilot': 'AI Copilot',
-  '/settings':   'Settings',
+  '/dashboard':             'Dashboard',
+  '/portfolio':             'Portfolio',
+  '/analytics':            'Analytics',
+  '/ai-copilot':           'AI Copilot',
+  '/settings':             'Settings',
+  '/admin/users':          'User Management',
+  '/settings/documents':   'Documentation',
 }
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {

@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { User, Lock, Shield, Save, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
 import { apiClient } from '@/services/api'
 import { usersService } from '@/services/users'
+import { appConfigService } from '@/services/appConfig'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -29,6 +31,110 @@ function Section({ title, icon: Icon, children }: { title: string; icon: React.E
       </h2>
       {children}
     </motion.div>
+  )
+}
+
+function AppConfigSection() {
+  const queryClient = useQueryClient()
+  const { data: cfg, isLoading } = useQuery({
+    queryKey: ['app-config'],
+    queryFn: appConfigService.get,
+  })
+  const [sourcePath, setSourcePath] = useState('')
+  const [initialized, setInitialized] = useState(false)
+
+  if (cfg && !initialized) {
+    setSourcePath(cfg.excel_source_path ?? '')
+    setInitialized(true)
+  }
+
+  const mutation = useMutation({
+    mutationFn: (path: string) => appConfigService.update({ excel_source_path: path }),
+    onSuccess: () => {
+      toast.success('Configuration saved')
+      queryClient.invalidateQueries({ queryKey: ['app-config'] })
+    },
+    onError: () => toast.error('Failed to save configuration'),
+  })
+
+  return (
+    <Section title="App Configuration" icon={Settings2}>
+      <p className="text-xs text-ink-muted -mt-3">Configure data source paths for the portfolio tracker.</p>
+      {isLoading ? (
+        <div className="skeleton h-10 rounded-lg" />
+      ) : (
+        <form onSubmit={e => { e.preventDefault(); mutation.mutate(sourcePath) }} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-ink-secondary mb-1.5 flex items-center gap-1.5">
+              <FolderOpen className="w-3.5 h-3.5 text-ink-muted" />
+              Excel Source Path (inside container)
+            </label>
+            <input className="input font-mono text-xs" value={sourcePath}
+              onChange={e => setSourcePath(e.target.value)}
+              placeholder="/app/investment_data/Investment tracking.xlsx" />
+            <p className="text-xs text-ink-disabled mt-1">
+              Path to the Investment tracking.xlsx file mounted in the backend container. Used when the Refresh button is clicked on the Portfolio page.
+            </p>
+          </div>
+          <button type="submit" disabled={mutation.isPending}
+            className="btn-primary flex items-center gap-2 px-4 py-2 text-sm">
+            {mutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Configuration
+          </button>
+        </form>
+      )}
+    </Section>
+  )
+}
+
+function PortfolioPrefsSection() {
+  const [months, setMonths] = useState(3)
+
+  useEffect(() => {
+    const stored = parseInt(localStorage.getItem('portfolio_default_months') ?? '3', 10)
+    if (!isNaN(stored) && stored > 0) setMonths(stored)
+  }, [])
+
+  const save = () => {
+    localStorage.setItem('portfolio_default_months', String(months))
+    // Clear persisted criteria so next visit uses new default
+    localStorage.removeItem('portfolio_criteria')
+    toast.success(`Default period set to ${months} month${months !== 1 ? 's' : ''}`)
+  }
+
+  return (
+    <Section title="Portfolio Preferences" icon={Calendar}>
+      <p className="text-xs text-ink-muted -mt-3">Default date range when opening the Portfolio page.</p>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-ink-secondary mb-1.5">
+            Default History Period (months)
+          </label>
+          <div className="flex items-center gap-3">
+            <input type="number" min={1} max={36} value={months}
+              onChange={e => setMonths(Math.max(1, Math.min(36, parseInt(e.target.value) || 3)))}
+              className="input w-24 text-sm py-1.5" />
+            <span className="text-xs text-ink-muted">months back from today</span>
+          </div>
+          <p className="text-xs text-ink-disabled mt-1">Range: 1–36 months. Default is 3 months.</p>
+        </div>
+        <div className="flex gap-1">
+          {[1, 3, 6, 12].map(m => (
+            <button key={m} onClick={() => setMonths(m)}
+              className={cn('px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors',
+                months === m
+                  ? 'bg-brand-500/10 text-brand-400 border-brand-500/30'
+                  : 'text-ink-muted border-border hover:text-ink-primary hover:bg-surface-elevated')}>
+              {m}M
+            </button>
+          ))}
+        </div>
+        <button onClick={save} className="btn-primary flex items-center gap-2 px-4 py-2 text-sm">
+          <Save className="w-4 h-4" />
+          Save Preference
+        </button>
+      </div>
+    </Section>
   )
 }
 
@@ -154,6 +260,12 @@ export default function SettingsPage() {
           </button>
         </form>
       </Section>
+
+      {/* Portfolio preferences — all users */}
+      <PortfolioPrefsSection />
+
+      {/* App Config — admin only */}
+      {user?.role === 'admin' && <AppConfigSection />}
 
       {/* Account Info */}
       <Section title="Account Details" icon={Shield}>

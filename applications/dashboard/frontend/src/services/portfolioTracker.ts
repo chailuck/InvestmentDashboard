@@ -25,15 +25,60 @@ export interface PositionsResponse {
 
 export interface DailyPerformance {
   date: string
+  label: string
   dailyPnl: number
   cumulativePnl: number
 }
 
+export interface PerformanceByDate {
+  period: string
+  label: string
+  net: number
+  wins: number
+  losses: number
+  total: number
+  winRate: number
+}
+
+export interface PerformanceByStock {
+  symbol: string
+  net: number
+  investment: number
+  currentValue: number
+  pnlPct: number
+  wins: number
+  losses: number
+  total: number
+  winRate: number
+}
+
+export interface SetIndex {
+  name: string
+  value: number | null
+  change: number | null
+  changePct: number | null
+}
+
+export interface GlobalIndex {
+  name: string
+  value: number | null
+  change: number | null
+  changePct: number | null
+}
+
+export type Period = 'daily' | 'weekly' | 'monthly'
+export type StatusFilter = 'active' | 'closed' | 'all'
+
 export const portfolioTrackerService = {
+  async refresh(): Promise<{ status: string; message: string }> {
+    const { data } = await apiClient.post('/portfolio-tracker/refresh')
+    return data
+  },
+
   async getPositions(params: {
     from_date?: string
     to_date?: string
-    status?: 'active' | 'closed' | 'all'
+    status?: StatusFilter
   }): Promise<PositionsResponse> {
     const { data } = await apiClient.get('/portfolio-tracker/positions', { params })
     return data
@@ -42,8 +87,36 @@ export const portfolioTrackerService = {
   async getPerformance(params: {
     from_date?: string
     to_date?: string
+    period?: Period
   }): Promise<DailyPerformance[]> {
     const { data } = await apiClient.get('/portfolio-tracker/performance', { params })
+    return data
+  },
+
+  async getPerformanceByDate(params: {
+    from_date?: string
+    to_date?: string
+    period?: Period
+  }): Promise<PerformanceByDate[]> {
+    const { data } = await apiClient.get('/portfolio-tracker/performance/by-date', { params })
+    return data
+  },
+
+  async getPerformanceByStock(params: {
+    from_date?: string
+    to_date?: string
+  }): Promise<PerformanceByStock[]> {
+    const { data } = await apiClient.get('/portfolio-tracker/performance/by-stock', { params })
+    return data
+  },
+
+  async getSetIndices(): Promise<SetIndex[]> {
+    const { data } = await apiClient.get('/portfolio-tracker/market/set-indices')
+    return data
+  },
+
+  async getGlobalIndices(): Promise<GlobalIndex[]> {
+    const { data } = await apiClient.get('/portfolio-tracker/market/global-indices')
     return data
   },
 }

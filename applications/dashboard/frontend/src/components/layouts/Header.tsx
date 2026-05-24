@@ -1,10 +1,16 @@
 'use client'
 
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Bell, Search, RefreshCw, Menu, Wifi, WifiOff } from 'lucide-react'
 import { useWebSocket } from '@/websocket/hooks'
 import { useNotificationStore } from '@/store/notifications'
+import {
+  portfolioTrackerService,
+  type SetIndex,
+  type GlobalIndex,
+} from '@/services/portfolioTracker'
 import { cn } from '@/lib/utils'
 
 interface HeaderProps {
@@ -15,7 +21,6 @@ interface HeaderProps {
 export function Header({ onMobileMenuOpen, pageTitle = 'Dashboard' }: HeaderProps) {
   const { isConnected } = useWebSocket()
   const { notifications, markAllRead } = useNotificationStore()
-  const [searchOpen, setSearchOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
 
   const unreadCount = notifications.filter(n => !n.read).length
@@ -28,17 +33,17 @@ export function Header({ onMobileMenuOpen, pageTitle = 'Dashboard' }: HeaderProp
       </button>
 
       {/* Page title */}
-      <div className="flex-1 min-w-0 hidden sm:block">
+      <div className="flex-1 min-w-0 hidden sm:block lg:hidden">
         <h1 className="text-sm font-semibold text-ink-primary truncate">{pageTitle}</h1>
       </div>
 
-      {/* Market status ticker strip */}
-      <div className="hidden xl:flex items-center gap-4 flex-1 justify-center">
+      {/* Market ticker strip — two-row layout on large screens */}
+      <div className="hidden lg:flex items-center justify-center flex-1 min-w-0 overflow-hidden py-1">
         <MarketTicker />
       </div>
 
       {/* Right actions */}
-      <div className="flex items-center gap-1 ml-auto">
+      <div className="flex items-center gap-1 ml-auto shrink-0">
         {/* Live status */}
         <div className={cn('flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium', isConnected ? 'text-gain' : 'text-ink-muted')}>
           {isConnected ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
@@ -47,7 +52,7 @@ export function Header({ onMobileMenuOpen, pageTitle = 'Dashboard' }: HeaderProp
         </div>
 
         {/* Search */}
-        <button className="btn-icon" onClick={() => setSearchOpen(true)} title="Search (⌘K)">
+        <button className="btn-icon" title="Search (⌘K)">
           <Search className="w-4 h-4" />
         </button>
 
@@ -109,28 +114,105 @@ export function Header({ onMobileMenuOpen, pageTitle = 'Dashboard' }: HeaderProp
   )
 }
 
-function MarketTicker() {
-  const indices = [
-    { name: 'S&P 500', value: '5,842.47', change: '+0.34%', up: true },
-    { name: 'NASDAQ', value: '18,432.10', change: '+0.51%', up: true },
-    { name: 'DOW', value: '43,628.90', change: '-0.12%', up: false },
-    { name: 'BTC', value: '$97,230', change: '+2.14%', up: true },
-  ]
+// ── Ticker item ────────────────────────────────────────────────────────────────
+
+type TickerEntry = SetIndex | GlobalIndex
+
+function TickerItem({ item, compact = false }: { item: TickerEntry; compact?: boolean }) {
+  const up = (item.changePct ?? 0) >= 0
+
+  const valStr = item.value != null
+    ? item.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '—'
+
+  const chgStr = item.changePct != null
+    ? `${up ? '+' : ''}${item.changePct.toFixed(2)}%`
+    : '—'
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-1 px-2 border-r border-border/25 last:border-r-0 shrink-0">
+        <span className="text-[10px] text-ink-muted">{item.name}</span>
+        <span className="text-[10px] font-semibold text-ink-primary tabular-nums">{valStr}</span>
+        <span className={cn('text-[9px] font-semibold tabular-nums', item.changePct == null ? 'text-ink-muted' : up ? 'text-gain' : 'text-loss')}>
+          {chgStr}
+        </span>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex items-center gap-5">
-      {indices.map(idx => (
-        <div key={idx.name} className="flex items-center gap-2">
-          <span className="text-xs text-ink-muted">{idx.name}</span>
-          <span className="text-xs font-semibold text-ink-primary tabular">{idx.value}</span>
-          <span className={cn('text-xs font-semibold tabular', idx.up ? 'text-gain' : 'text-loss')}>
-            {idx.change}
-          </span>
-        </div>
-      ))}
+    <div className="flex items-center gap-1.5 px-3 border-r border-border/30 last:border-r-0 shrink-0">
+      <span className="text-[11px] text-ink-muted font-medium">{item.name}</span>
+      <span className="text-[11px] font-semibold text-ink-primary tabular-nums">{valStr}</span>
+      <span className={cn('text-[10px] font-semibold tabular-nums', item.changePct == null ? 'text-ink-muted' : up ? 'text-gain' : 'text-loss')}>
+        {chgStr}
+      </span>
     </div>
   )
 }
+
+// ── Two-row ticker ─────────────────────────────────────────────────────────────
+
+function MarketTicker() {
+  const { data: setIndices = [], isLoading: setLoading } = useQuery<SetIndex[]>({
+    queryKey: ['set-indices'],
+    queryFn: portfolioTrackerService.getSetIndices,
+    refetchInterval: 5 * 60 * 1000,
+    staleTime: 60_000,
+    retry: 1,
+  })
+
+  const { data: globalIndices = [], isLoading: globalLoading } = useQuery<GlobalIndex[]>({
+    queryKey: ['global-indices'],
+    queryFn: portfolioTrackerService.getGlobalIndices,
+    refetchInterval: 5 * 60 * 1000,
+    staleTime: 60_000,
+    retry: 1,
+  })
+
+  const isLoading = setLoading && globalLoading
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-0.5 w-full">
+        <div className="flex items-center gap-3">
+          {['SET50', 'SET100', 'sSET'].map(n => (
+            <div key={n} className="flex items-center gap-1.5">
+              <span className="text-[10px] text-ink-muted">{n}</span>
+              <span className="skeleton w-12 h-2.5 rounded" />
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          {['S&P500', 'NASDAQ', 'DOW', 'BTC', 'XAUUSD'].map(n => (
+            <div key={n} className="flex items-center gap-1.5">
+              <span className="text-[10px] text-ink-muted">{n}</span>
+              <span className="skeleton w-12 h-2.5 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5 w-full overflow-hidden">
+      {/* Row 1: Thai SET indices */}
+      <div className="flex items-center gap-0 border-b border-border/20 pb-0.5">
+        <span className="text-[9px] text-ink-disabled font-medium uppercase tracking-wider mr-2 shrink-0">TH</span>
+        {setIndices.map(item => <TickerItem key={item.name} item={item} compact />)}
+      </div>
+      {/* Row 2: Global indices */}
+      <div className="flex items-center gap-0 pt-0.5">
+        <span className="text-[9px] text-ink-disabled font-medium uppercase tracking-wider mr-2 shrink-0">GL</span>
+        {globalIndices.map(item => <TickerItem key={item.name} item={item} compact />)}
+      </div>
+    </div>
+  )
+}
+
+// ── Notification item ──────────────────────────────────────────────────────────
 
 function NotificationItem({ notification }: { notification: any }) {
   const colors: Record<string, string> = {

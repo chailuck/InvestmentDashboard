@@ -62,7 +62,8 @@ class Settings(BaseSettings):
     admin_name: str = "Administrator"
 
     # Portfolio data
-    investment_excel_path: str = ""   # path inside container, e.g. /app/investment_data/Investment tracking.xlsx
+    investment_excel_path: str = "/app/uploads/investment_tracking.xlsx"   # writable working copy
+    investment_excel_source_path: str = "/app/investment_data/Investment tracking.xlsx"  # read-only source mount
 
     # File upload
     upload_dir: str = "./uploads"

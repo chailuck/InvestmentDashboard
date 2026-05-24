@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings,
-  ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown,
+  ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
@@ -26,15 +26,16 @@ const NAV_MAIN = [
 ] as const
 
 const SETTINGS_SUB = [
-  { href: '/settings',    label: 'My Profile', icon: Settings },
-  { href: '/admin/users', label: 'Users',       icon: Users, adminOnly: true },
+  { href: '/settings',             label: 'My Profile',  icon: Settings },
+  { href: '/admin/users',          label: 'Users',        icon: Users,    adminOnly: true },
+  { href: '/settings/documents',   label: 'Documents',    icon: FileText },
 ] as const
 
 export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname()
   const { user, clearAuth } = useAuthStore()
 
-  const inSettingsSection = pathname.startsWith('/settings') || pathname.startsWith('/admin')
+  const inSettingsSection = pathname.startsWith('/settings') || pathname.startsWith('/admin') || pathname.startsWith('/settings/documents')
   const [settingsOpen, setSettingsOpen] = useState(inSettingsSection)
 
   const isActive = (href: string) =>
@@ -69,10 +70,11 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className={cn(
-        'flex items-center gap-3 px-4 h-[60px] border-b border-border/50 shrink-0',
-        collapsed && 'justify-center px-0',
-      )}>
+      <Link href="/dashboard" onClick={onMobileClose}
+        className={cn(
+          'flex items-center gap-3 px-4 h-[60px] border-b border-border/50 shrink-0 hover:bg-surface-elevated/40 transition-colors',
+          collapsed && 'justify-center px-0',
+        )}>
         <div className="w-8 h-8 rounded-lg bg-brand-500/15 border border-brand-500/20 flex items-center justify-center shrink-0">
           <TrendingUp className="w-4 h-4 text-brand-400" />
         </div>
@@ -82,7 +84,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
             InvestPro
           </motion.span>
         )}
-      </div>
+      </Link>
 
       {/* Navigation */}
       <nav className="flex-1 py-4 px-2 space-y-0.5 overflow-y-auto no-scrollbar">
