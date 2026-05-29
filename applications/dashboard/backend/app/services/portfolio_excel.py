@@ -18,10 +18,31 @@ SHEET = "Sheet1"
 # ── Simple in-memory cache (thread-safe for single worker) ────────────────────
 _CACHE: dict[str, tuple[float, Any]] = {}
 
+# Shared invalidation file — written by any worker on refresh, read by all workers
+_CACHE_BUST_FILE = Path("/app/uploads/.cache_bust")
+
+def _cache_bust_ts() -> float:
+    """Return the mtime of the bust file, or 0 if it doesn't exist."""
+    try:
+        return _CACHE_BUST_FILE.stat().st_mtime
+    except OSError:
+        return 0.0
+
+def _write_cache_bust() -> None:
+    """Touch the bust file so all workers know to drop their caches."""
+    try:
+        _CACHE_BUST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _CACHE_BUST_FILE.write_text(str(time.time()))
+    except OSError:
+        pass
+
 def _cached(key: str, ttl: float, fn):
     now = time.time()
-    if key in _CACHE and now - _CACHE[key][0] < ttl:
-        return _CACHE[key][1]
+    bust = _cache_bust_ts()
+    entry = _CACHE.get(key)
+    # Valid if: entry exists, not expired, AND was written after last bust
+    if entry and (now - entry[0] < ttl) and (entry[0] > bust):
+        return entry[1]
     val = fn()
     _CACHE[key] = (now, val)
     return val
@@ -30,11 +51,29 @@ def _cached(key: str, ttl: float, fn):
 # ── Path helpers ──────────────────────────────────────────────────────────────
 
 def _working_path() -> Path:
+    """Return writable working-copy path — app_config.json overrides the env default."""
+    try:
+        from app.services.app_config_service import get_app_config
+        cfg = get_app_config()
+        wp = cfg.get("excel_working_path", "").strip()
+        if wp:
+            return Path(wp)
+    except Exception:
+        pass
     from app.core.config import get_settings
     return Path(get_settings().investment_excel_path)
 
 
 def _source_path() -> Path:
+    """Return source path — app_config.json overrides the env default."""
+    try:
+        from app.services.app_config_service import get_app_config
+        cfg = get_app_config()
+        src = cfg.get("excel_source_path", "").strip()
+        if src:
+            return Path(src)
+    except Exception:
+        pass
     from app.core.config import get_settings
     s = get_settings()
     return Path(s.investment_excel_source_path or s.investment_excel_path)
@@ -47,7 +86,8 @@ def copy_excel_from_source() -> str:
         raise FileNotFoundError(f"Source Excel file not found: {src}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(src), str(dst))
-    # Invalidate all cached data so the next read picks up the fresh file
+    # Bust cache across all workers: write timestamp file + clear this worker's dict
+    _write_cache_bust()
     _CACHE.clear()
     return str(dst)
 
@@ -454,6 +494,61 @@ def get_performance_by_date(
             "winRate": win_rate,
         })
     return result
+
+
+def get_period_transactions(
+    period_key: str,
+    period: str,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> list[dict[str, Any]]:
+    """Return individual CLOSED transactions that fall within a specific period bucket."""
+    today = date.today()
+    to_date = to_date or today
+    from_date = from_date or (today - timedelta(days=30))
+
+    df = _load_df()
+    closed_mask = df["Exit Price"].notna()
+    closed = df[closed_mask].copy()
+
+    results: list[dict[str, Any]] = []
+    for _, r in closed.iterrows():
+        edate = r["Exit Date"].date() if pd.notna(r["Exit Date"]) else today
+        if edate < from_date or edate > to_date:
+            continue
+        key, _ = _period_key(edate, period)
+        if key != period_key:
+            continue
+
+        sym = str(r.get("Symbol", "")).strip()
+        direction = str(r.get("Position (Long/Short)", "Long")).strip()
+        entry = float(r["Entry Price"]) if pd.notna(r["Entry Price"]) else 0.0
+        exit_p = float(r["Exit Price"]) if pd.notna(r["Exit Price"]) else entry
+        size = float(r["Position Size"]) if pd.notna(r["Position Size"]) else 0.0
+        net = _net_pnl(entry, exit_p, size, direction)
+        pct = _pnl_pct(entry, exit_p, direction)
+        sl = float(r["SL"]) if "SL" in r and pd.notna(r.get("SL")) else None
+        tp = float(r["TP"]) if "TP" in r and pd.notna(r.get("TP")) else None
+        remarks = str(r["Remarks"]) if "Remarks" in r and pd.notna(r.get("Remarks")) else None
+
+        results.append({
+            "symbol": sym,
+            "direction": direction,
+            "entryDate": r["Entry Date"].date().isoformat() if pd.notna(r["Entry Date"]) else None,
+            "exitDate": edate.isoformat(),
+            "entryPrice": entry,
+            "exitPrice": exit_p,
+            "positionSize": int(size),
+            "netPnl": net,
+            "pnlPct": pct,
+            "sl": sl,
+            "tp": tp,
+            "remarks": remarks,
+        })
+
+    # Sort by exit date desc
+    results.sort(key=lambda x: x["exitDate"] or "", reverse=True)
+    return results
 
 
 def get_performance_by_stock(

@@ -1,17 +1,18 @@
 'use client'
 
-import { useState, useMemo, useCallback, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useMemo, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 import { format, subMonths } from 'date-fns'
-import { RefreshCw, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { RefreshCw, AlertCircle, ChevronDown, ChevronRight, X, Loader2, CheckCircle2, XCircle, FileText, Copy, Trash2, RotateCcw, Table2 } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
-import toast from 'react-hot-toast'
 import {
   portfolioTrackerService,
   type Position,
   type Period,
   type StatusFilter,
+  type PeriodTransaction,
 } from '@/services/portfolioTracker'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -98,6 +99,357 @@ function PnlCell({ value, pct }: { value: number; pct?: number }) {
     <span className={pos ? 'text-gain font-semibold' : 'text-loss font-semibold'}>
       {fmtPnl(value)}{pct !== undefined && <span className="ml-1 text-[10px] opacity-75">{fmtPct(pct)}</span>}
     </span>
+  )
+}
+
+// ── Refresh progress modal (self-contained — runs refresh in useEffect) ─────────
+
+type StepStatus = 'pending' | 'running' | 'done' | 'error'
+
+function StepRow({ icon: Icon, label, detail, status }: {
+  icon: React.ElementType; label: string; detail?: string; status: StepStatus
+}) {
+  return (
+    <div className={cn(
+      'flex items-start gap-3 py-2.5 px-3 rounded-lg',
+      status === 'running' && 'bg-brand-500/8 border border-brand-500/20',
+      status === 'error' && 'bg-loss/8 border border-loss/20',
+    )}>
+      <div className="mt-0.5 shrink-0 w-4">
+        {status === 'pending' && <Icon className="w-4 h-4 text-ink-disabled" />}
+        {status === 'running' && <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />}
+        {status === 'done'    && <CheckCircle2 className="w-4 h-4 text-gain" />}
+        {status === 'error'   && <XCircle className="w-4 h-4 text-loss" />}
+      </div>
+      <div className="min-w-0">
+        <p className={cn('text-sm font-medium leading-tight',
+          status === 'pending' ? 'text-ink-disabled' :
+          status === 'error'   ? 'text-loss' : 'text-ink-primary')}>{label}</p>
+        {detail && <p className="text-xs font-mono text-ink-muted mt-0.5 break-all leading-snug">{detail}</p>}
+      </div>
+    </div>
+  )
+}
+
+function RefreshModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [phase, setPhase] = useState<'copying' | 'reloading' | 'done' | 'error'>('copying')
+  const [info, setInfo] = useState<{ source: string; destination: string; source_size_kb: number; destination_size_kb: number } | null>(null)
+  const [errMsg, setErrMsg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      try {
+        const res = await portfolioTrackerService.refresh()
+        if (cancelled) return
+        setInfo(res)
+        setPhase('reloading')
+        await Promise.all([
+          queryClient.refetchQueries({ queryKey: ['portfolio-positions'] }),
+          queryClient.refetchQueries({ queryKey: ['portfolio-performance'] }),
+          queryClient.refetchQueries({ queryKey: ['portfolio-by-date'] }),
+          queryClient.refetchQueries({ queryKey: ['portfolio-by-stock'] }),
+        ])
+        if (!cancelled) setPhase('done')
+      } catch (e: any) {
+        if (!cancelled) {
+          setErrMsg(e?.response?.data?.detail ?? e?.message ?? 'Refresh failed')
+          setPhase('error')
+        }
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const steps: { icon: React.ElementType; label: string; detail?: string; status: StepStatus }[] = [
+    {
+      icon: FileText, label: 'Reading source file',
+      detail: info ? `${info.source}  (${info.source_size_kb} KB)` : phase === 'error' ? errMsg : undefined,
+      status: phase === 'copying' ? 'running' : phase === 'error' ? 'error' : 'done',
+    },
+    {
+      icon: Copy, label: 'Copying to working location',
+      detail: info ? `→ ${info.destination}  (${info.destination_size_kb} KB)` : undefined,
+      status: phase === 'copying' ? 'pending' : phase === 'error' ? 'error' : 'done',
+    },
+    {
+      icon: Trash2, label: 'Clearing cache (all workers)',
+      detail: (phase === 'reloading' || phase === 'done') ? 'Cache bust file written' : undefined,
+      status: phase === 'copying' ? 'pending' : phase === 'error' ? 'pending' : 'done',
+    },
+    {
+      icon: RotateCcw, label: 'Reloading portfolio data',
+      detail: phase === 'done' ? 'Positions · Performance · By Date · By Stock' : undefined,
+      status: phase === 'reloading' ? 'running' : phase === 'done' ? 'done' : 'pending',
+    },
+  ]
+
+  const canClose = phase === 'done' || phase === 'error'
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+         onClick={canClose ? onClose : undefined}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-surface-card border border-border/60 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/50">
+          <div className="flex items-center gap-2.5">
+            <RefreshCw className={cn('w-4 h-4 shrink-0',
+              phase === 'copying' || phase === 'reloading' ? 'text-brand-400 animate-spin' :
+              phase === 'done' ? 'text-gain' : 'text-loss')} />
+            <h2 className="text-sm font-semibold text-ink-primary">
+              {phase === 'done' ? 'Refresh Complete' : phase === 'error' ? 'Refresh Failed' : 'Refreshing Data…'}
+            </h2>
+          </div>
+          {canClose && <button onClick={onClose} className="btn-icon"><X className="w-4 h-4" /></button>}
+        </div>
+
+        {/* Steps */}
+        <div className="p-4 space-y-1.5">
+          {steps.map((s, i) => <StepRow key={i} {...s} />)}
+        </div>
+
+        {/* Footer */}
+        {phase === 'done' && (
+          <div className="px-4 pb-4">
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-gain/8 border border-gain/20 text-gain text-xs">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              Charts and tables are now up to date.
+            </div>
+          </div>
+        )}
+        {phase === 'error' && (
+          <div className="px-4 pb-4 space-y-2">
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-loss/8 border border-loss/20 text-loss text-xs">
+              <XCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span className="break-all">{errMsg}</span>
+            </div>
+            <p className="text-[11px] text-ink-muted">
+              Go to <strong className="text-ink-secondary">Settings → App Configuration</strong> and verify the Source File Path is correct.
+            </p>
+          </div>
+        )}
+      </motion.div>
+    </div>
+  )
+}
+
+// ── Raw data viewer modal ──────────────────────────────────────────────────────
+
+function RawDataModal({ onClose }: { onClose: () => void }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['raw-excel-data'],
+    queryFn: () => portfolioTrackerService.getRawData(),
+    staleTime: 30_000,
+    retry: 1,
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+         onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-surface-card border border-border/60 rounded-2xl shadow-2xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/50 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <Table2 className="w-4 h-4 text-brand-400" />
+            <div>
+              <h2 className="text-sm font-semibold text-ink-primary">Raw Excel Data</h2>
+              {data && (
+                <p className="text-[11px] text-ink-muted mt-0.5 font-mono">{data.file} — {data.total} rows</p>
+              )}
+            </div>
+          </div>
+          <button onClick={onClose} className="btn-icon"><X className="w-4 h-4" /></button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-auto">
+          {isLoading && (
+            <div className="flex items-center justify-center h-full gap-2 text-ink-muted text-sm">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading Excel data…
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center space-y-2">
+                <XCircle className="w-8 h-8 text-loss mx-auto" />
+                <p className="text-sm text-loss">Failed to load Excel file.</p>
+                <p className="text-xs text-ink-muted">Make sure the working copy exists. Press Refresh first if needed.</p>
+              </div>
+            </div>
+          )}
+          {data && (
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 z-10 bg-surface-card">
+                <tr className="border-b border-border/60">
+                  <th className="px-2.5 py-2 text-left font-medium text-ink-disabled whitespace-nowrap border-r border-border/30">#</th>
+                  {data.columns.map((col, i) => (
+                    <th key={i} className="px-2.5 py-2 text-left font-medium text-ink-muted whitespace-nowrap border-r border-border/20 last:border-r-0">
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((row, ri) => (
+                  <tr key={ri} className={cn('border-b border-border/20 hover:bg-surface-elevated/50 transition-colors',
+                    ri % 2 === 1 && 'bg-surface-elevated/20')}>
+                    <td className="px-2.5 py-1.5 text-ink-disabled border-r border-border/20 tabular-nums">{ri + 1}</td>
+                    {row.map((cell, ci) => (
+                      <td key={ci} className="px-2.5 py-1.5 text-ink-secondary border-r border-border/15 last:border-r-0 whitespace-nowrap max-w-[200px] truncate"
+                          title={cell != null ? String(cell) : ''}>
+                        {cell != null ? String(cell) : <span className="text-ink-disabled">—</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+// ── Transaction drill-down modal ───────────────────────────────────────────────
+
+interface DrillDown {
+  periodKey: string
+  label: string
+  period: Period
+  fromDate: string
+  toDate: string
+}
+
+function TransactionModal({ drill, onClose }: { drill: DrillDown; onClose: () => void }) {
+  const { data: txns = [], isLoading } = useQuery<PeriodTransaction[]>({
+    queryKey: ['period-transactions', drill.periodKey, drill.period],
+    queryFn: () => portfolioTrackerService.getTransactions({
+      period_key: drill.periodKey,
+      period: drill.period,
+      from_date: drill.fromDate,
+      to_date: drill.toDate,
+    }),
+    staleTime: 60_000,
+  })
+
+  const totalPnl = txns.reduce((s, t) => s + t.netPnl, 0)
+  const wins = txns.filter(t => t.netPnl > 0).length
+  const losses = txns.filter(t => t.netPnl <= 0).length
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        key="backdrop"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+        onClick={onClose}
+      >
+        <motion.div
+          key="modal"
+          initial={{ opacity: 0, scale: 0.96, y: 16 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.96, y: 16 }}
+          transition={{ duration: 0.18 }}
+          className="bg-surface-card border border-border/60 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden"
+          onClick={e => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border/50 shrink-0">
+            <div>
+              <h2 className="text-sm font-semibold text-ink-primary">Transactions — {drill.label}</h2>
+              <p className="text-[11px] text-ink-muted mt-0.5">
+                {txns.length} trade{txns.length !== 1 ? 's' : ''} ·{' '}
+                <span className="text-gain">{wins}W</span>{' '}
+                <span className="text-loss">{losses}L</span>
+              </p>
+            </div>
+            <div className="flex items-center gap-4">
+              {txns.length > 0 && (
+                <div className="text-right">
+                  <p className="text-[10px] text-ink-muted">Net P&L</p>
+                  <p className={cn('text-sm font-bold', totalPnl >= 0 ? 'text-gain' : 'text-loss')}>
+                    {fmtPnl(totalPnl)} THB
+                  </p>
+                </div>
+              )}
+              <button onClick={onClose} className="btn-icon">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Body */}
+          <div className="overflow-auto flex-1">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-16 gap-2 text-ink-muted text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading transactions…
+              </div>
+            ) : txns.length === 0 ? (
+              <p className="text-center text-ink-muted text-sm py-16">No transactions found for this period.</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface-card z-10">
+                  <tr className="border-b border-border/50 text-ink-muted">
+                    {['Symbol', 'Dir', 'Entry Date', 'Exit Date', 'Entry ฿', 'Exit ฿', 'Size', 'Net P&L', 'P&L %', 'Remarks'].map(h => (
+                      <th key={h} className="px-3 py-2.5 text-left font-medium whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {txns.map((t, i) => (
+                    <tr key={i} className="border-b border-border/25 hover:bg-surface-elevated/50 transition-colors">
+                      <td className="px-3 py-2.5 font-semibold text-ink-primary">{t.symbol}</td>
+                      <td className="px-3 py-2.5">
+                        <span className={cn('font-medium', t.direction.toLowerCase().includes('short') ? 'text-loss' : 'text-gain')}>
+                          {t.direction.toLowerCase().includes('short') ? '↓ S' : '↑ L'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-ink-muted">{t.entryDate ?? '—'}</td>
+                      <td className="px-3 py-2.5 text-ink-secondary">{t.exitDate}</td>
+                      <td className="px-3 py-2.5 text-ink-secondary tabular-nums">{fmt(t.entryPrice)}</td>
+                      <td className="px-3 py-2.5 text-ink-primary font-medium tabular-nums">{fmt(t.exitPrice)}</td>
+                      <td className="px-3 py-2.5 text-ink-secondary tabular-nums">{t.positionSize.toLocaleString()}</td>
+                      <td className="px-3 py-2.5"><PnlCell value={t.netPnl} /></td>
+                      <td className="px-3 py-2.5">
+                        <span className={cn('font-medium tabular-nums', t.pnlPct >= 0 ? 'text-gain' : 'text-loss')}>
+                          {fmtPct(t.pnlPct)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-ink-muted max-w-[160px] truncate" title={t.remarks ?? ''}>
+                        {t.remarks ?? '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-border/50 bg-surface-elevated/40">
+                    <td colSpan={7} className="px-3 py-2.5 font-semibold text-ink-secondary text-right">Total</td>
+                    <td className="px-3 py-2.5"><PnlCell value={totalPnl} /></td>
+                    <td colSpan={2} />
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   )
 }
 
@@ -245,9 +597,10 @@ function PerformanceChart({ data, period, onPeriodChange, loading }: {
 
 // ── Section 3: Performance by Date table ──────────────────────────────────────
 
-function PerformanceByDateTable({ data, period }: {
+function PerformanceByDateTable({ data, period, onRowClick }: {
   data: { period: string; label: string; net: number; accumulatedPnl?: number; wins: number; losses: number; total: number; winRate: number }[]
   period: Period
+  onRowClick: (periodKey: string, label: string) => void
 }) {
   return (
     <CollapsibleSection title={`Performance by ${period.charAt(0).toUpperCase() + period.slice(1)}`}>
@@ -255,17 +608,21 @@ function PerformanceByDateTable({ data, period }: {
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border/50 text-ink-muted">
-              {['Period', 'Net P&L', 'Accumulated P&L', 'Wins', 'Losses', 'Total', 'Win Rate'].map(h => (
-                <th key={h} className="px-3 py-2.5 text-left font-medium whitespace-nowrap">{h}</th>
+              {['Period', 'Net P&L', 'Accumulated P&L', 'Wins', 'Losses', 'Total', 'Win Rate', ''].map((h, i) => (
+                <th key={i} className="px-3 py-2.5 text-left font-medium whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {data.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-6 text-center text-ink-muted">No data.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-muted">No data.</td></tr>
             ) : data.map(row => (
-              <tr key={row.period} className="border-b border-border/30 hover:bg-surface-elevated/50 transition-colors">
-                <td className="px-3 py-2 text-ink-secondary">{row.label}</td>
+              <tr
+                key={row.period}
+                onClick={() => onRowClick(row.period, row.label)}
+                className="border-b border-border/30 hover:bg-surface-elevated/60 transition-colors cursor-pointer group"
+              >
+                <td className="px-3 py-2 text-ink-secondary font-medium">{row.label}</td>
                 <td className="px-3 py-2"><PnlCell value={row.net} /></td>
                 <td className="px-3 py-2">
                   {row.accumulatedPnl !== undefined
@@ -277,6 +634,9 @@ function PerformanceByDateTable({ data, period }: {
                 <td className="px-3 py-2 text-ink-secondary">{row.total}</td>
                 <td className="px-3 py-2">
                   <span className={cn('font-medium', row.winRate >= 50 ? 'text-gain' : 'text-loss')}>{row.winRate}%</span>
+                </td>
+                <td className="px-3 py-2 text-ink-disabled group-hover:text-brand-400 transition-colors text-right">
+                  <ChevronRight className="w-3.5 h-3.5 inline-block" />
                 </td>
               </tr>
             ))}
@@ -393,6 +753,9 @@ export default function PortfolioPage() {
   const [toDate, setToDate] = useState(saved?.toDate ?? todayStr())
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(saved?.statusFilter ?? 'active')
   const [period, setPeriod] = useState<Period>('daily')
+  const [drillDown, setDrillDown] = useState<DrillDown | null>(null)
+  const [showRefresh, setShowRefresh] = useState(false)
+  const [showRawData, setShowRawData] = useState(false)
 
   // Persist criteria on change
   useEffect(() => { saveCriteria(fromDate, toDate, statusFilter) }, [fromDate, toDate, statusFilter])
@@ -423,17 +786,7 @@ export default function PortfolioPage() {
     refetchInterval: 60_000,
   })
 
-  const refreshMutation = useMutation({
-    mutationFn: () => portfolioTrackerService.refresh(),
-    onSuccess: () => {
-      toast.success('Excel refreshed — reloading data…')
-      queryClient.invalidateQueries({ queryKey: ['portfolio-positions'] })
-      queryClient.invalidateQueries({ queryKey: ['portfolio-performance'] })
-      queryClient.invalidateQueries({ queryKey: ['portfolio-by-date'] })
-      queryClient.invalidateQueries({ queryKey: ['portfolio-by-stock'] })
-    },
-    onError: () => toast.error('Refresh failed — check the source path in Settings'),
-  })
+
 
   const positions = posQuery.data?.positions ?? []
   const totalPnl = posQuery.data?.totalNetPnl ?? 0
@@ -452,10 +805,23 @@ export default function PortfolioPage() {
           <h1 className="text-xl font-bold text-ink-primary">Portfolio</h1>
           <p className="text-xs text-ink-muted mt-0.5">Thai SET · Investment tracking</p>
         </div>
-        <button onClick={() => refreshMutation.mutate()} disabled={refreshMutation.isPending}
-          className="btn-icon" title="Copy Excel from source and refresh prices">
-          <RefreshCw className={cn('w-4 h-4', refreshMutation.isPending && 'animate-spin')} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setShowRawData(true)}
+            className="btn-icon"
+            title="View raw Excel data"
+          >
+            <Table2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setShowRefresh(true)}
+            disabled={showRefresh}
+            className="btn-icon"
+            title="Copy Excel from source and refresh all data"
+          >
+            <RefreshCw className={cn('w-4 h-4', showRefresh && 'animate-spin')} />
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -507,13 +873,30 @@ export default function PortfolioPage() {
       <PerformanceChart data={perfQuery.data ?? []} period={period} onPeriodChange={setPeriod} loading={perfQuery.isLoading} />
 
       {/* 3. Performance by Date table (collapsible, aligned with chart period) */}
-      <PerformanceByDateTable data={byDateQuery.data ?? []} period={period} />
+      <PerformanceByDateTable
+        data={byDateQuery.data ?? []}
+        period={period}
+        onRowClick={(periodKey, label) =>
+          setDrillDown({ periodKey, label, period, fromDate, toDate })
+        }
+      />
 
       {/* 4. Performance by Stock chart */}
       <PerformanceByStockChart data={byStockQuery.data ?? []} />
 
       {/* 5. Performance by Stock table (collapsible) */}
       <PerformanceByStockTable data={byStockQuery.data ?? []} />
+
+      {/* Drill-down modal */}
+      {drillDown && (
+        <TransactionModal drill={drillDown} onClose={() => setDrillDown(null)} />
+      )}
+
+      {/* Refresh progress modal */}
+      {showRefresh && <RefreshModal onClose={() => setShowRefresh(false)} />}
+
+      {/* Raw data viewer modal */}
+      {showRawData && <RawDataModal onClose={() => setShowRawData(false)} />}
     </div>
   )
 }

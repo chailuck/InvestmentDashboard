@@ -2,6 +2,7 @@ import { apiClient } from './api'
 
 export interface AppConfig {
   excel_source_path: string
+  excel_working_path: string
 }
 
 export const appConfigService = {
@@ -12,6 +13,11 @@ export const appConfigService = {
 
   async update(updates: Partial<AppConfig>): Promise<AppConfig> {
     const { data } = await apiClient.put('/app-config', updates)
+    return data
+  },
+
+  async testPath(path: string): Promise<{ ok: boolean; message: string }> {
+    const { data } = await apiClient.post('/app-config/test-path', { excel_source_path: path })
     return data
   },
 }

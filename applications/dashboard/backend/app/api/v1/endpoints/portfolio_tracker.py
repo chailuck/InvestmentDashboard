@@ -23,16 +23,63 @@ def _svc_error(exc: Exception) -> HTTPException:
 # ── Refresh (copy + reload) ───────────────────────────────────────────────────
 
 @router.post("/refresh")
-async def refresh_portfolio(_: UserId) -> dict[str, str]:
+async def refresh_portfolio(_: UserId) -> dict[str, Any]:
     """
     Copy Investment tracking.xlsx from the configured source path to the
-    local working copy, then return success.  The next read will pick up
-    the fresh data automatically.
+    local working copy, then return detailed status for the UI progress modal.
     """
-    from app.services.portfolio_excel import copy_excel_from_source
+    from pathlib import Path
+    from app.services.portfolio_excel import (
+        copy_excel_from_source, _source_path, _working_path,
+    )
+    src = _source_path()
+    dst = _working_path()
+
+    if not src.exists():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Source file not found: {src}",
+        )
+
+    src_size_kb = round(src.stat().st_size / 1024, 1)
     try:
-        path = copy_excel_from_source()
-        return {"status": "ok", "message": f"Excel refreshed from source → {path}"}
+        copy_excel_from_source()
+        dst_size_kb = round(dst.stat().st_size / 1024, 1) if dst.exists() else 0
+        return {
+            "status": "ok",
+            "source": str(src),
+            "destination": str(dst),
+            "source_size_kb": src_size_kb,
+            "destination_size_kb": dst_size_kb,
+            "message": "File copied and cache cleared successfully.",
+        }
+    except Exception as exc:
+        raise _svc_error(exc)
+
+
+# ── Raw Excel data ────────────────────────────────────────────────────────────
+
+@router.get("/raw-data")
+async def get_raw_data(_: UserId) -> dict[str, Any]:
+    """Return all raw rows from the Excel file for inspection."""
+    from app.services.portfolio_excel import _ensure_working_copy, _working_path
+    import pandas as pd
+    try:
+        path = _ensure_working_copy()
+        df = pd.read_excel(str(path), sheet_name="Sheet1")
+        # Replace NaN / NaT with None for JSON serialisation
+        df = df.where(pd.notna(df), None)
+        # Convert timestamps to strings
+        for col in df.select_dtypes(include=['datetime64[ns]', 'datetimetz']).columns:
+            df[col] = df[col].astype(str).where(df[col].notna(), None)
+        columns = list(df.columns)
+        rows = df.values.tolist()
+        return {
+            "file": str(_working_path()),
+            "columns": columns,
+            "rows": rows,
+            "total": len(rows),
+        }
     except Exception as exc:
         raise _svc_error(exc)
 
@@ -83,6 +130,24 @@ async def get_performance_by_date(
     from app.services.portfolio_excel import get_performance_by_date
     try:
         return get_performance_by_date(from_date=from_date, to_date=to_date, period=period)
+    except Exception as exc:
+        raise _svc_error(exc)
+
+
+# ── Transactions for a period (drill-down) ───────────────────────────────────
+
+@router.get("/performance/transactions")
+async def get_period_transactions(
+    _: UserId,
+    period_key: str = Query(..., description="Period bucket key, e.g. '2024-01-15', '2024-W03', '2024-01'"),
+    period: str = Query("daily", description="daily | weekly | monthly"),
+    from_date: date | None = Query(None),
+    to_date: date | None = Query(None),
+) -> list[dict[str, Any]]:
+    """Return individual closed transactions that fall within a specific period bucket."""
+    from app.services.portfolio_excel import get_period_transactions
+    try:
+        return get_period_transactions(period_key=period_key, period=period, from_date=from_date, to_date=to_date)
     except Exception as exc:
         raise _svc_error(exc)
 

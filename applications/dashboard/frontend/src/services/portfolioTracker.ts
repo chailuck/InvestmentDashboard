@@ -52,6 +52,21 @@ export interface PerformanceByStock {
   winRate: number
 }
 
+export interface PeriodTransaction {
+  symbol: string
+  direction: string
+  entryDate: string | null
+  exitDate: string
+  entryPrice: number
+  exitPrice: number
+  positionSize: number
+  netPnl: number
+  pnlPct: number
+  sl: number | null
+  tp: number | null
+  remarks: string | null
+}
+
 export interface SetIndex {
   name: string
   value: number | null
@@ -70,7 +85,14 @@ export type Period = 'daily' | 'weekly' | 'monthly'
 export type StatusFilter = 'active' | 'closed' | 'all'
 
 export const portfolioTrackerService = {
-  async refresh(): Promise<{ status: string; message: string }> {
+  async refresh(): Promise<{
+    status: string
+    source: string
+    destination: string
+    source_size_kb: number
+    destination_size_kb: number
+    message: string
+  }> {
     const { data } = await apiClient.post('/portfolio-tracker/refresh')
     return data
   },
@@ -107,6 +129,21 @@ export const portfolioTrackerService = {
     to_date?: string
   }): Promise<PerformanceByStock[]> {
     const { data } = await apiClient.get('/portfolio-tracker/performance/by-stock', { params })
+    return data
+  },
+
+  async getRawData(): Promise<{ file: string; columns: string[]; rows: any[][]; total: number }> {
+    const { data } = await apiClient.get('/portfolio-tracker/raw-data')
+    return data
+  },
+
+  async getTransactions(params: {
+    period_key: string
+    period: Period
+    from_date?: string
+    to_date?: string
+  }): Promise<PeriodTransaction[]> {
+    const { data } = await apiClient.get('/portfolio-tracker/performance/transactions', { params })
     return data
   },
 
