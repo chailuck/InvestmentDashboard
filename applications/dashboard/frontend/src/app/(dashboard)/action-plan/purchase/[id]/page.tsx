@@ -159,6 +159,30 @@ function GenerateModal({ text, onClose }: { text: string; onClose: () => void })
   )
 }
 
+// ── Note panel ────────────────────────────────────────────────────────────────
+
+function NotePanel({
+  label, value, onChange, placeholder,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  return (
+    <div className="card p-4 space-y-2">
+      <label className="block text-xs font-semibold text-ink-secondary uppercase tracking-wider">{label}</label>
+      <textarea
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={6}
+        className="input w-full text-xs py-2 px-2.5 resize-y leading-relaxed font-mono"
+      />
+    </div>
+  )
+}
+
 // ── Input components ──────────────────────────────────────────────────────────
 
 const NumInput = ({
@@ -187,6 +211,8 @@ export default function PurchasePlanEditor() {
 
   const [planName, setPlanName] = useState('')
   const [rows, setRows] = useState<Row[]>([])
+  const [setAnalysis, setSetAnalysis] = useState('')
+  const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<'ok' | 'err' | null>(null)
@@ -200,6 +226,8 @@ export default function PurchasePlanEditor() {
     actionPlanService.get(id).then(plan => {
       if (cancelled) return
       setPlanName(plan.name)
+      setSetAnalysis(plan.set_analysis ?? '')
+      setNotes(plan.notes ?? '')
       if (plan.purchase_items.length > 0) {
         setRows(plan.purchase_items.map(item => ({
           _key: `r${++_rowId}`,
@@ -252,6 +280,8 @@ export default function PurchasePlanEditor() {
     try {
       await actionPlanService.update(id, {
         name: planName,
+        set_analysis: setAnalysis || null,
+        notes: notes || null,
         purchase_items: rows.map((r, i) => ({
           sort_order: i,
           stock: r.stock.toUpperCase(),
@@ -514,6 +544,22 @@ export default function PurchasePlanEditor() {
         <span className="text-loss font-medium">RR &lt; 1</span> = not worthwhile.
         RR = (TP − BUY) / (BUY − SL). Triggered rows are highlighted in green.
       </p>
+
+      {/* Notes panels */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <NotePanel
+          label="SET Analysis"
+          value={setAnalysis}
+          onChange={setSetAnalysis}
+          placeholder="Market / SET index analysis for this plan…"
+        />
+        <NotePanel
+          label="Note"
+          value={notes}
+          onChange={setNotes}
+          placeholder="Additional notes, reminders, or observations…"
+        />
+      </div>
 
       {/* Generate modal */}
       {generateText && (

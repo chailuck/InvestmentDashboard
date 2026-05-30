@@ -105,6 +105,9 @@ def _plan_detail(plan: ActionPlan) -> dict[str, Any]:
         "id": str(plan.id),
         "name": plan.name,
         "plan_type": plan.plan_type,
+        "notes": plan.notes,
+        "set_analysis": plan.set_analysis,
+        "ai_recommend": plan.ai_recommend,
         "created_at": plan.created_at.isoformat(),
         "updated_at": plan.updated_at.isoformat(),
         "purchase_items": [_purchase_item_dict(i) for i in plan.purchase_items],
@@ -251,6 +254,12 @@ async def update_plan(
 
     if body.name is not None:
         plan.name = body.name
+    if body.notes is not None:
+        plan.notes = body.notes or None
+    if body.set_analysis is not None:
+        plan.set_analysis = body.set_analysis or None
+    if body.ai_recommend is not None:
+        plan.ai_recommend = body.ai_recommend or None
 
     if body.purchase_items is not None:
         await db.execute(
@@ -325,6 +334,9 @@ async def duplicate_plan(
         name=new_name,
         plan_type=src.plan_type,
         created_by=uid,
+        notes=src.notes,
+        set_analysis=src.set_analysis,
+        ai_recommend=src.ai_recommend,
     )
     db.add(new_plan)
     await db.flush()  # populate new_plan.id before adding children

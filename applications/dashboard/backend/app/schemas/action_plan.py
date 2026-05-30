@@ -45,3 +45,6 @@ class ActionPlanUpdate(BaseModel):
     name: Optional[str] = None
     purchase_items: Optional[list[PurchaseItemIn]] = None
     portfolio_items: Optional[list[PortfolioItemIn]] = None
+    notes: Optional[str] = None
+    set_analysis: Optional[str] = None
+    ai_recommend: Optional[str] = None

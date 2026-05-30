@@ -91,6 +91,33 @@ function GenerateModal({ text, onClose }: { text: string; onClose: () => void })
   )
 }
 
+// ── Note panel ────────────────────────────────────────────────────────────────
+
+function NotePanel({
+  label, value, onChange, placeholder, rows = 6, resizable = false,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  rows?: number
+  resizable?: boolean
+}) {
+  return (
+    <div className="card p-4 space-y-2">
+      <label className="block text-xs font-semibold text-ink-secondary uppercase tracking-wider">{label}</label>
+      <textarea
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={rows}
+        className="input w-full text-xs py-2 px-2.5 leading-relaxed font-mono"
+        style={{ resize: resizable ? 'vertical' : 'none' }}
+      />
+    </div>
+  )
+}
+
 // ── Editable number cell ──────────────────────────────────────────────────────
 
 const NumInput = ({
@@ -137,6 +164,8 @@ export default function PortfolioPlanEditor() {
 
   const [planName, setPlanName] = useState('')
   const [rows, setRows] = useState<Row[]>([])
+  const [aiRecommend, setAiRecommend] = useState('')
+  const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
@@ -155,6 +184,8 @@ export default function PortfolioPlanEditor() {
         portfolioTrackerService.getPositions({ status: 'active' }),
       ])
       setPlanName(plan.name)
+      setAiRecommend(plan.ai_recommend ?? '')
+      setNotes(plan.notes ?? '')
 
       // Build a lookup map from saved plan items: symbol → { tp, sl, order_size }
       const savedMap = new Map(
@@ -215,6 +246,8 @@ export default function PortfolioPlanEditor() {
     try {
       await actionPlanService.update(id, {
         name: planName,
+        ai_recommend: aiRecommend || null,
+        notes: notes || null,
         portfolio_items: rows.map((r, i) => ({
           sort_order: i,
           symbol: r.symbol,
@@ -510,6 +543,25 @@ export default function PortfolioPlanEditor() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Notes panels — vertical, Note first */}
+      <div className="space-y-4">
+        <NotePanel
+          label="Note"
+          value={notes}
+          onChange={setNotes}
+          placeholder="Additional notes, reminders, or observations…"
+          rows={4}
+        />
+        <NotePanel
+          label="AI Recommend"
+          value={aiRecommend}
+          onChange={setAiRecommend}
+          placeholder="AI / analyst recommendations for this portfolio plan…"
+          rows={10}
+          resizable
+        />
       </div>
 
       {/* Generate modal */}

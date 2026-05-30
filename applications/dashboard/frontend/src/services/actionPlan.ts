@@ -48,6 +48,9 @@ export interface ActionPlan {
   id: string
   name: string
   plan_type: PlanType
+  notes: string | null
+  set_analysis: string | null
+  ai_recommend: string | null
   created_at: string
   updated_at: string
   purchase_items: PurchaseItem[]
@@ -104,6 +107,9 @@ export const actionPlanService = {
       name?: string
       purchase_items?: Omit<PurchaseItem, 'id'>[]
       portfolio_items?: Omit<PortfolioItem, 'id'>[]
+      notes?: string | null
+      set_analysis?: string | null
+      ai_recommend?: string | null
     },
   ): Promise<void> {
     await apiClient.put(`/action-plans/${id}`, payload)

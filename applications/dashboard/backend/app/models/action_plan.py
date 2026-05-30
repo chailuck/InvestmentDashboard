@@ -31,6 +31,9 @@ class ActionPlan(Base):
         nullable=True,
         index=True,
     )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    set_analysis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_recommend: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
