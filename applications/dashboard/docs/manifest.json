@@ -1,0 +1,20 @@
+{
+  "tree": [
+    {
+      "id": "project",
+      "label": "Project",
+      "children": [
+        { "id": "requirements", "label": "Requirements",     "file": "REQUIREMENTS.md" },
+        { "id": "design",       "label": "Technical Design", "file": "DESIGN.md"        }
+      ]
+    },
+    {
+      "id": "action-plan",
+      "label": "Action Plan",
+      "children": [
+        { "id": "action-plan-functional", "label": "Functional Spec",   "file": "action-plan/FUNCTIONAL.md"  },
+        { "id": "action-plan-technical",  "label": "Technical Design",  "file": "action-plan/TECHNICAL.md"   }
+      ]
+    }
+  ]
+}

@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from sqlalchemy import text
     from app.database.session import Base
     from app.models.user import User  # noqa: F401 — registers model with Base
+    from app.models.action_plan import ActionPlan, PurchasePlanItem, PortfolioPlanItem  # noqa: F401
     from app.auth.jwt import hash_password
 
     async with engine.begin() as conn:

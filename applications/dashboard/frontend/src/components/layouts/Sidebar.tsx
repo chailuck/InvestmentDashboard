@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings,
-  ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText,
+  ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
@@ -19,10 +19,11 @@ interface SidebarProps {
 }
 
 const NAV_MAIN = [
-  { href: '/dashboard',   label: 'Dashboard',  icon: LayoutDashboard },
-  { href: '/portfolio',   label: 'Portfolio',  icon: TrendingUp },
-  { href: '/analytics',  label: 'Analytics',  icon: BarChart3 },
-  { href: '/ai-copilot', label: 'AI Copilot', icon: Bot, badge: 'AI' },
+  { href: '/dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
+  { href: '/portfolio',   label: 'Portfolio',   icon: TrendingUp },
+  { href: '/action-plan', label: 'Action Plan', icon: ClipboardList },
+  { href: '/analytics',   label: 'Analytics',   icon: BarChart3 },
+  { href: '/ai-copilot',  label: 'AI Copilot',  icon: Bot, badge: 'AI' },
 ] as const
 
 const SETTINGS_SUB = [
