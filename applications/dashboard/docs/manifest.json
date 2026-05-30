@@ -1,19 +1,68 @@
 {
   "tree": [
     {
-      "id": "project",
-      "label": "Project",
+      "id": "overview",
+      "label": "Overview",
       "children": [
-        { "id": "requirements", "label": "Requirements",     "file": "REQUIREMENTS.md" },
-        { "id": "design",       "label": "Technical Design", "file": "DESIGN.md"        }
+        { "id": "project",      "label": "Project Overview",    "file": "01-overview/PROJECT.md"      },
+        { "id": "architecture", "label": "System Architecture", "file": "01-overview/ARCHITECTURE.md" }
+      ]
+    },
+    {
+      "id": "infrastructure",
+      "label": "Infrastructure",
+      "children": [
+        { "id": "docker",      "label": "Docker & Deployment", "file": "02-infrastructure/DOCKER.md"     },
+        { "id": "database",    "label": "Database Schema",     "file": "02-infrastructure/DATABASE.md"   },
+        { "id": "api-design",  "label": "API Design",          "file": "02-infrastructure/API-DESIGN.md" }
+      ]
+    },
+    {
+      "id": "authentication",
+      "label": "Authentication",
+      "children": [
+        { "id": "auth-functional", "label": "Functional Spec",  "file": "03-authentication/FUNCTIONAL.md" },
+        { "id": "auth-technical",  "label": "Technical Design", "file": "03-authentication/TECHNICAL.md"  }
+      ]
+    },
+    {
+      "id": "dashboard",
+      "label": "Dashboard",
+      "children": [
+        { "id": "dash-functional", "label": "Functional Spec",  "file": "04-dashboard/FUNCTIONAL.md" },
+        { "id": "dash-technical",  "label": "Technical Design", "file": "04-dashboard/TECHNICAL.md"  }
+      ]
+    },
+    {
+      "id": "portfolio",
+      "label": "Portfolio Tracker",
+      "children": [
+        { "id": "port-functional", "label": "Functional Spec",  "file": "05-portfolio/FUNCTIONAL.md" },
+        { "id": "port-technical",  "label": "Technical Design", "file": "05-portfolio/TECHNICAL.md"  }
       ]
     },
     {
       "id": "action-plan",
       "label": "Action Plan",
       "children": [
-        { "id": "action-plan-functional", "label": "Functional Spec",   "file": "action-plan/FUNCTIONAL.md"  },
-        { "id": "action-plan-technical",  "label": "Technical Design",  "file": "action-plan/TECHNICAL.md"   }
+        { "id": "ap-functional", "label": "Functional Spec",  "file": "06-action-plan/FUNCTIONAL.md" },
+        { "id": "ap-technical",  "label": "Technical Design", "file": "06-action-plan/TECHNICAL.md"  }
+      ]
+    },
+    {
+      "id": "ai-copilot",
+      "label": "AI Copilot",
+      "children": [
+        { "id": "ai-functional", "label": "Functional Spec",  "file": "07-ai-copilot/FUNCTIONAL.md" },
+        { "id": "ai-technical",  "label": "Technical Design", "file": "07-ai-copilot/TECHNICAL.md"  }
+      ]
+    },
+    {
+      "id": "settings-admin",
+      "label": "Settings & Admin",
+      "children": [
+        { "id": "cfg-functional", "label": "Functional Spec",  "file": "08-settings-admin/FUNCTIONAL.md" },
+        { "id": "cfg-technical",  "label": "Technical Design", "file": "08-settings-admin/TECHNICAL.md"  }
       ]
     }
   ]
