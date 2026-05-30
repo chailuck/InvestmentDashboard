@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Plus, Trash2, Save, FileDown, Copy, CheckCircle2,
-  Loader2, AlertTriangle, XCircle, X, RefreshCw,
+  Loader2, AlertTriangle, XCircle, X,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -25,9 +25,11 @@ interface Row {
   buy_price: number | null
   tp: number | null
   sl: number | null
-  strategy: string        // one of STRATEGIES or free text (when OTHERS)
-  customStrategy: string  // extra text input when strategy === 'OTHERS'
+  strategy: string
+  customStrategy: string
   fetchingPrice: boolean
+  reason: string
+  triggered: boolean
 }
 
 let _rowId = 0
@@ -42,16 +44,41 @@ const newRow = (): Row => ({
   strategy: 'BREAK OUT',
   customStrategy: '',
   fetchingPrice: false,
+  reason: '',
+  triggered: false,
 })
 
-// ── RR helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function calcRR(buy: number | null, tp: number | null, sl: number | null): number | null {
   if (!buy || !tp || !sl || buy <= sl) return null
-  const reward = tp - buy
   const risk = buy - sl
   if (risk <= 0) return null
-  return reward / risk
+  return (tp - buy) / risk
+}
+
+function calcPnl(price: number | null, buy: number | null, size: number | null): number | null {
+  if (price == null || buy == null || size == null) return null
+  return (price - buy) * size
+}
+
+function calcPct(price: number | null, buy: number | null): number | null {
+  if (price == null || buy == null || buy === 0) return null
+  return ((price - buy) / buy) * 100
+}
+
+function fmtPnl(v: number | null) {
+  if (v == null) return '—'
+  const sign = v >= 0 ? '+' : ''
+  if (Math.abs(v) >= 1_000_000) return `${sign}${(v / 1_000_000).toFixed(2)}M`
+  if (Math.abs(v) >= 1_000) return `${sign}${(v / 1_000).toFixed(1)}K`
+  return `${sign}${v.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+}
+
+function fmtPct(v: number | null) {
+  if (v == null) return ''
+  const sign = v >= 0 ? '+' : ''
+  return `${sign}${v.toFixed(2)}%`
 }
 
 function RRCell({ rr }: { rr: number | null }) {
@@ -70,6 +97,21 @@ function RRCell({ rr }: { rr: number | null }) {
     <span className="text-loss font-semibold flex items-center gap-1">
       <XCircle className="w-3 h-3" /> {rr.toFixed(2)}
     </span>
+  )
+}
+
+function PnlCell({ pnl, pct, positive }: { pnl: number | null; pct: number | null; positive?: boolean }) {
+  const isNull = pnl == null
+  const up = positive !== undefined ? positive : (pnl != null && pnl >= 0)
+  return (
+    <td className="px-2 py-1.5 whitespace-nowrap text-right">
+      <div className={cn('text-[11px] font-medium tabular-nums', isNull ? 'text-ink-disabled' : up ? 'text-gain' : 'text-loss')}>
+        {fmtPnl(pnl)}
+      </div>
+      <div className={cn('text-[10px] tabular-nums', isNull ? 'text-ink-disabled' : up ? 'text-gain/70' : 'text-loss/70')}>
+        {fmtPct(pct)}
+      </div>
+    </td>
   )
 }
 
@@ -117,7 +159,7 @@ function GenerateModal({ text, onClose }: { text: string; onClose: () => void })
   )
 }
 
-// ── Editable cell components ──────────────────────────────────────────────────
+// ── Input components ──────────────────────────────────────────────────────────
 
 const NumInput = ({
   value,
@@ -170,6 +212,8 @@ export default function PurchasePlanEditor() {
           strategy: item.strategy && STRATEGIES.includes(item.strategy as StrategyOption) ? item.strategy : 'OTHERS',
           customStrategy: item.strategy && !STRATEGIES.includes(item.strategy as StrategyOption) ? item.strategy : '',
           fetchingPrice: false,
+          reason: item.reason ?? '',
+          triggered: item.triggered ?? false,
         })))
       } else {
         setRows([newRow()])
@@ -217,6 +261,8 @@ export default function PurchasePlanEditor() {
           tp: r.tp,
           sl: r.sl,
           strategy: r.strategy === 'OTHERS' ? (r.customStrategy || 'OTHERS') : r.strategy,
+          reason: r.reason || null,
+          triggered: r.triggered,
         })),
       })
       setSaveMsg('ok')
@@ -232,11 +278,11 @@ export default function PurchasePlanEditor() {
   // ── Generate ──────────────────────────────────────────────────────────────
 
   const generate = () => {
-    const lines = ['STOCK,SIZE,BUY,TP,SL, STRATEGY']
+    const lines = ['STOCK,SIZE,BUY,TP,SL,STRATEGY,REASON,TRIGGERED']
     rows.forEach(r => {
       if (!r.stock) return
       const strat = r.strategy === 'OTHERS' ? (r.customStrategy || 'OTHERS') : r.strategy
-      lines.push(`${r.stock.toUpperCase()},${r.size ?? ''},${r.buy_price ?? ''},${r.tp ?? ''},${r.sl ?? ''},${strat}`)
+      lines.push(`${r.stock.toUpperCase()},${r.size ?? ''},${r.buy_price ?? ''},${r.tp ?? ''},${r.sl ?? ''},${strat},${r.reason ?? ''},${r.triggered ? 'YES' : 'NO'}`)
     })
     setGenerateText(lines.join('\n'))
   }
@@ -297,23 +343,55 @@ export default function PurchasePlanEditor() {
       {/* Table */}
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-[900px]">
+          <table className="w-full text-xs" style={{ minWidth: '1300px' }}>
             <thead>
               <tr className="border-b border-border/50 bg-surface-elevated/40">
-                {['STOCK', 'CURRENT PRICE', 'SIZE', 'BUY', 'TP', 'SL', 'RR', 'STRATEGY', ''].map(h => (
-                  <th key={h} className="px-2.5 py-2.5 text-left font-semibold text-ink-muted whitespace-nowrap first:pl-4 last:pr-4">
-                    {h}
-                  </th>
-                ))}
+                <th className="px-2.5 py-2.5 pl-4 text-left font-semibold text-ink-muted whitespace-nowrap">STOCK</th>
+                <th className="px-2.5 py-2.5 text-right font-semibold text-ink-muted whitespace-nowrap">CURRENT</th>
+                <th className="px-2.5 py-2.5 text-right font-semibold text-ink-muted whitespace-nowrap">SIZE</th>
+                <th className="px-2.5 py-2.5 text-right font-semibold text-ink-muted whitespace-nowrap">BUY</th>
+                <th className="px-2.5 py-2.5 text-center font-semibold text-brand-400 whitespace-nowrap border-l border-border/30">
+                  TP <span className="text-[9px] font-normal text-brand-500/60">editable</span>
+                </th>
+                <th className="px-2 py-2.5 text-center font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
+                  TP P&L
+                  <div className="text-[9px] font-normal text-ink-disabled">Amt / %</div>
+                </th>
+                <th className="px-2.5 py-2.5 text-center font-semibold text-brand-400 whitespace-nowrap border-l border-border/30">
+                  SL <span className="text-[9px] font-normal text-brand-500/60">editable</span>
+                </th>
+                <th className="px-2 py-2.5 text-center font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
+                  SL P&L
+                  <div className="text-[9px] font-normal text-ink-disabled">Amt / %</div>
+                </th>
+                <th className="px-2.5 py-2.5 text-left font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">RR</th>
+                <th className="px-2.5 py-2.5 text-left font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">STRATEGY</th>
+                <th className="px-2.5 py-2.5 text-left font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">REASON</th>
+                <th className="px-2.5 py-2.5 text-center font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
+                  TRIGGERED
+                </th>
+                <th className="px-2.5 py-2.5 pr-4 w-[36px]" />
               </tr>
             </thead>
             <tbody>
               {rows.map(row => {
-                const rr = calcRR(row.buy_price, row.tp, row.sl)
+                const rr     = calcRR(row.buy_price, row.tp, row.sl)
+                const tpPnl  = calcPnl(row.tp, row.buy_price, row.size)
+                const tpPct  = calcPct(row.tp, row.buy_price)
+                const slPnl  = calcPnl(row.sl, row.buy_price, row.size)
+                const slPct  = calcPct(row.sl, row.buy_price)
                 return (
-                  <tr key={row._key} className="border-b border-border/25 hover:bg-surface-elevated/30 transition-colors">
+                  <tr
+                    key={row._key}
+                    className={cn(
+                      'border-b border-border/25 transition-colors',
+                      row.triggered
+                        ? 'bg-gain/5 hover:bg-gain/8'
+                        : 'hover:bg-surface-elevated/30',
+                    )}
+                  >
                     {/* STOCK */}
-                    <td className="px-2.5 py-1.5 pl-4 w-[90px]">
+                    <td className="px-2.5 py-1.5 pl-4 w-[80px]">
                       <input
                         value={row.stock}
                         onChange={e => updateRow(row._key, { stock: e.target.value })}
@@ -323,42 +401,40 @@ export default function PurchasePlanEditor() {
                       />
                     </td>
                     {/* CURRENT PRICE */}
-                    <td className="px-2.5 py-1.5 w-[110px]">
-                      <div className="flex items-center gap-1">
-                        {row.fetchingPrice
-                          ? <Loader2 className="w-3 h-3 animate-spin text-brand-400" />
-                          : null
-                        }
-                        <span className={cn('tabular-nums', row.current_price ? 'text-ink-primary' : 'text-ink-disabled')}>
+                    <td className="px-2.5 py-1.5 w-[80px] text-right tabular-nums">
+                      <div className="flex items-center justify-end gap-1">
+                        {row.fetchingPrice && <Loader2 className="w-3 h-3 animate-spin text-brand-400" />}
+                        <span className={row.current_price ? 'text-ink-primary' : 'text-ink-disabled'}>
                           {row.current_price != null ? row.current_price.toFixed(2) : '—'}
                         </span>
                       </div>
                     </td>
                     {/* SIZE */}
-                    <td className="px-2.5 py-1.5 w-[90px]">
-                      <NumInput
-                        value={row.size}
-                        onChange={v => updateRow(row._key, { size: v != null ? Math.round(v) : null })}
-                      />
+                    <td className="px-2.5 py-1.5 w-[80px]">
+                      <NumInput value={row.size} onChange={v => updateRow(row._key, { size: v != null ? Math.round(v) : null })} />
                     </td>
                     {/* BUY */}
-                    <td className="px-2.5 py-1.5 w-[90px]">
+                    <td className="px-2.5 py-1.5 w-[80px]">
                       <NumInput value={row.buy_price} onChange={v => updateRow(row._key, { buy_price: v })} />
                     </td>
                     {/* TP */}
-                    <td className="px-2.5 py-1.5 w-[90px]">
+                    <td className="border-l border-border/30 px-2.5 py-1.5 w-[80px]">
                       <NumInput value={row.tp} onChange={v => updateRow(row._key, { tp: v })} />
                     </td>
+                    {/* TP P&L */}
+                    <PnlCell pnl={tpPnl} pct={tpPct} positive={tpPnl != null && tpPnl >= 0} />
                     {/* SL */}
-                    <td className="px-2.5 py-1.5 w-[90px]">
+                    <td className="border-l border-border/30 px-2.5 py-1.5 w-[80px]">
                       <NumInput value={row.sl} onChange={v => updateRow(row._key, { sl: v })} />
                     </td>
+                    {/* SL P&L */}
+                    <PnlCell pnl={slPnl} pct={slPct} positive={false} />
                     {/* RR */}
-                    <td className="px-2.5 py-1.5 w-[80px] whitespace-nowrap">
+                    <td className="border-l border-border/30 px-2.5 py-1.5 w-[70px] whitespace-nowrap">
                       <RRCell rr={rr} />
                     </td>
                     {/* STRATEGY */}
-                    <td className="px-2.5 py-1.5 min-w-[180px]">
+                    <td className="border-l border-border/30 px-2.5 py-1.5 min-w-[160px]">
                       <div className="flex items-center gap-1">
                         <select
                           value={row.strategy}
@@ -374,13 +450,36 @@ export default function PurchasePlanEditor() {
                             value={row.customStrategy}
                             onChange={e => updateRow(row._key, { customStrategy: e.target.value })}
                             className="input text-xs py-1 px-1.5 flex-1"
-                            placeholder="Custom strategy…"
+                            placeholder="Custom…"
                           />
                         )}
                       </div>
                     </td>
+                    {/* REASON */}
+                    <td className="border-l border-border/30 px-2.5 py-1.5 min-w-[150px]">
+                      <input
+                        value={row.reason}
+                        onChange={e => updateRow(row._key, { reason: e.target.value })}
+                        className="input text-xs py-1 px-1.5 w-full"
+                        placeholder="Reason…"
+                      />
+                    </td>
+                    {/* TRIGGERED */}
+                    <td className="border-l border-border/30 px-2.5 py-1.5 text-center w-[90px]">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={row.triggered}
+                          onChange={e => updateRow(row._key, { triggered: e.target.checked })}
+                          className="w-4 h-4 rounded accent-brand-500 cursor-pointer"
+                        />
+                        <span className={cn('text-[11px] font-medium', row.triggered ? 'text-gain' : 'text-ink-disabled')}>
+                          {row.triggered ? 'Yes' : 'No'}
+                        </span>
+                      </label>
+                    </td>
                     {/* Delete */}
-                    <td className="px-2.5 py-1.5 pr-4 w-[40px]">
+                    <td className="px-2.5 py-1.5 pr-4 w-[36px]">
                       <button
                         onClick={() => deleteRow(row._key)}
                         className="btn-icon text-ink-disabled hover:text-loss"
@@ -413,7 +512,7 @@ export default function PurchasePlanEditor() {
         <span className="text-gain font-medium">RR ≥ 3</span> is good.{' '}
         <span className="text-amber-400 font-medium">RR 1–2.9</span> = caution.{' '}
         <span className="text-loss font-medium">RR &lt; 1</span> = not worthwhile.
-        RR = (TP − BUY) / (BUY − SL)
+        RR = (TP − BUY) / (BUY − SL). Triggered rows are highlighted in green.
       </p>
 
       {/* Generate modal */}

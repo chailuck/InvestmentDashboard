@@ -26,6 +26,8 @@ export interface PurchaseItem {
   tp: number | null
   sl: number | null
   strategy: string | null
+  reason: string | null
+  triggered: boolean
 }
 
 export interface PortfolioItem {

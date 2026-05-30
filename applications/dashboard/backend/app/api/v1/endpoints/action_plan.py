@@ -81,6 +81,8 @@ def _purchase_item_dict(item: PurchasePlanItem) -> dict[str, Any]:
         "tp": _f(item.tp),
         "sl": _f(item.sl),
         "strategy": item.strategy,
+        "reason": item.reason,
+        "triggered": item.triggered,
     }
 
 
@@ -266,6 +268,8 @@ async def update_plan(
                 tp=item.tp,
                 sl=item.sl,
                 strategy=item.strategy,
+                reason=item.reason,
+                triggered=item.triggered,
             ))
 
     if body.portfolio_items is not None:
@@ -336,6 +340,8 @@ async def duplicate_plan(
             tp=item.tp,
             sl=item.sl,
             strategy=item.strategy,
+            reason=item.reason,
+            triggered=item.triggered,
         ))
 
     for item in src.portfolio_items:

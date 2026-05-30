@@ -19,6 +19,8 @@ class PurchaseItemIn(BaseModel):
     tp: Optional[float] = None
     sl: Optional[float] = None
     strategy: Optional[str] = None
+    reason: Optional[str] = None
+    triggered: bool = False
 
 
 class PortfolioItemIn(BaseModel):

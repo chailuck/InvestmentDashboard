@@ -9,6 +9,13 @@ import type { WidgetConfig } from '@/types'
 
 function fmtTHB(n: number) {
   const sign = n >= 0 ? '+' : ''
+  // Compact format for large numbers on mobile
+  if (Math.abs(n) >= 1_000_000) {
+    return `${sign}${(n / 1_000_000).toFixed(2)}M ฿`
+  }
+  if (Math.abs(n) >= 1_000) {
+    return `${sign}${(n / 1_000).toFixed(1)}K ฿`
+  }
   return `${sign}${n.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ฿`
 }
 
@@ -59,30 +66,46 @@ export function PortfolioSummaryWidget({ config }: { config: WidgetConfig }) {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 h-full">
-        {[...Array(4)].map((_, i) => <div key={i} className="skeleton h-20 rounded-lg" />)}
+      <div className="grid grid-cols-2 gap-2 p-3 h-full sm:gap-3 sm:p-4">
+        {[...Array(4)].map((_, i) => <div key={i} className="skeleton h-16 sm:h-20 rounded-lg" />)}
       </div>
     )
   }
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 h-full content-start">
+    <div className="grid grid-cols-2 gap-2 p-3 h-full content-start sm:gap-3 sm:p-4">
       {metrics.map(({ label, value, sub, up, icon: Icon, highlight }) => (
         <motion.div key={label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-          className={cn('card-elevated p-4 rounded-xl flex flex-col gap-1',
-            highlight && 'border-brand-500/20 bg-brand-500/5')}>
-          <div className="flex items-center justify-between">
-            <span className="metric-label">{label}</span>
-            <Icon className={cn('w-3.5 h-3.5', highlight ? 'text-brand-400' : up === undefined ? 'text-ink-muted' : up ? 'text-gain' : 'text-loss')} />
+          className={cn(
+            'card-elevated rounded-xl flex flex-col gap-0.5',
+            'p-2.5 sm:p-4',
+            highlight && 'border-brand-500/20 bg-brand-500/5',
+          )}>
+          <div className="flex items-center justify-between gap-1">
+            <span className="metric-label text-[10px] sm:text-xs leading-tight truncate">{label}</span>
+            <Icon className={cn(
+              'w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0',
+              highlight ? 'text-brand-400' : up === undefined ? 'text-ink-muted' : up ? 'text-gain' : 'text-loss',
+            )} />
           </div>
           <AnimatePresence mode="wait">
-            <motion.span key={value} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-              className={cn('metric-value text-xl',
-                highlight ? (up ? 'text-gain' : 'text-loss') : up !== undefined ? (up ? 'text-gain' : 'text-loss') : 'text-ink-primary')}>
+            <motion.span
+              key={value}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              className={cn(
+                'font-bold tabular-nums leading-tight',
+                'text-base sm:text-xl',
+                highlight
+                  ? (up ? 'text-gain' : 'text-loss')
+                  : up !== undefined ? (up ? 'text-gain' : 'text-loss') : 'text-ink-primary',
+              )}
+            >
               {value}
             </motion.span>
           </AnimatePresence>
-          {sub && <span className="text-xs text-ink-muted">{sub}</span>}
+          {sub && <span className="text-[10px] sm:text-xs text-ink-muted leading-tight">{sub}</span>}
         </motion.div>
       ))}
     </div>

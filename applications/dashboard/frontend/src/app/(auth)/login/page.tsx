@@ -52,8 +52,8 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-brand-500/10 border border-brand-500/20 mb-4 glow-brand">
             <TrendingUp className="w-7 h-7 text-brand-400" />
           </div>
-          <h1 className="text-2xl font-bold text-ink-primary">Investment Platform</h1>
-          <p className="text-ink-muted text-sm mt-1">Enterprise AI Investment Dashboard</p>
+          <h1 className="text-2xl font-bold text-ink-primary">POP Investment Planner</h1>
+          <p className="text-ink-muted text-sm mt-1">AI-powered portfolio management & planning</p>
         </div>
 
         {/* Card */}
@@ -93,12 +93,7 @@ export default function LoginPage() {
 
             {/* Password */}
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-medium text-ink-secondary">Password</label>
-                <Link href="/forgot-password" className="text-xs text-brand-400 hover:text-brand-300 transition-colors">
-                  Forgot password?
-                </Link>
-              </div>
+              <label className="block text-xs font-medium text-ink-secondary mb-1.5">Password</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" />
                 <input
@@ -117,6 +112,11 @@ export default function LoginPage() {
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
+              </div>
+              <div className="mt-1.5 text-right">
+                <Link href="/forgot-password" className="text-xs text-brand-400 hover:text-brand-300 transition-colors">
+                  Forgot password?
+                </Link>
               </div>
             </div>
 
@@ -145,7 +145,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-ink-disabled mt-6">
-          © 2024 Investment Platform. All rights reserved.
+          © 2024 POP Investment Planner. All rights reserved.
         </p>
       </motion.div>
     </main>

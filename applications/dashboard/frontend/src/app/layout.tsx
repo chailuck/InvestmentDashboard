@@ -16,8 +16,8 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: { default: 'Investment Dashboard', template: '%s | Investment Dashboard' },
-  description: 'Enterprise AI-native investment platform with real-time analytics and portfolio management',
+  title: { default: 'POP Investment Planner', template: '%s | POP Investment Planner' },
+  description: 'POP Investment Planner — AI-powered portfolio management and investment planning',
   keywords: ['investment', 'portfolio', 'analytics', 'fintech', 'AI'],
   robots: 'noindex, nofollow',
 }

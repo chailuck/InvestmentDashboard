@@ -76,7 +76,7 @@ function htmlTemplate(title: string, bodyHtml: string) {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>${title} — InvestPro Docs</title>
+<title>${title} — POP Investment Planner Docs</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-dark.min.css">
 <style>
   body { background: #0d1117; padding: 2rem; font-family: -apple-system, sans-serif; }
@@ -86,7 +86,7 @@ function htmlTemplate(title: string, bodyHtml: string) {
 </head>
 <body>
 <article class="markdown-body">
-<p class="doc-title">📊 InvestPro Documentation — ${title}</p>
+<p class="doc-title">📊 POP Investment Planner Documentation — ${title}</p>
 ${bodyHtml}
 </article>
 </body>
@@ -100,7 +100,7 @@ function htmlTemplateRaw(title: string, markdown: string) {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>${title} — InvestPro Docs</title>
+<title>${title} — POP Investment Planner Docs</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-dark.min.css">
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
@@ -244,8 +244,8 @@ export default function DocumentsPage() {
         })
       )
       const combined = sections.join('\n\n---\n\n')
-      const header = `# InvestPro — Complete Documentation\n\n_Exported: ${new Date().toISOString().slice(0, 10)}_\n\n---\n\n`
-      downloadBlob(header + combined, 'InvestPro-Documentation.md', 'text/markdown;charset=utf-8')
+      const header = `# POP Investment Planner — Complete Documentation\n\n_Exported: ${new Date().toISOString().slice(0, 10)}_\n\n---\n\n`
+      downloadBlob(header + combined, 'POP Investment Planner-Documentation.md', 'text/markdown;charset=utf-8')
     } finally {
       setExportingAll(false)
     }
@@ -265,10 +265,10 @@ export default function DocumentsPage() {
 
       // Build combined markdown then embed it with CDN renderer
       const combined =
-        `# InvestPro — Complete Documentation\n\n_Exported: ${new Date().toISOString().slice(0, 10)}_\n\n---\n\n` +
+        `# POP Investment Planner — Complete Documentation\n\n_Exported: ${new Date().toISOString().slice(0, 10)}_\n\n---\n\n` +
         sections.map(s => `# ${s.label}\n\n${s.content}`).join('\n\n---\n\n')
 
-      downloadBlob(htmlTemplateRaw('Complete Documentation', combined), 'InvestPro-Documentation.html', 'text/html;charset=utf-8')
+      downloadBlob(htmlTemplateRaw('Complete Documentation', combined), 'POP Investment Planner-Documentation.html', 'text/html;charset=utf-8')
     } finally {
       setExportingAll(false)
     }

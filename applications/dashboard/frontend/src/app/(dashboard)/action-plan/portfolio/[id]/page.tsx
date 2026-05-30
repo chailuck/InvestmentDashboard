@@ -23,6 +23,30 @@ interface Row {
   order_size: number | null
 }
 
+// ── Derived calcs ─────────────────────────────────────────────────────────────
+
+function calcPnl(price: number | null, entry: number | null, size: number | null) {
+  if (price == null || entry == null || size == null) return null
+  return (price - entry) * size
+}
+
+function calcPnlPct(price: number | null, entry: number | null) {
+  if (price == null || entry == null || entry === 0) return null
+  return ((price - entry) / entry) * 100
+}
+
+function fmtPnl(v: number | null) {
+  if (v == null) return '—'
+  const sign = v >= 0 ? '+' : ''
+  return `${sign}${v.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+}
+
+function fmtPct(v: number | null) {
+  if (v == null) return '—'
+  const sign = v >= 0 ? '+' : ''
+  return `${sign}${v.toFixed(2)}%`
+}
+
 // ── Generate modal ────────────────────────────────────────────────────────────
 
 function GenerateModal({ text, onClose }: { text: string; onClose: () => void }) {
@@ -87,6 +111,23 @@ const NumInput = ({
     className="input text-xs py-1 px-1.5 w-full text-right tabular-nums"
   />
 )
+
+// ── P&L cell (read-only colored) ──────────────────────────────────────────────
+
+function PnlCell({ value, pct }: { value: number | null; pct: number | null }) {
+  const isNull = value == null
+  const up = value != null && value >= 0
+  return (
+    <td className="px-2 py-2 tabular-nums text-right whitespace-nowrap">
+      <div className={cn('text-[11px] font-medium', isNull ? 'text-ink-disabled' : up ? 'text-gain' : 'text-loss')}>
+        {fmtPnl(value)}
+      </div>
+      <div className={cn('text-[10px]', isNull ? 'text-ink-disabled' : up ? 'text-gain/70' : 'text-loss/70')}>
+        {fmtPct(pct)}
+      </div>
+    </td>
+  )
+}
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
@@ -163,8 +204,8 @@ export default function PortfolioPlanEditor() {
 
   // ── Row update ────────────────────────────────────────────────────────────
 
-  const updateRow = (symbol: string, patch: Partial<Row>) =>
-    setRows(prev => prev.map(r => r.symbol === symbol ? { ...r, ...patch } : r))
+  const updateRow = (idx: number, patch: Partial<Row>) =>
+    setRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r))
 
   // ── Save ──────────────────────────────────────────────────────────────────
 
@@ -215,6 +256,21 @@ export default function PortfolioPlanEditor() {
       </div>
     )
   }
+
+  // Column header groups
+  const headers = [
+    { label: 'SYMBOL',      span: 1, editable: false },
+    { label: 'CURRENT',     span: 1, editable: false },
+    { label: 'SIZE',        span: 1, editable: false },
+    { label: 'ENTRY',       span: 1, editable: false },
+    { label: 'CURRENT P&L', span: 2, editable: false, sub: 'Amt / %' },
+    { label: 'ORDER SIZE',  span: 1, editable: true  },
+    { label: 'TP',          span: 1, editable: true  },
+    { label: 'TP P&L',      span: 2, editable: false, sub: 'Amt / %' },
+    { label: 'SL',          span: 1, editable: true  },
+    { label: 'SL P&L',      span: 2, editable: false, sub: 'Amt / %' },
+    { label: 'REMAINING',   span: 1, editable: false, sub: 'Order Size' },
+  ]
 
   return (
     <div className="space-y-5">
@@ -291,7 +347,7 @@ export default function PortfolioPlanEditor() {
       <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-500/8 border border-brand-500/20 text-brand-400 text-xs">
         <AlertCircle className="w-3.5 h-3.5 shrink-0" />
         Position data (Symbol, Price, Size, Entry) is pulled live from the portfolio tracker.
-        Edit TP, SL, and Order Size, then save.
+        Edit Order Size, TP, and SL, then save.
       </div>
 
       {/* Table */}
@@ -302,64 +358,154 @@ export default function PortfolioPlanEditor() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs min-w-[700px]">
+            <table className="w-full text-xs" style={{ minWidth: '1100px' }}>
               <thead>
                 <tr className="border-b border-border/50 bg-surface-elevated/40">
-                  {['SYMBOL', 'CURRENT', 'SIZE', 'ENTRY', 'TP', 'SL', 'ORDER SIZE'].map((h, i) => (
-                    <th
-                      key={h}
-                      className={cn(
-                        'px-3 py-2.5 text-left font-semibold text-ink-muted whitespace-nowrap',
-                        i === 0 && 'pl-4',
-                        i === 6 && 'pr-4',
-                        i >= 4 && 'text-brand-400',  // editable columns highlighted
-                      )}
-                    >
-                      {h}
-                      {i >= 4 && <span className="ml-1 text-[9px] font-normal text-brand-500/60">editable</span>}
-                    </th>
-                  ))}
+                  {/* SYMBOL */}
+                  <th className="px-3 py-2.5 pl-4 text-left font-semibold text-ink-muted whitespace-nowrap">SYMBOL</th>
+                  {/* CURRENT */}
+                  <th className="px-3 py-2.5 text-right font-semibold text-ink-muted whitespace-nowrap">CURRENT</th>
+                  {/* SIZE */}
+                  <th className="px-3 py-2.5 text-right font-semibold text-ink-muted whitespace-nowrap">SIZE</th>
+                  {/* ENTRY */}
+                  <th className="px-3 py-2.5 text-right font-semibold text-ink-muted whitespace-nowrap">ENTRY</th>
+                  {/* CURRENT P&L (2 sub-cols) */}
+                  <th colSpan={2} className="px-2 py-2.5 text-center font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
+                    CURRENT P&L
+                    <div className="text-[9px] font-normal text-ink-disabled">Amt / %</div>
+                  </th>
+                  {/* ORDER SIZE — editable */}
+                  <th className="px-3 py-2.5 text-center font-semibold text-brand-400 whitespace-nowrap border-l border-border/30">
+                    ORDER SIZE
+                    <span className="ml-1 text-[9px] font-normal text-brand-500/60">editable</span>
+                  </th>
+                  {/* TP — editable */}
+                  <th className="px-3 py-2.5 text-center font-semibold text-brand-400 whitespace-nowrap border-l border-border/30">
+                    TP
+                    <span className="ml-1 text-[9px] font-normal text-brand-500/60">editable</span>
+                  </th>
+                  {/* TP P&L (2 sub-cols) */}
+                  <th colSpan={2} className="px-2 py-2.5 text-center font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
+                    TP P&L
+                    <div className="text-[9px] font-normal text-ink-disabled">Amt / %</div>
+                  </th>
+                  {/* SL — editable */}
+                  <th className="px-3 py-2.5 text-center font-semibold text-brand-400 whitespace-nowrap border-l border-border/30">
+                    SL
+                    <span className="ml-1 text-[9px] font-normal text-brand-500/60">editable</span>
+                  </th>
+                  {/* SL P&L (2 sub-cols) */}
+                  <th colSpan={2} className="px-2 py-2.5 text-center font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
+                    SL P&L
+                    <div className="text-[9px] font-normal text-ink-disabled">Amt / %</div>
+                  </th>
+                  {/* REMAINING ORDER SIZE */}
+                  <th className="px-3 py-2.5 pr-4 text-right font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
+                    REMAINING
+                    <div className="text-[9px] font-normal text-ink-disabled">Order Size</div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map(row => (
-                  <tr key={row.symbol} className="border-b border-border/25 hover:bg-surface-elevated/30 transition-colors">
-                    <td className="px-3 py-2 pl-4 font-semibold text-ink-primary">{row.symbol}</td>
-                    <td className="px-3 py-2 tabular-nums text-ink-primary font-medium">
-                      {row.current_price != null ? row.current_price.toFixed(2) : '—'}
-                    </td>
-                    <td className="px-3 py-2 tabular-nums text-ink-secondary">
-                      {row.size != null ? row.size.toLocaleString() : '—'}
-                    </td>
-                    <td className="px-3 py-2 tabular-nums text-ink-secondary">
-                      {row.entry_price != null ? row.entry_price.toFixed(2) : '—'}
-                    </td>
-                    {/* TP — editable */}
-                    <td className="px-3 py-2 w-[100px]">
-                      <NumInput
-                        value={row.tp}
-                        onChange={v => updateRow(row.symbol, { tp: v })}
-                        placeholder="TP"
-                      />
-                    </td>
-                    {/* SL — editable */}
-                    <td className="px-3 py-2 w-[100px]">
-                      <NumInput
-                        value={row.sl}
-                        onChange={v => updateRow(row.symbol, { sl: v })}
-                        placeholder="SL"
-                      />
-                    </td>
-                    {/* ORDER SIZE — editable */}
-                    <td className="px-3 py-2 pr-4 w-[110px]">
-                      <NumInput
-                        value={row.order_size}
-                        onChange={v => updateRow(row.symbol, { order_size: v != null ? Math.round(v) : null })}
-                        placeholder="Qty"
-                      />
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((row, idx) => {
+                  const curPnl    = calcPnl(row.current_price, row.entry_price, row.size)
+                  const curPnlPct = calcPnlPct(row.current_price, row.entry_price)
+                  const tpPnl     = calcPnl(row.tp, row.entry_price, row.size)
+                  const tpPnlPct  = calcPnlPct(row.tp, row.entry_price)
+                  const slPnl     = calcPnl(row.sl, row.entry_price, row.size)
+                  const slPnlPct  = calcPnlPct(row.sl, row.entry_price)
+                  const remaining = row.order_size != null && row.size != null
+                    ? row.order_size - row.size
+                    : null
+
+                  return (
+                    <tr key={idx} className="border-b border-border/25 hover:bg-surface-elevated/30 transition-colors">
+                      {/* SYMBOL */}
+                      <td className="px-3 py-2 pl-4 font-semibold text-ink-primary">{row.symbol}</td>
+                      {/* CURRENT */}
+                      <td className="px-3 py-2 tabular-nums text-ink-primary font-medium text-right">
+                        {row.current_price != null ? row.current_price.toFixed(2) : '—'}
+                      </td>
+                      {/* SIZE */}
+                      <td className="px-3 py-2 tabular-nums text-ink-secondary text-right">
+                        {row.size != null ? row.size.toLocaleString() : '—'}
+                      </td>
+                      {/* ENTRY */}
+                      <td className="px-3 py-2 tabular-nums text-ink-secondary text-right">
+                        {row.entry_price != null ? row.entry_price.toFixed(2) : '—'}
+                      </td>
+                      {/* CURRENT P&L (border-l) */}
+                      <td className="border-l border-border/30 px-2 py-2 tabular-nums text-right whitespace-nowrap">
+                        <div className={cn('text-[11px] font-medium', curPnl == null ? 'text-ink-disabled' : curPnl >= 0 ? 'text-gain' : 'text-loss')}>
+                          {fmtPnl(curPnl)}
+                        </div>
+                        <div className={cn('text-[10px]', curPnlPct == null ? 'text-ink-disabled' : curPnlPct >= 0 ? 'text-gain/70' : 'text-loss/70')}>
+                          {fmtPct(curPnlPct)}
+                        </div>
+                      </td>
+                      {/* placeholder for 2nd P&L sub-col (merged above with colSpan=2, so this is the right half) */}
+                      <td className="w-0 p-0" />
+
+                      {/* ORDER SIZE — editable (border-l) */}
+                      <td className="border-l border-border/30 px-2 py-2 w-[100px]">
+                        <NumInput
+                          value={row.order_size}
+                          onChange={v => updateRow(idx, { order_size: v != null ? Math.round(v) : null })}
+                          placeholder="Qty"
+                        />
+                      </td>
+
+                      {/* TP — editable (border-l) */}
+                      <td className="border-l border-border/30 px-2 py-2 w-[90px]">
+                        <NumInput
+                          value={row.tp}
+                          onChange={v => updateRow(idx, { tp: v })}
+                          placeholder="TP"
+                        />
+                      </td>
+                      {/* TP P&L (border-l) */}
+                      <td className="border-l border-border/30 px-2 py-2 tabular-nums text-right whitespace-nowrap">
+                        <div className={cn('text-[11px] font-medium', tpPnl == null ? 'text-ink-disabled' : tpPnl >= 0 ? 'text-gain' : 'text-loss')}>
+                          {fmtPnl(tpPnl)}
+                        </div>
+                        <div className={cn('text-[10px]', tpPnlPct == null ? 'text-ink-disabled' : tpPnlPct >= 0 ? 'text-gain/70' : 'text-loss/70')}>
+                          {fmtPct(tpPnlPct)}
+                        </div>
+                      </td>
+                      <td className="w-0 p-0" />
+
+                      {/* SL — editable (border-l) */}
+                      <td className="border-l border-border/30 px-2 py-2 w-[90px]">
+                        <NumInput
+                          value={row.sl}
+                          onChange={v => updateRow(idx, { sl: v })}
+                          placeholder="SL"
+                        />
+                      </td>
+                      {/* SL P&L (border-l) */}
+                      <td className="border-l border-border/30 px-2 py-2 tabular-nums text-right whitespace-nowrap">
+                        <div className={cn('text-[11px] font-medium', slPnl == null ? 'text-ink-disabled' : slPnl >= 0 ? 'text-gain' : 'text-loss')}>
+                          {fmtPnl(slPnl)}
+                        </div>
+                        <div className={cn('text-[10px]', slPnlPct == null ? 'text-ink-disabled' : slPnlPct >= 0 ? 'text-gain/70' : 'text-loss/70')}>
+                          {fmtPct(slPnlPct)}
+                        </div>
+                      </td>
+                      <td className="w-0 p-0" />
+
+                      {/* REMAINING ORDER SIZE (border-l) */}
+                      <td className="border-l border-border/30 px-3 py-2 pr-4 tabular-nums text-right whitespace-nowrap">
+                        {remaining == null ? (
+                          <span className="text-ink-disabled">—</span>
+                        ) : (
+                          <span className={cn('font-medium', remaining > 0 ? 'text-brand-400' : remaining < 0 ? 'text-warning' : 'text-ink-muted')}>
+                            {remaining > 0 ? '+' : ''}{remaining.toLocaleString()}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

@@ -82,7 +82,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
         {!collapsed && (
           <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="font-bold text-ink-primary text-sm whitespace-nowrap">
-            InvestPro
+            POP Investment Planner
           </motion.span>
         )}
       </Link>
