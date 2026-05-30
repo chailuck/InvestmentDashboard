@@ -832,7 +832,22 @@ export default function PortfolioPage() {
         </div>
         <div>
           <label className="block text-xs text-ink-muted mb-1">To</label>
-          <input type="date" value={toDate} max={todayStr()} onChange={e => setToDate(e.target.value)} className="input text-sm py-1.5 px-2 w-36" />
+          <div className="flex items-center gap-1.5">
+            <input type="date" value={toDate} max={todayStr()} onChange={e => setToDate(e.target.value)} className="input text-sm py-1.5 px-2 w-36" />
+            <button
+              onClick={() => setToDate(todayStr())}
+              disabled={toDate === todayStr()}
+              title="Set to today"
+              className={cn(
+                'px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap',
+                toDate === todayStr()
+                  ? 'text-ink-disabled border-border/40 cursor-default'
+                  : 'text-brand-400 border-brand-500/30 bg-brand-500/10 hover:bg-brand-500/20',
+              )}
+            >
+              Today
+            </button>
+          </div>
         </div>
         <div>
           <label className="block text-xs text-ink-muted mb-1">Status</label>

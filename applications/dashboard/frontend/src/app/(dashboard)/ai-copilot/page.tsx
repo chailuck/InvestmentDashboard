@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+// Use the server-side proxy so the app works behind tunnels (ngrok, Cloudflare, etc.)
+const BASE_URL = '/api/proxy'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

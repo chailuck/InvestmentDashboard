@@ -1,7 +1,10 @@
 import axios, { type AxiosInstance, type AxiosError } from 'axios'
 import { useAuthStore } from '@/store/auth'
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+// Always route through the Next.js proxy so the app works behind any tunnel.
+// The proxy handler (/api/proxy/...) runs server-side and reaches the backend
+// on the internal Docker network — no CORS issues, no localhost dependency.
+const BASE_URL = '/api/proxy'
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
@@ -25,7 +28,7 @@ apiClient.interceptors.response.use(
       original._retry = true
       try {
         const { refreshToken, setTokens } = useAuthStore.getState()
-        const { data } = await axios.post(`${BASE_URL}/api/v1/auth/refresh`, { refreshToken })
+        const { data } = await axios.post(`/api/proxy/api/v1/auth/refresh`, { refreshToken })
         setTokens(data)
         original.headers.Authorization = `Bearer ${data.accessToken}`
         return apiClient(original)

@@ -65,7 +65,8 @@ services:
       APP_ENV: development
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/investment_db
       REDIS_URL: redis://redis:6379/0
-      CORS_ORIGINS: '["http://localhost:3000"]'
+      # Allow all origins — browser never calls backend directly (goes through Next.js proxy)
+      CORS_ORIGINS: '["*"]'
       LOG_LEVEL: INFO
     env_file:
       - backend/.env
@@ -96,8 +97,10 @@ services:
       backend:
         condition: service_healthy
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+      # BACKEND_URL: internal Docker hostname for the Next.js proxy route handler.
+      # Browser never calls the backend directly — it calls /api/proxy/... on the
+      # same origin, so this works behind any tunnel without rebuilding.
+      BACKEND_URL: http://backend:8000
       NODE_ENV: production
     ports:
       - "3000:3000"

@@ -81,10 +81,15 @@ def create_app() -> FastAPI:
     # Middleware (order matters — outermost runs last on response)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestIdMiddleware)
+    # When origins = ["*"] we must disable allow_credentials (browser requirement).
+    # The app now uses the Next.js proxy so the browser never calls the backend
+    # directly — CORS is only needed for direct local curl/dev access.
+    wildcard = settings.cors_origins == ["*"]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_origin_regex=r".*" if wildcard else None,
+        allow_credentials=not wildcard,
         allow_methods=["*"],
         allow_headers=["*"],
     )
