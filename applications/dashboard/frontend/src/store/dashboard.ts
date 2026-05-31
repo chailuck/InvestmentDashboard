@@ -3,12 +3,10 @@ import { persist } from 'zustand/middleware'
 import type { WidgetConfig } from '@/types'
 
 const DEFAULT_WIDGETS: WidgetConfig[] = [
-  { id: 'portfolio-summary', type: 'portfolio_summary',  title: 'Portfolio Summary',    x: 0, y: 0, w: 8, h: 3, minW: 4, minH: 2 },
-  { id: 'ai-insights',       type: 'ai_insights',        title: 'AI Insights',          x: 8, y: 0, w: 4, h: 3, minW: 3, minH: 2 },
-  { id: 'portfolio-chart',   type: 'portfolio_chart',    title: 'Performance',          x: 0, y: 3, w: 8, h: 5, minW: 4, minH: 3 },
-  { id: 'allocation',        type: 'allocation_chart',   title: 'Allocation',           x: 8, y: 3, w: 4, h: 5, minW: 3, minH: 3 },
-  { id: 'holdings',          type: 'holdings_table',     title: 'Holdings',             x: 0, y: 8, w: 7, h: 6, minW: 4, minH: 4 },
-  { id: 'risk-metrics',      type: 'risk_metrics',       title: 'Risk Metrics',         x: 7, y: 8, w: 5, h: 6, minW: 3, minH: 3 },
+  { id: 'portfolio-summary', type: 'portfolio_summary', title: 'Portfolio Summary', x: 0, y: 0, w: 12, h: 3, minW: 6, minH: 2 },
+  { id: 'portfolio-chart',   type: 'portfolio_chart',   title: 'Performance',       x: 0, y: 3, w: 8,  h: 5, minW: 4, minH: 3 },
+  { id: 'allocation',        type: 'allocation_chart',  title: 'Allocation',        x: 8, y: 3, w: 4,  h: 5, minW: 3, minH: 3 },
+  { id: 'holdings',          type: 'holdings_table',    title: 'Holdings',          x: 0, y: 8, w: 12, h: 6, minW: 4, minH: 4 },
 ]
 
 interface DashboardState {
@@ -45,6 +43,6 @@ export const useDashboardStore = create<DashboardState>()(
 
       resetLayout: () => set({ widgets: DEFAULT_WIDGETS }),
     }),
-    { name: 'dashboard-layout-v2' }
+    { name: 'dashboard-layout-v3' }
   )
 )

@@ -48,7 +48,8 @@ def _f(v) -> float | None:
 
 
 def _fetch_price(symbol: str) -> float | None:
-    for t in [f"{symbol}.BK", symbol]:
+    # Only try .BK — bare symbol would match US-listed tickers with same name
+    for t in [f"{symbol}.BK"]:
         try:
             hist = yf.Ticker(t).history(period="2d")
             if not hist.empty:

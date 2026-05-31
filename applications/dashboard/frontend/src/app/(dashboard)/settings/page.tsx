@@ -137,11 +137,14 @@ function PortfolioDataSourceSection() {
   )
 }
 
-// Expose current mode so AppConfigSection can hide itself
+// Reactive — invalidated by switchMode() so the page re-renders immediately
 function usePortfolioMode() {
-  const [mode, setMode] = useState<'excel' | 'db' | null>(null)
-  useEffect(() => { portfolioDbService.getMode().then(m => setMode(m as 'excel' | 'db')) }, [])
-  return mode
+  const { data } = useQuery({
+    queryKey: ['portfolio-mode'],
+    queryFn: portfolioDbService.getMode,
+    staleTime: 60_000,
+  })
+  return data ?? null
 }
 
 function AppConfigSection() {

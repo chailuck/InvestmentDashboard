@@ -4,6 +4,8 @@ export type AssetType = 'SET' | 'CRYPTO' | 'DR'
 
 export interface ChartData {
   symbol: string
+  ticker: string
+  exchange: string
   candles: { time: string; open: number; high: number; low: number; close: number }[]
   volume: { time: string; value: number; color: string }[]
   rsi: { time: string; value: number }[]
@@ -16,6 +18,7 @@ export interface SearchResult {
   symbol: string
   ticker?: string
   asset_type: AssetType
+  exchange?: string
   name?: string
   price?: number
   change_pct?: number
@@ -23,9 +26,9 @@ export interface SearchResult {
 }
 
 export const analyticsService = {
-  async getChartData(symbol: string, assetType: AssetType, period = '6mo'): Promise<ChartData> {
+  async getChartData(symbol: string, assetType: AssetType, interval = '1d'): Promise<ChartData> {
     const { data } = await apiClient.get('/analytics/chart', {
-      params: { symbol, asset_type: assetType, period },
+      params: { symbol, asset_type: assetType, interval },
     })
     return data as ChartData
   },

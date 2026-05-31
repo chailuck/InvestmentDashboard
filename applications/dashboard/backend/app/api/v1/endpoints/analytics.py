@@ -7,6 +7,7 @@ import base64
 import glob
 import os
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -95,20 +96,56 @@ def _ticker_sym(symbol: str, asset_type: str) -> list[str]:
         return [f"{sym}-USD", f"{sym}-USDT", sym]
     if asset_type == "DR":
         return [f"{sym}.BK", sym]
-    # SET default
+    # SET: .BK first (Thai SET), bare symbol only as last resort
     return [f"{sym}.BK", sym]
 
 
-def _fetch_ohlcv(symbol: str, asset_type: str, period: str) -> pd.DataFrame:
+def _exchange_label(ticker: str) -> str:
+    """Derive a human-readable exchange label from the yfinance ticker string."""
+    if ticker.endswith(".BK"):
+        return "SET"
+    if "-USD" in ticker or "-USDT" in ticker:
+        return "Crypto"
+    # Try to get from yfinance fast_info
+    try:
+        ex = getattr(yf.Ticker(ticker).fast_info, "exchange", None) or ""
+        return ex if ex else "—"
+    except Exception:
+        return "—"
+
+
+_YF_INTERVAL: dict[str, str] = {
+    "1h":  "1h",
+    "4h":  "1h",   # fetch 1H then resample
+    "1d":  "1d",
+    "1wk": "1wk",
+}
+
+_MAX_DAYS     = 912   # 2.5 years — always fetch the full history
+_INTRADAY_MAX = 730   # yfinance caps 1h data at ~730 days
+
+
+def _fetch_ohlcv(symbol: str, asset_type: str, interval: str) -> tuple[pd.DataFrame, str]:
+    """Returns (DataFrame, ticker_used). Always fetches the maximum history window."""
+    yf_interval = _YF_INTERVAL.get(interval, "1d")
+    days = _INTRADAY_MAX if yf_interval == "1h" else _MAX_DAYS
+    start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
     for t in _ticker_sym(symbol, asset_type):
         try:
-            df = yf.Ticker(t).history(period=period)
+            df = yf.Ticker(t).history(start=start, interval=yf_interval,
+                                      auto_adjust=False, back_adjust=False)
             if not df.empty:
                 df.index = pd.to_datetime(df.index).tz_localize(None)
-                return df
+                if interval == "4h":
+                    df = df.resample("4h").agg({
+                        "Open": "first", "High": "max",
+                        "Low": "min", "Close": "last", "Volume": "sum",
+                    }).dropna(subset=["Close"])
+                return df, t
         except Exception:
             continue
-    return pd.DataFrame()
+    return pd.DataFrame(), ""
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -118,20 +155,22 @@ async def get_chart_data(
     _: UserId,
     symbol: str = Query(...),
     asset_type: str = Query("SET"),
-    period: str = Query("6mo"),
+    interval: str = Query("1d"),
 ) -> dict[str, Any]:
-    df = await asyncio.get_event_loop().run_in_executor(
-        None, _fetch_ohlcv, symbol, asset_type, period
+    df, ticker_used = await asyncio.get_event_loop().run_in_executor(
+        None, _fetch_ohlcv, symbol, asset_type, interval
     )
     if df.empty:
-        raise HTTPException(404, f"No data found for {symbol}")
+        raise HTTPException(404, f"No data found for {symbol} ({symbol}.BK)")
 
     rsi = _calc_rsi(df["Close"])
     stoch_k, stoch_d = _calc_stoch(df["High"], df["Low"], df["Close"])
     vrvp = _calc_vrvp(df)
 
+    intraday = interval in ("1h", "4h")
+
     def _ts(dt) -> str:
-        return dt.strftime("%Y-%m-%d")
+        return dt.strftime("%Y-%m-%d %H:%M") if intraday else dt.strftime("%Y-%m-%d")
 
     candles = [
         {"time": _ts(idx), "open": round(float(r.Open), 4), "high": round(float(r.High), 4),
@@ -158,6 +197,8 @@ async def get_chart_data(
 
     return {
         "symbol": symbol.upper(),
+        "ticker": ticker_used,
+        "exchange": _exchange_label(ticker_used),
         "candles": candles,
         "volume": volume,
         "rsi": rsi_data,
@@ -184,15 +225,24 @@ async def search_symbol(
                 hist = tk.history(period="5d")
                 if hist.empty:
                     continue
-                info = tk.fast_info
+                fast = tk.fast_info
                 prev_close = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else float(hist["Close"].iloc[-1])
                 last_close = float(hist["Close"].iloc[-1])
                 chg_pct = (last_close - prev_close) / prev_close * 100 if prev_close else 0
+                # Exchange: prefer fast_info, fall back to ticker suffix
+                yf_exchange = getattr(fast, "exchange", None) or ""
+                exchange = _exchange_label(t) if not yf_exchange else yf_exchange
+                long_name = ""
+                try:
+                    long_name = tk.info.get("longName", "") or tk.info.get("shortName", "")
+                except Exception:
+                    pass
                 return {
                     "symbol": sym,
                     "ticker": t,
                     "asset_type": asset_type,
-                    "name": getattr(info, "currency", t),
+                    "exchange": exchange,
+                    "name": long_name or sym,
                     "price": round(last_close, 4),
                     "change_pct": round(chg_pct, 2),
                     "found": True,

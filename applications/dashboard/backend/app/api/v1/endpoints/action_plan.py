@@ -166,7 +166,8 @@ async def get_stock_price(
     import yfinance as yf
 
     sym = symbol.strip().upper()
-    for ticker_sym in [f"{sym}.BK", sym]:
+    # Only try .BK — bare symbol would match a US-listed ticker with the same name
+    for ticker_sym in [f"{sym}.BK"]:
         try:
             hist = yf.Ticker(ticker_sym).history(period="5d")
             if not hist.empty:

@@ -66,14 +66,14 @@ export function PortfolioSummaryWidget({ config }: { config: WidgetConfig }) {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 gap-2 p-3 h-full sm:gap-3 sm:p-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 p-3 h-full sm:gap-3 sm:p-4">
         {[...Array(4)].map((_, i) => <div key={i} className="skeleton h-16 sm:h-20 rounded-lg" />)}
       </div>
     )
   }
 
   return (
-    <div className="grid grid-cols-2 gap-2 p-3 h-full content-start sm:gap-3 sm:p-4">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 p-3 h-full content-start sm:gap-3 sm:p-4">
       {metrics.map(({ label, value, sub, up, icon: Icon, highlight }) => (
         <motion.div key={label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
           className={cn(

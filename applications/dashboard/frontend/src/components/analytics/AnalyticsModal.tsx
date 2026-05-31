@@ -1,153 +1,13 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { X, Loader2, RefreshCw, Save, CheckCircle2, ChevronDown, ChevronUp, Image as ImageIcon, FileText } from 'lucide-react'
+import { X, Loader2, Save, CheckCircle2, ChevronDown, ChevronUp, Image as ImageIcon, FileText } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import ReactECharts from 'echarts-for-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
-import { analyticsService, type AssetType, type ChartData } from '@/services/analytics'
-
-// ── Period selector ───────────────────────────────────────────────────────────
-
-const PERIODS = ['1mo', '3mo', '6mo', '1y', '2y'] as const
-type Period = (typeof PERIODS)[number]
-
-// ── Build ECharts option for multi-panel chart ────────────────────────────────
-
-function buildChartOption(data: ChartData) {
-  const { candles, volume, rsi, stoch_k, stoch_d, vrvp } = data
-
-  // VRVP as right-side horizontal bars
-  const maxVrvpVol = Math.max(...vrvp.map(v => v.volume), 1)
-  const vrvpSeries = vrvp.map(v => ({
-    price: (v.price_low + v.price_high) / 2,
-    volume: v.volume,
-    pct: v.volume / maxVrvpVol,
-  }))
-
-  const dates = candles.map(c => c.time)
-  const ohlc = candles.map(c => [c.open, c.close, c.low, c.high])
-  const volValues = volume.map(v => ({ value: v.value, itemStyle: { color: v.color } }))
-
-  // Price range for VRVP custom series
-  const priceMin = Math.min(...candles.map(c => c.low))
-  const priceMax = Math.max(...candles.map(c => c.high))
-
-  return {
-    backgroundColor: 'transparent',
-    animation: false,
-    legend: { show: false },
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' },
-      backgroundColor: '#1c2333',
-      borderColor: '#2d3748',
-      textStyle: { color: '#e2e8f0', fontSize: 11 },
-    },
-    axisPointer: { link: [{ xAxisIndex: [0, 1, 2] }] },
-    dataZoom: [
-      { type: 'inside', xAxisIndex: [0, 1, 2], start: 40, end: 100 },
-      { type: 'slider', xAxisIndex: [0, 1, 2], height: 20, bottom: 4,
-        borderColor: '#2d3748', backgroundColor: '#161b22', fillerColor: 'rgba(59,130,246,0.15)',
-        handleStyle: { color: '#3b82f6' }, textStyle: { color: '#64748b', fontSize: 10 } },
-    ],
-    grid: [
-      { left: 60, right: 100, top: 10, height: '44%' },     // candle
-      { left: 60, right: 100, top: '57%', height: '12%' },  // volume
-      { left: 60, right: 100, top: '72%', height: '10%' },  // RSI
-      { left: 60, right: 100, top: '85%', height: '10%' },  // Stoch
-    ],
-    xAxis: [0, 1, 2, 3].map(i => ({
-      type: 'category',
-      data: dates,
-      gridIndex: i,
-      axisLine: { lineStyle: { color: '#2d3748' } },
-      axisLabel: i === 3 ? { color: '#64748b', fontSize: 10 } : { show: false },
-      splitLine: { show: false },
-    })),
-    yAxis: [
-      // Candle Y
-      { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#1e293b' } },
-        axisLabel: { color: '#64748b', fontSize: 10 }, min: priceMin * 0.99, max: priceMax * 1.01 },
-      // Volume Y
-      { gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false } },
-      // RSI Y
-      { min: 0, max: 100, gridIndex: 2, splitLine: { show: false },
-        axisLabel: { color: '#64748b', fontSize: 9 } },
-      // Stoch Y
-      { min: 0, max: 100, gridIndex: 3, splitLine: { show: false },
-        axisLabel: { color: '#64748b', fontSize: 9 } },
-    ],
-    series: [
-      // Candlestick
-      {
-        name: 'Price', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0, data: ohlc,
-        itemStyle: {
-          color: 'rgba(34,197,94,0.85)', color0: 'rgba(239,68,68,0.85)',
-          borderColor: '#22c55e', borderColor0: '#ef4444',
-        },
-      },
-      // Volume
-      {
-        name: 'Volume', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volValues,
-        barMaxWidth: 6,
-      },
-      // RSI
-      {
-        name: 'RSI', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
-        data: rsi.map(r => [r.time, r.value]), smooth: false, symbol: 'none',
-        lineStyle: { color: '#a78bfa', width: 1.5 },
-        markLine: {
-          silent: true, symbol: 'none',
-          lineStyle: { color: '#475569', type: 'dashed', width: 1 },
-          data: [{ yAxis: 70 }, { yAxis: 30 }],
-          label: { color: '#64748b', fontSize: 9 },
-        },
-      },
-      // Stoch %K
-      {
-        name: '%K', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
-        data: stoch_k.map(r => [r.time, r.value]), smooth: false, symbol: 'none',
-        lineStyle: { color: '#38bdf8', width: 1.5 },
-        markLine: {
-          silent: true, symbol: 'none',
-          lineStyle: { color: '#475569', type: 'dashed', width: 1 },
-          data: [{ yAxis: 80 }, { yAxis: 20 }],
-          label: { color: '#64748b', fontSize: 9 },
-        },
-      },
-      // Stoch %D
-      {
-        name: '%D', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
-        data: stoch_d.map(r => [r.time, r.value]), smooth: false, symbol: 'none',
-        lineStyle: { color: '#fb923c', width: 1.5 },
-      },
-      // VRVP — custom horizontal bars on candle pane (right side)
-      {
-        name: 'VRVP', type: 'custom', xAxisIndex: 0, yAxisIndex: 0,
-        silent: true,
-        renderItem: (_: any, api: any) => {
-          const point = vrvpSeries[api.dataIndex]
-          if (!point) return { type: 'group', children: [] }
-          const y = api.coord([dates[0], point.price])[1]
-          const maxBarW = 80
-          const barW = point.pct * maxBarW
-          const barH = Math.max(2, api.size([0, point.price])[1] * 0.9)
-          const [x0] = api.getWidth ? [api.getWidth() - maxBarW - 4] : [800 - maxBarW - 4]
-          return {
-            type: 'rect',
-            shape: { x: x0, y: y - barH / 2, width: barW, height: barH },
-            style: { fill: 'rgba(59,130,246,0.25)', stroke: 'rgba(59,130,246,0.5)', lineWidth: 0.5 },
-          }
-        },
-        data: vrvpSeries.map((v, i) => i),
-        z: 2,
-      },
-    ],
-  }
-}
+import { analyticsService, type AssetType } from '@/services/analytics'
+import { EChartsChart, type ChartInterval } from './EChartsChart'
 
 // ── Section collapser ─────────────────────────────────────────────────────────
 
@@ -185,6 +45,199 @@ function Section({ title, icon: Icon, children, defaultOpen = true }: {
   )
 }
 
+// ── Pan / zoom image viewer ───────────────────────────────────────────────────
+
+function PanZoomImage({ src, alt }: { src: string; alt: string }) {
+  const [scale, setScale] = useState(1)
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const isDragging = useRef(false)
+  const last = useRef({ x: 0, y: 0 })
+  const imgRef = useRef<HTMLImageElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const clampScale = (s: number) => Math.min(Math.max(s, 0.25), 10)
+
+  const applyTransform = useCallback((s: number, ox: number, oy: number) => {
+    if (imgRef.current) {
+      imgRef.current.style.transform =
+        `translate(calc(-50% + ${ox}px), calc(-50% + ${oy}px)) scale(${s})`
+    }
+  }, [])
+
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault()
+    setScale(prev => {
+      const next = clampScale(prev * (e.deltaY < 0 ? 1.15 : 1 / 1.15))
+      setOffset(o => { applyTransform(next, o.x, o.y); return o })
+      return next
+    })
+  }, [applyTransform])
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDragging.current = true
+    last.current = { x: e.clientX, y: e.clientY }
+    if (containerRef.current) containerRef.current.style.cursor = 'grabbing'
+  }, [])
+
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging.current) return
+    setOffset(prev => {
+      const next = { x: prev.x + e.clientX - last.current.x, y: prev.y + e.clientY - last.current.y }
+      last.current = { x: e.clientX, y: e.clientY }
+      setScale(s => { applyTransform(s, next.x, next.y); return s })
+      return next
+    })
+  }, [applyTransform])
+
+  const stopDrag = useCallback(() => {
+    isDragging.current = false
+    if (containerRef.current) containerRef.current.style.cursor = 'grab'
+  }, [])
+
+  const lastPinchDist = useRef<number | null>(null)
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) last.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
+      lastPinchDist.current = Math.hypot(dx, dy)
+    }
+  }
+  const onTouchMove = (e: React.TouchEvent) => {
+    e.preventDefault()
+    if (e.touches.length === 1) {
+      setOffset(prev => {
+        const next = { x: prev.x + e.touches[0].clientX - last.current.x, y: prev.y + e.touches[0].clientY - last.current.y }
+        last.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        setScale(s => { applyTransform(s, next.x, next.y); return s })
+        return next
+      })
+    }
+    if (e.touches.length === 2 && lastPinchDist.current != null) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
+      const dist = Math.hypot(dx, dy)
+      setScale(prev => {
+        const next = clampScale(prev * dist / lastPinchDist.current!)
+        setOffset(o => { applyTransform(next, o.x, o.y); return o })
+        lastPinchDist.current = dist
+        return next
+      })
+    }
+  }
+
+  const reset = () => { setScale(1); setOffset({ x: 0, y: 0 }); applyTransform(1, 0, 0) }
+  useEffect(() => { applyTransform(1, 0, 0) }, []) // eslint-disable-line
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-[10px] text-ink-disabled mr-1">{Math.round(scale * 100)}% · scroll to zoom · drag to pan</span>
+        <button onClick={() => { const s = clampScale(scale * 1.3); setScale(s); applyTransform(s, offset.x, offset.y) }}
+          className="btn-ghost text-xs px-2.5 py-1">+ Zoom in</button>
+        <button onClick={() => { const s = clampScale(scale / 1.3); setScale(s); applyTransform(s, offset.x, offset.y) }}
+          className="btn-ghost text-xs px-2.5 py-1">− Zoom out</button>
+        <button onClick={reset} className="btn-ghost text-xs px-2.5 py-1">Reset</button>
+      </div>
+      <div
+        ref={containerRef}
+        className="relative overflow-hidden rounded-lg border border-border/30 bg-surface-elevated"
+        style={{ height: 500, touchAction: 'none', cursor: 'grab' }}
+        onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={stopDrag}
+        onMouseLeave={stopDrag}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={() => { lastPinchDist.current = null }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          ref={imgRef}
+          src={src}
+          alt={alt}
+          draggable={false}
+          style={{
+            position: 'absolute', top: '50%', left: '50%',
+            maxWidth: 'none', width: '100%', userSelect: 'none',
+            transform: 'translate(-50%, -50%) scale(1)',
+            transformOrigin: 'center center',
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// ── Analysis log — markdown renderer ─────────────────────────────────────────
+
+function AnalysisLogMd({ content }: { content: string }) {
+  return (
+    <div className="prose prose-invert prose-sm max-w-none text-ink-secondary leading-relaxed
+      prose-headings:text-ink-primary prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
+      prose-table:text-xs prose-th:bg-surface-elevated prose-th:text-ink-muted
+      prose-td:border-border/40 prose-th:border-border/40
+      prose-code:bg-surface-elevated prose-code:text-brand-300 prose-code:rounded prose-code:px-1
+      prose-a:text-brand-400 prose-strong:text-ink-primary overflow-auto max-h-[520px] p-1">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  )
+}
+
+// ── Analysis log renderer — themed iframe ─────────────────────────────────────
+
+function AnalysisLogView({ html }: { html: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+
+  useEffect(() => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+    const doc = iframe.contentDocument
+    if (!doc) return
+
+    const themed = `
+      <html><head>
+      <meta charset="UTF-8">
+      <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #0d1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.6; padding: 16px; }
+        h1,h2,h3,h4 { color: #f1f5f9; margin: 12px 0 6px; }
+        h1 { font-size: 1.2em; border-bottom: 1px solid #2d3748; padding-bottom: 6px; }
+        h2 { font-size: 1.05em; color: #93c5fd; }
+        h3 { font-size: 0.95em; color: #7dd3fc; }
+        table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+        th { background: #1e293b; color: #94a3b8; font-size: 11px; text-transform: uppercase; padding: 6px 8px; border: 1px solid #2d3748; text-align: left; }
+        td { padding: 5px 8px; border: 1px solid #1e293b; color: #cbd5e1; font-size: 12px; }
+        tr:hover td { background: #1e293b; }
+        .positive, .up, .gain { color: #22c55e !important; }
+        .negative, .down, .loss { color: #ef4444 !important; }
+        a { color: #60a5fa; text-decoration: none; }
+        p { margin: 6px 0; }
+        img { max-width: 100%; border-radius: 4px; border: 1px solid #2d3748; }
+        pre, code { background: #161b22; border: 1px solid #2d3748; border-radius: 4px; padding: 2px 6px; font-family: monospace; font-size: 11px; }
+        [style*="background: white"], [style*="background: #fff"], [style*="background-color: white"], [style*="background-color: #fff"] { background: #161b22 !important; color: #e2e8f0 !important; }
+        [style*="color: black"], [style*="color: #000"] { color: #e2e8f0 !important; }
+      </style>
+      </head><body>${html}</body></html>
+    `
+    doc.open()
+    doc.write(themed)
+    doc.close()
+  }, [html])
+
+  return (
+    <iframe
+      ref={iframeRef}
+      className="w-full rounded-lg border border-border/30"
+      style={{ height: 480, background: '#0d1117' }}
+      sandbox="allow-same-origin"
+      title="Analysis log"
+    />
+  )
+}
+
 // ── Main modal ────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -194,32 +247,19 @@ interface Props {
 }
 
 export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
-  const [period, setPeriod] = useState<Period>('6mo')
-  const [chartData, setChartData] = useState<ChartData | null>(null)
-  const [chartLoading, setChartLoading] = useState(true)
-  const [chartError, setChartError] = useState<string | null>(null)
+  const [interval, setInterval] = useState<ChartInterval>('1d')
 
-  const [analysisLog, setAnalysisLog] = useState<{ found: boolean; content: string | null; filename: string | null; file_type: 'html' | 'md' | null } | null>(null)
-  const [fiboChart, setFiboChart] = useState<{ found: boolean; image: string | null; filename: string | null } | null>(null)
+  const [analysisLog, setAnalysisLog] = useState<{
+    found: boolean; content: string | null; filename: string | null; file_type: 'html' | 'md' | null
+  } | null>(null)
+  const [fiboChart, setFiboChart] = useState<{
+    found: boolean; image: string | null; filename: string | null
+  } | null>(null)
 
   const [note, setNote] = useState('')
   const [noteSaving, setNoteSaving] = useState(false)
   const [noteSaved, setNoteSaved] = useState(false)
   const noteSaveTimer = useRef<ReturnType<typeof setTimeout>>()
-
-  // Load chart data
-  const loadChart = useCallback(async () => {
-    setChartLoading(true)
-    setChartError(null)
-    try {
-      const data = await analyticsService.getChartData(symbol, assetType, period)
-      setChartData(data)
-    } catch (e: any) {
-      setChartError(e?.response?.data?.detail ?? 'Failed to load chart data')
-    } finally {
-      setChartLoading(false)
-    }
-  }, [symbol, assetType, period])
 
   // Load side data on mount
   useEffect(() => {
@@ -229,8 +269,6 @@ export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
       analyticsService.getNote(symbol).then(r => setNote(r.note)),
     ])
   }, [symbol])
-
-  useEffect(() => { loadChart() }, [loadChart])
 
   const saveNote = async () => {
     setNoteSaving(true)
@@ -243,6 +281,12 @@ export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
       setNoteSaving(false)
     }
   }
+
+  const assetBadgeColor = assetType === 'SET'
+    ? 'text-brand-400 border-brand-500/30 bg-brand-500/10'
+    : assetType === 'CRYPTO'
+      ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
+      : 'text-purple-400 border-purple-500/30 bg-purple-500/10'
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
@@ -258,68 +302,32 @@ export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
         <div className="card px-5 py-3 flex items-center gap-3">
           <div className="flex-1 flex items-center gap-3 min-w-0">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-lg font-bold text-ink-primary">{symbol.toUpperCase()}</span>
-                <span className={cn(
-                  'text-[10px] font-semibold px-1.5 py-0.5 rounded border',
-                  assetType === 'SET' ? 'text-brand-400 border-brand-500/30 bg-brand-500/10'
-                    : assetType === 'CRYPTO' ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
-                    : 'text-purple-400 border-purple-500/30 bg-purple-500/10'
-                )}>{assetType}</span>
+                <span className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded border', assetBadgeColor)}>
+                  {assetType}
+                </span>
               </div>
-              <p className="text-[11px] text-ink-muted">Analytics</p>
+              <p className="text-[11px] text-ink-muted mt-0.5">
+                Candlestick · RSI · Stochastic · VRVP
+              </p>
             </div>
-          </div>
-          {/* Period selector */}
-          <div className="flex items-center gap-1">
-            {PERIODS.map(p => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={cn(
-                  'px-2 py-1 text-[11px] font-medium rounded border transition-colors',
-                  period === p
-                    ? 'bg-brand-500/15 text-brand-400 border-brand-500/30'
-                    : 'text-ink-muted border-border hover:text-ink-primary',
-                )}
-              >{p}</button>
-            ))}
-            <button
-              onClick={loadChart}
-              disabled={chartLoading}
-              className="btn-icon ml-1"
-              title="Refresh chart"
-            >
-              <RefreshCw className={cn('w-3.5 h-3.5', chartLoading && 'animate-spin')} />
-            </button>
           </div>
           <button onClick={onClose} className="btn-icon"><X className="w-4 h-4" /></button>
         </div>
 
         {/* Chart */}
         <div className="card p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">Chart</span>
-            <span className="text-[10px] text-ink-disabled">Candle · Volume · RSI 14 · Stoch 9,3,3 · VRVP</span>
-          </div>
-          {chartLoading ? (
-            <div className="flex items-center justify-center h-[420px] gap-2 text-ink-muted">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">Loading chart…</span>
-            </div>
-          ) : chartError ? (
-            <div className="flex items-center justify-center h-[420px] text-loss text-sm">{chartError}</div>
-          ) : chartData ? (
-            <ReactECharts
-              option={buildChartOption(chartData)}
-              style={{ height: 500 }}
-              opts={{ renderer: 'canvas' }}
-              notMerge
-            />
-          ) : null}
+          <EChartsChart
+            symbol={symbol}
+            assetType={assetType}
+            interval={interval}
+            onIntervalChange={setInterval}
+            height={560}
+          />
         </div>
 
-        {/* Analysis log — between chart and fibo; HTML opens expanded, MD collapsed */}
+        {/* Analysis log — open by default for HTML, collapsed for MD */}
         {analysisLog?.found && (
           <Section title="Analysis Log" icon={FileText} defaultOpen={analysisLog.file_type === 'html'}>
             <div className="p-4">
@@ -373,227 +381,5 @@ export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
         </div>
       </motion.div>
     </div>
-  )
-}
-
-// ── Pan / zoom image viewer ───────────────────────────────────────────────────
-
-function PanZoomImage({ src, alt }: { src: string; alt: string }) {
-  const [scale, setScale] = useState(1)
-  const [offset, setOffset] = useState({ x: 0, y: 0 })
-  const isDragging = useRef(false)
-  const last = useRef({ x: 0, y: 0 })
-  const imgRef = useRef<HTMLImageElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  const clampScale = (s: number) => Math.min(Math.max(s, 0.25), 10)
-
-  // Apply transform directly via ref to avoid React re-render lag during drag
-  const applyTransform = useCallback((s: number, ox: number, oy: number) => {
-    if (imgRef.current) {
-      imgRef.current.style.transform =
-        `translate(calc(-50% + ${ox}px), calc(-50% + ${oy}px)) scale(${s})`
-    }
-  }, [])
-
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault()
-    setScale(prev => {
-      const next = clampScale(prev * (e.deltaY < 0 ? 1.15 : 1 / 1.15))
-      setOffset(o => { applyTransform(next, o.x, o.y); return o })
-      return next
-    })
-  }, [applyTransform])
-
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    isDragging.current = true
-    last.current = { x: e.clientX, y: e.clientY }
-    if (containerRef.current) containerRef.current.style.cursor = 'grabbing'
-  }, [])
-
-  const onMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isDragging.current) return
-    setOffset(prev => {
-      const next = { x: prev.x + e.clientX - last.current.x, y: prev.y + e.clientY - last.current.y }
-      last.current = { x: e.clientX, y: e.clientY }
-      setScale(s => { applyTransform(s, next.x, next.y); return s })
-      return next
-    })
-  }, [applyTransform])
-
-  const stopDrag = useCallback(() => {
-    isDragging.current = false
-    if (containerRef.current) containerRef.current.style.cursor = 'grab'
-  }, [])
-
-  // Touch
-  const lastPinchDist = useRef<number | null>(null)
-  const onTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 1) last.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-    if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX
-      const dy = e.touches[0].clientY - e.touches[1].clientY
-      lastPinchDist.current = Math.hypot(dx, dy)
-    }
-  }
-  const onTouchMove = (e: React.TouchEvent) => {
-    e.preventDefault()
-    if (e.touches.length === 1) {
-      setOffset(prev => {
-        const next = { x: prev.x + e.touches[0].clientX - last.current.x, y: prev.y + e.touches[0].clientY - last.current.y }
-        last.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-        setScale(s => { applyTransform(s, next.x, next.y); return s })
-        return next
-      })
-    }
-    if (e.touches.length === 2 && lastPinchDist.current != null) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX
-      const dy = e.touches[0].clientY - e.touches[1].clientY
-      const dist = Math.hypot(dx, dy)
-      setScale(prev => {
-        const next = clampScale(prev * dist / lastPinchDist.current!)
-        setOffset(o => { applyTransform(next, o.x, o.y); return o })
-        lastPinchDist.current = dist
-        return next
-      })
-    }
-  }
-
-  const reset = () => {
-    setScale(1)
-    setOffset({ x: 0, y: 0 })
-    applyTransform(1, 0, 0)
-  }
-
-  // Sync state → DOM on mount
-  useEffect(() => { applyTransform(scale, offset.x, offset.y) }, []) // eslint-disable-line
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-end gap-2">
-        <span className="text-[10px] text-ink-disabled mr-1">{Math.round(scale * 100)}% · scroll to zoom · drag to pan</span>
-        <button onClick={() => { const s = clampScale(scale * 1.3); setScale(s); applyTransform(s, offset.x, offset.y) }}
-          className="btn-ghost text-xs px-2.5 py-1">+ Zoom in</button>
-        <button onClick={() => { const s = clampScale(scale / 1.3); setScale(s); applyTransform(s, offset.x, offset.y) }}
-          className="btn-ghost text-xs px-2.5 py-1">− Zoom out</button>
-        <button onClick={reset} className="btn-ghost text-xs px-2.5 py-1">Reset</button>
-      </div>
-      <div
-        ref={containerRef}
-        className="relative overflow-hidden rounded-lg border border-border/30 bg-surface-elevated"
-        style={{ height: 500, touchAction: 'none', cursor: 'grab' }}
-        onWheel={onWheel}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={stopDrag}
-        onMouseLeave={stopDrag}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={() => { lastPinchDist.current = null }}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          ref={imgRef}
-          src={src}
-          alt={alt}
-          draggable={false}
-          style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            maxWidth: 'none',
-            width: '100%',
-            userSelect: 'none',
-            transform: `translate(-50%, -50%) scale(1)`,
-            transformOrigin: 'center center',
-          }}
-        />
-      </div>
-    </div>
-  )
-}
-
-// ── Analysis log — markdown renderer ─────────────────────────────────────────
-
-function AnalysisLogMd({ content }: { content: string }) {
-  return (
-    <div className="prose prose-invert prose-sm max-w-none text-ink-secondary leading-relaxed
-      prose-headings:text-ink-primary prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
-      prose-table:text-xs prose-th:bg-surface-elevated prose-th:text-ink-muted
-      prose-td:border-border/40 prose-th:border-border/40
-      prose-code:bg-surface-elevated prose-code:text-brand-300 prose-code:rounded prose-code:px-1
-      prose-a:text-brand-400 prose-strong:text-ink-primary overflow-auto max-h-[520px] p-1">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-    </div>
-  )
-}
-
-// ── Analysis log renderer — themed iframe ─────────────────────────────────────
-
-function AnalysisLogView({ html }: { html: string }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null)
-
-  useEffect(() => {
-    const iframe = iframeRef.current
-    if (!iframe) return
-    const doc = iframe.contentDocument
-    if (!doc) return
-
-    // Inject our dark theme CSS around the existing content
-    const themed = `
-      <html><head>
-      <meta charset="UTF-8">
-      <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-          background: #0d1117;
-          color: #e2e8f0;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-          font-size: 13px;
-          line-height: 1.6;
-          padding: 16px;
-        }
-        h1,h2,h3,h4 { color: #f1f5f9; margin: 12px 0 6px; }
-        h1 { font-size: 1.2em; border-bottom: 1px solid #2d3748; padding-bottom: 6px; }
-        h2 { font-size: 1.05em; color: #93c5fd; }
-        h3 { font-size: 0.95em; color: #7dd3fc; }
-        table { width: 100%; border-collapse: collapse; margin: 8px 0; }
-        th { background: #1e293b; color: #94a3b8; font-size: 11px; text-transform: uppercase;
-             padding: 6px 8px; border: 1px solid #2d3748; text-align: left; }
-        td { padding: 5px 8px; border: 1px solid #1e293b; color: #cbd5e1; font-size: 12px; }
-        tr:hover td { background: #1e293b; }
-        .positive, .up, .gain { color: #22c55e !important; }
-        .negative, .down, .loss { color: #ef4444 !important; }
-        a { color: #60a5fa; text-decoration: none; }
-        p { margin: 6px 0; }
-        img { max-width: 100%; border-radius: 4px; border: 1px solid #2d3748; }
-        pre, code { background: #161b22; border: 1px solid #2d3748; border-radius: 4px;
-                    padding: 2px 6px; font-family: monospace; font-size: 11px; }
-        /* Override bright backgrounds from external HTML */
-        [style*="background: white"], [style*="background: #fff"],
-        [style*="background-color: white"], [style*="background-color: #fff"] {
-          background: #161b22 !important;
-          color: #e2e8f0 !important;
-        }
-        [style*="color: black"], [style*="color: #000"] {
-          color: #e2e8f0 !important;
-        }
-      </style>
-      </head><body>${html}</body></html>
-    `
-    doc.open()
-    doc.write(themed)
-    doc.close()
-  }, [html])
-
-  return (
-    <iframe
-      ref={iframeRef}
-      className="w-full rounded-lg border border-border/30"
-      style={{ height: 480, background: '#0d1117' }}
-      sandbox="allow-same-origin"
-      title="Analysis log"
-    />
   )
 }

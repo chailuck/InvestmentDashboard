@@ -133,7 +133,7 @@ export default function AnalyticsPage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border/40 bg-surface-elevated/30">
-                  {['Symbol', 'Type', 'Price', 'Change', 'Status', ''].map(h => (
+                  {['Symbol', 'Name', 'Market', 'Price', 'Change', 'Status', ''].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left font-semibold text-ink-muted whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -151,11 +151,24 @@ export default function AnalyticsPage() {
                         >
                           {entry.symbol}
                         </button>
+                        {r.ticker && r.ticker !== entry.symbol && (
+                          <div className="text-[10px] text-ink-disabled font-mono">{r.ticker}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-ink-secondary max-w-[160px] truncate" title={r.name}>
+                        {r.name || '—'}
                       </td>
                       <td className="px-4 py-2.5">
-                        <span className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded border', typeStyle)}>
-                          {entry.assetType}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded border', typeStyle)}>
+                            {entry.assetType}
+                          </span>
+                          {r.exchange && (
+                            <span className="text-[10px] text-ink-muted font-medium px-1.5 py-0.5 rounded border border-border/50 bg-surface-elevated">
+                              {r.exchange}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-2.5 tabular-nums text-ink-primary font-medium">
                         {r.price != null ? r.price.toFixed(4) : '—'}
