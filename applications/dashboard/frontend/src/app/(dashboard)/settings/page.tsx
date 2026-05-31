@@ -1,15 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink } from 'lucide-react'
+import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink, ListChecks, Upload, Download } from 'lucide-react'
 import Link from 'next/link'
 import { useAuthStore } from '@/store/auth'
 import { apiClient } from '@/services/api'
 import { usersService } from '@/services/users'
 import { appConfigService } from '@/services/appConfig'
 import { portfolioDbService } from '@/services/portfolioDb'
+import { weeklyScanService } from '@/services/weeklyScan'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -350,6 +351,98 @@ function PortfolioPrefsSection() {
   )
 }
 
+function ScanListSection() {
+  const [text, setText] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (loaded) return
+    weeklyScanService.getConfig().then(cfg => {
+      setText(cfg.symbols.join('\n'))
+      setLoaded(true)
+    }).catch(() => setLoaded(true))
+  }, [loaded])
+
+  const symbols = text.split('\n').map(s => s.trim().toUpperCase()).filter(Boolean)
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await weeklyScanService.updateConfig(symbols)
+      toast.success(`Saved ${symbols.length} symbols`)
+    } catch {
+      toast.error('Failed to save scan list')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const exportTxt = () => {
+    const blob = new Blob([text], { type: 'text/plain' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'scan_list.txt'
+    a.click()
+  }
+
+  const importFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      setText(ev.target?.result as string ?? '')
+      toast.success('Imported — review and save')
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  return (
+    <Section title="Scan List Configuration" icon={ListChecks}>
+      <p className="text-xs text-ink-muted -mt-3">
+        Symbols used when creating a Weekly Scan. One symbol per line. SET50 pre-loaded by default.
+      </p>
+      {!loaded ? (
+        <div className="flex items-center gap-2 text-ink-muted text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-ink-muted">{symbols.length} symbols</span>
+            <div className="flex gap-2">
+              <button onClick={() => fileRef.current?.click()}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors">
+                <Upload className="w-3.5 h-3.5" /> Import
+              </button>
+              <input ref={fileRef} type="file" accept=".txt" className="hidden" onChange={importFile} />
+              <button onClick={exportTxt}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors">
+                <Download className="w-3.5 h-3.5" /> Export
+              </button>
+            </div>
+          </div>
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            rows={12}
+            className="input w-full font-mono text-xs py-2 leading-5"
+            placeholder="KBANK&#10;AOT&#10;PTTEP&#10;…"
+            spellCheck={false}
+            style={{ resize: 'vertical' }}
+          />
+          <p className="text-[11px] text-ink-disabled">One symbol per line. Symbols are automatically uppercased and deduplicated on save.</p>
+          <button onClick={save} disabled={saving}
+            className="btn-primary flex items-center gap-2 px-4 py-2 text-sm">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Scan List
+          </button>
+        </div>
+      )}
+    </Section>
+  )
+}
+
 export default function SettingsPage() {
   const { user, setUser } = useAuthStore()
   const portfolioMode = usePortfolioMode()
@@ -482,6 +575,9 @@ export default function SettingsPage() {
 
       {/* App Config — only shown in Excel mode */}
       {portfolioMode !== 'db' && <AppConfigSection />}
+
+      {/* Scan list config */}
+      <ScanListSection />
 
       {/* Account Info */}
       <Section title="Account Details" icon={Shield}>

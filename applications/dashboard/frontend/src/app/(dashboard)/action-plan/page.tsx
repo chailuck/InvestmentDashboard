@@ -7,11 +7,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import {
   ClipboardList, Plus, Edit2, Trash2, Copy, X, Loader2,
-  ShoppingCart, Briefcase, AlertCircle,
+  ShoppingCart, Briefcase, AlertCircle, ScanLine,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { actionPlanService, type PlanSummary, type PlanType, type ViewMonths } from '@/services/actionPlan'
+import { weeklyScanService, COLOR_MARKS, type ScanListSummary } from '@/services/weeklyScan'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -355,6 +356,148 @@ function PlanSection({ type }: { type: PlanType }) {
   )
 }
 
+// ── Weekly Scan summary section ────────────────────────────────────────────────
+
+function WeeklyScanSection() {
+  const router = useRouter()
+  const queryClient = useQueryClient()
+  const [createModal, setCreateModal] = useState(false)
+  const [suggestedName, setSuggestedName] = useState('')
+  const [actionLoading, setActionLoading] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<ScanListSummary | null>(null)
+
+  const { data: scans = [], isLoading, isError } = useQuery({
+    queryKey: ['weekly-scans'],
+    queryFn: weeklyScanService.listScans,
+    staleTime: 30_000,
+  })
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['weekly-scans'] })
+
+  const openCreate = async () => {
+    const name = await weeklyScanService.suggestName()
+    setSuggestedName(name)
+    setCreateModal(true)
+  }
+
+  const handleCreate = async (name: string) => {
+    setActionLoading(true)
+    try {
+      const { id } = await weeklyScanService.createScan(name)
+      setCreateModal(false)
+      await invalidate()
+      router.push(`/weekly-scan/${id}`)
+    } catch { } finally { setActionLoading(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setActionLoading(true)
+    try {
+      await weeklyScanService.deleteScan(deleteTarget.id)
+      setDeleteTarget(null)
+      await invalidate()
+    } catch { } finally { setActionLoading(false) }
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-5 py-4 border-b border-border/50 flex items-center gap-3">
+        <ScanLine className="w-4 h-4 text-brand-400 shrink-0" />
+        <h2 className="text-sm font-semibold text-ink-primary flex-1">Weekly Scans</h2>
+        <button onClick={openCreate} className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5">
+          <Plus className="w-3.5 h-3.5" /> New Scan
+        </button>
+      </div>
+
+      <div className="overflow-x-auto">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-10 gap-2 text-ink-muted text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+          </div>
+        ) : isError ? (
+          <div className="flex items-center justify-center py-10 gap-2 text-loss text-sm">
+            <AlertCircle className="w-4 h-4" /> Failed to load scans.
+          </div>
+        ) : scans.length === 0 ? (
+          <div className="py-10 text-center text-ink-muted text-sm">
+            No weekly scans yet. Click <span className="text-brand-400 font-medium">New Scan</span> to get started.
+          </div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border/50 text-ink-muted">
+                <th className="px-4 py-2.5 text-left font-medium">Created</th>
+                <th className="px-4 py-2.5 text-left font-medium">Scan Name</th>
+                <th className="px-4 py-2.5 text-left font-medium">Symbols</th>
+                {COLOR_MARKS.map(c => (
+                  <th key={c.value} className="px-2 py-2.5 text-center font-medium" title={c.label}>
+                    <span className={cn('inline-block w-2.5 h-2.5 rounded-full', c.dot)} />
+                  </th>
+                ))}
+                <th className="px-4 py-2.5 text-left font-medium">Modified</th>
+                <th className="px-4 py-2.5 text-left font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scans.map(scan => (
+                <tr key={scan.id} className="border-b border-border/25 hover:bg-surface-elevated/50 transition-colors">
+                  <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">{fmtDt(scan.created_at)}</td>
+                  <td className="px-4 py-2.5">
+                    <Link href={`/weekly-scan/${scan.id}`}
+                      className="font-semibold text-ink-primary hover:text-brand-400 transition-colors font-mono">
+                      {scan.name}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-2.5 text-ink-secondary">{scan.total}</td>
+                  {COLOR_MARKS.map(c => (
+                    <td key={c.value} className="px-2 py-2.5 text-center">
+                      {scan.color_counts[c.value] > 0
+                        ? <span className={cn('font-semibold', c.text)}>{scan.color_counts[c.value]}</span>
+                        : <span className="text-ink-disabled">—</span>}
+                    </td>
+                  ))}
+                  <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">{fmtDt(scan.updated_at)}</td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-1">
+                      <Link href={`/weekly-scan/${scan.id}`} className="btn-icon" title="Open">
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </Link>
+                      <button onClick={() => setDeleteTarget(scan)} className="btn-icon text-loss/70 hover:text-loss" title="Delete">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {createModal && (
+          <NameModal
+            title="New Weekly Scan"
+            suggestedName={suggestedName}
+            loading={actionLoading}
+            onConfirm={handleCreate}
+            onClose={() => setCreateModal(false)}
+          />
+        )}
+        {deleteTarget && (
+          <DeleteModal
+            planName={deleteTarget.name}
+            loading={actionLoading}
+            onConfirm={handleDelete}
+            onClose={() => setDeleteTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function ActionPlanPage() {
@@ -374,6 +517,9 @@ export default function ActionPlanPage() {
       {/* Two plan type sections */}
       <PlanSection type="purchase" />
       <PlanSection type="portfolio" />
+
+      {/* Weekly scans */}
+      <WeeklyScanSection />
     </div>
   )
 }
