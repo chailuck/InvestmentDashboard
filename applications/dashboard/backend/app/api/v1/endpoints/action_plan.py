@@ -188,19 +188,18 @@ async def list_plans(
     months: Optional[int] = Query(None, description="3 | 6 | 12 | omit for all"),
 ) -> list[dict[str, Any]]:
     uid = uuid.UUID(user_id)
+    conditions = [ActionPlan.created_by == uid, ActionPlan.plan_type == plan_type]
+    if months:
+        conditions.append(ActionPlan.created_at >= text(f"NOW() - INTERVAL '{months} months'"))
     q = (
         select(ActionPlan)
-        .where(ActionPlan.created_by == uid, ActionPlan.plan_type == plan_type)
+        .where(*conditions)
         .options(
             selectinload(ActionPlan.purchase_items),
             selectinload(ActionPlan.portfolio_items),
         )
         .order_by(ActionPlan.created_at.desc())
     )
-    if months:
-        q = q.where(
-            ActionPlan.created_at >= text(f"NOW() - INTERVAL '{months} months'")
-        )
 
     result = await db.execute(q)
     plans = result.scalars().all()

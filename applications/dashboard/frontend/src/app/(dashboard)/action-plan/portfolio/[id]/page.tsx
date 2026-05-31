@@ -6,10 +6,11 @@ import {
   ArrowLeft, Save, FileDown, Copy, CheckCircle2,
   Loader2, X, RefreshCw, AlertCircle,
 } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { actionPlanService } from '@/services/actionPlan'
 import { portfolioTrackerService } from '@/services/portfolioTracker'
+import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 
 // ── Row type ──────────────────────────────────────────────────────────────────
 
@@ -104,15 +105,15 @@ function NotePanel({
   resizable?: boolean
 }) {
   return (
-    <div className="card p-4 space-y-2">
+    <div className="bg-surface-card border border-border/60 rounded-xl shadow-card p-4 space-y-2" style={{ overflow: 'visible' }}>
       <label className="block text-xs font-semibold text-ink-secondary uppercase tracking-wider">{label}</label>
       <textarea
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
         rows={rows}
-        className="input w-full text-xs py-2 px-2.5 leading-relaxed font-mono"
-        style={{ resize: resizable ? 'vertical' : 'none' }}
+        className="w-full bg-surface-elevated border border-border rounded-lg px-2.5 py-2 text-xs text-ink-primary placeholder:text-ink-muted font-mono leading-relaxed focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus/30 transition-colors"
+        style={{ resize: resizable ? 'vertical' : 'none', minHeight: resizable ? '160px' : undefined }}
       />
     </div>
   )
@@ -172,6 +173,7 @@ export default function PortfolioPlanEditor() {
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<'ok' | 'err' | null>(null)
   const [generateText, setGenerateText] = useState<string | null>(null)
+  const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
 
   // ── Load plan + positions ─────────────────────────────────────────────────
@@ -454,7 +456,16 @@ export default function PortfolioPlanEditor() {
                   return (
                     <tr key={idx} className="border-b border-border/25 hover:bg-surface-elevated/30 transition-colors">
                       {/* SYMBOL */}
-                      <td className="px-3 py-2 pl-4 font-semibold text-ink-primary">{row.symbol}</td>
+                      <td className="px-3 py-2 pl-4">
+                        <button
+                          type="button"
+                          onClick={() => setAnalyticsSymbol(row.symbol)}
+                          className="font-semibold text-ink-primary hover:text-brand-400 transition-colors"
+                          title={`Analytics: ${row.symbol}`}
+                        >
+                          {row.symbol}
+                        </button>
+                      </td>
                       {/* CURRENT */}
                       <td className="px-3 py-2 tabular-nums text-ink-primary font-medium text-right">
                         {row.current_price != null ? row.current_price.toFixed(2) : '—'}
@@ -568,6 +579,17 @@ export default function PortfolioPlanEditor() {
       {generateText && (
         <GenerateModal text={generateText} onClose={() => setGenerateText(null)} />
       )}
+
+      {/* Analytics modal */}
+      <AnimatePresence>
+        {analyticsSymbol && (
+          <AnalyticsModal
+            symbol={analyticsSymbol}
+            assetType="SET"
+            onClose={() => setAnalyticsSymbol(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

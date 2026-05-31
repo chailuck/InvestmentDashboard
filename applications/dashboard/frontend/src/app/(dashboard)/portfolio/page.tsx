@@ -14,6 +14,7 @@ import {
   type StatusFilter,
   type PeriodTransaction,
 } from '@/services/portfolioTracker'
+import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -333,7 +334,7 @@ interface DrillDown {
   toDate: string
 }
 
-function TransactionModal({ drill, onClose }: { drill: DrillDown; onClose: () => void }) {
+function TransactionModal({ drill, onClose, onSymbolClick }: { drill: DrillDown; onClose: () => void; onSymbolClick: (s: string) => void }) {
   const { data: txns = [], isLoading } = useQuery<PeriodTransaction[]>({
     queryKey: ['period-transactions', drill.periodKey, drill.period],
     queryFn: () => portfolioTrackerService.getTransactions({
@@ -414,7 +415,13 @@ function TransactionModal({ drill, onClose }: { drill: DrillDown; onClose: () =>
                 <tbody>
                   {txns.map((t, i) => (
                     <tr key={i} className="border-b border-border/25 hover:bg-surface-elevated/50 transition-colors">
-                      <td className="px-3 py-2.5 font-semibold text-ink-primary">{t.symbol}</td>
+                      <td className="px-3 py-2.5">
+                        <button
+                          onClick={() => onSymbolClick(t.symbol)}
+                          className="font-semibold text-ink-primary hover:text-brand-400 transition-colors"
+                          title={`Analytics: ${t.symbol}`}
+                        >{t.symbol}</button>
+                      </td>
                       <td className="px-3 py-2.5">
                         <span className={cn('font-medium', t.direction.toLowerCase().includes('short') ? 'text-loss' : 'text-gain')}>
                           {t.direction.toLowerCase().includes('short') ? '↓ S' : '↑ L'}
@@ -455,8 +462,8 @@ function TransactionModal({ drill, onClose }: { drill: DrillDown; onClose: () =>
 
 // ── Section 1: Positions Table ─────────────────────────────────────────────────
 
-function PositionsTable({ positions, total, totalPnl, loading }: {
-  positions: Position[]; total: number; totalPnl: number; loading: boolean
+function PositionsTable({ positions, total, totalPnl, loading, onSymbolClick }: {
+  positions: Position[]; total: number; totalPnl: number; loading: boolean; onSymbolClick: (s: string) => void
 }) {
   return (
     <div className="card overflow-hidden">
@@ -480,7 +487,13 @@ function PositionsTable({ positions, total, totalPnl, loading }: {
               <tr><td colSpan={10} className="px-3 py-8 text-center text-ink-muted">No positions found.</td></tr>
             ) : positions.map(pos => (
               <tr key={pos.id} className="border-b border-border/30 hover:bg-surface-elevated/50 transition-colors">
-                <td className="px-3 py-2.5 font-semibold text-ink-primary">{pos.symbol}</td>
+                <td className="px-3 py-2.5">
+                  <button
+                    onClick={() => onSymbolClick(pos.symbol)}
+                    className="font-semibold text-ink-primary hover:text-brand-400 transition-colors"
+                    title={`Analytics: ${pos.symbol}`}
+                  >{pos.symbol}</button>
+                </td>
                 <td className="px-3 py-2.5">
                   <span className={cn('font-medium', pos.direction.toLowerCase().includes('short') ? 'text-loss' : 'text-gain')}>
                     {pos.direction.toLowerCase().includes('short') ? '↓ S' : '↑ L'}
@@ -756,6 +769,7 @@ export default function PortfolioPage() {
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null)
   const [showRefresh, setShowRefresh] = useState(false)
   const [showRawData, setShowRawData] = useState(false)
+  const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
 
   // Persist criteria on change
   useEffect(() => { saveCriteria(fromDate, toDate, statusFilter) }, [fromDate, toDate, statusFilter])
@@ -882,7 +896,7 @@ export default function PortfolioPage() {
       </div>
 
       {/* 1. Positions */}
-      <PositionsTable positions={positions} total={totalPositions} totalPnl={totalPnl} loading={isLoading} />
+      <PositionsTable positions={positions} total={totalPositions} totalPnl={totalPnl} loading={isLoading} onSymbolClick={setAnalyticsSymbol} />
 
       {/* 2. Daily Performance Chart */}
       <PerformanceChart data={perfQuery.data ?? []} period={period} onPeriodChange={setPeriod} loading={perfQuery.isLoading} />
@@ -904,7 +918,7 @@ export default function PortfolioPage() {
 
       {/* Drill-down modal */}
       {drillDown && (
-        <TransactionModal drill={drillDown} onClose={() => setDrillDown(null)} />
+        <TransactionModal drill={drillDown} onClose={() => setDrillDown(null)} onSymbolClick={setAnalyticsSymbol} />
       )}
 
       {/* Refresh progress modal */}
@@ -912,6 +926,17 @@ export default function PortfolioPage() {
 
       {/* Raw data viewer modal */}
       {showRawData && <RawDataModal onClose={() => setShowRawData(false)} />}
+
+      {/* Analytics modal */}
+      <AnimatePresence>
+        {analyticsSymbol && (
+          <AnalyticsModal
+            symbol={analyticsSymbol}
+            assetType="SET"
+            onClose={() => setAnalyticsSymbol(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

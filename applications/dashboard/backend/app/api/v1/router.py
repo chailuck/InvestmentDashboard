@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from .endpoints.action_plan import router as action_plan_router
+from .endpoints.analytics import router as analytics_router
 from .endpoints.ai import router as ai_router
 from .endpoints.app_config import router as app_config_router
 from .endpoints.auth import router as auth_router
@@ -23,3 +24,4 @@ v1_router.include_router(app_config_router)
 v1_router.include_router(docs_router)
 v1_router.include_router(ai_router)
 v1_router.include_router(action_plan_router)
+v1_router.include_router(analytics_router)

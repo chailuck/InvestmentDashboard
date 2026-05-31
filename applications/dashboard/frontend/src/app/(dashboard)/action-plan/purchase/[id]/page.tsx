@@ -4,11 +4,12 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Plus, Trash2, Save, FileDown, Copy, CheckCircle2,
-  Loader2, AlertTriangle, XCircle, X,
+  Loader2, AlertTriangle, XCircle, X, BarChart2,
 } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { actionPlanService } from '@/services/actionPlan'
+import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -217,6 +218,7 @@ export default function PurchasePlanEditor() {
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<'ok' | 'err' | null>(null)
   const [generateText, setGenerateText] = useState<string | null>(null)
+  const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
 
   // Load plan on mount
@@ -308,11 +310,11 @@ export default function PurchasePlanEditor() {
   // ── Generate ──────────────────────────────────────────────────────────────
 
   const generate = () => {
-    const lines = ['STOCK,SIZE,BUY,TP,SL,STRATEGY,REASON,TRIGGERED']
+    const lines = ['STOCK,SIZE,BUY,TP,SL,STRATEGY']
     rows.forEach(r => {
       if (!r.stock) return
-      const strat = r.strategy === 'OTHERS' ? (r.customStrategy || 'OTHERS') : r.strategy
-      lines.push(`${r.stock.toUpperCase()},${r.size ?? ''},${r.buy_price ?? ''},${r.tp ?? ''},${r.sl ?? ''},${strat},${r.reason ?? ''},${r.triggered ? 'YES' : 'NO'}`)
+      const strat = r.strategy === 'OTHERS' ? r.customStrategy : r.strategy
+      lines.push(`${r.stock.toUpperCase()},${r.size ?? ''},${r.buy_price ?? ''},${r.tp ?? ''},${r.sl ?? ''},${strat}`)
     })
     setGenerateText(lines.join('\n'))
   }
@@ -421,14 +423,26 @@ export default function PurchasePlanEditor() {
                     )}
                   >
                     {/* STOCK */}
-                    <td className="px-2.5 py-1.5 pl-4 w-[80px]">
-                      <input
-                        value={row.stock}
-                        onChange={e => updateRow(row._key, { stock: e.target.value })}
-                        onBlur={e => fetchPrice(row._key, e.target.value)}
-                        className="input text-xs py-1 px-1.5 w-full uppercase font-semibold"
-                        placeholder="BH"
-                      />
+                    <td className="px-2.5 py-1.5 pl-4 w-[110px]">
+                      <div className="flex items-center gap-1">
+                        <input
+                          value={row.stock}
+                          onChange={e => updateRow(row._key, { stock: e.target.value })}
+                          onBlur={e => fetchPrice(row._key, e.target.value)}
+                          className="input text-xs py-1 px-1.5 flex-1 min-w-0 uppercase font-semibold"
+                          placeholder="BH"
+                        />
+                        {row.stock && (
+                          <button
+                            type="button"
+                            onClick={() => setAnalyticsSymbol(row.stock.toUpperCase())}
+                            className="btn-icon shrink-0 text-brand-400/60 hover:text-brand-400"
+                            title={`Analytics: ${row.stock}`}
+                          >
+                            <BarChart2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                     {/* CURRENT PRICE */}
                     <td className="px-2.5 py-1.5 w-[80px] text-right tabular-nums">
@@ -565,6 +579,17 @@ export default function PurchasePlanEditor() {
       {generateText && (
         <GenerateModal text={generateText} onClose={() => setGenerateText(null)} />
       )}
+
+      {/* Analytics modal */}
+      <AnimatePresence>
+        {analyticsSymbol && (
+          <AnalyticsModal
+            symbol={analyticsSymbol}
+            assetType="SET"
+            onClose={() => setAnalyticsSymbol(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

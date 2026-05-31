@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { AnimatePresence } from 'framer-motion'
 import { portfolioTrackerService, type Position } from '@/services/portfolioTracker'
+import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 import { cn } from '@/lib/utils'
 import type { WidgetConfig } from '@/types'
 
@@ -11,6 +13,7 @@ const fmt = (n: number, d = 2) =>
 
 export function HoldingsTableWidget({ config }: { config: WidgetConfig }) {
   const [filter, setFilter] = useState('')
+  const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['portfolio-positions', undefined, undefined, 'active'],
@@ -51,7 +54,15 @@ export function HoldingsTableWidget({ config }: { config: WidgetConfig }) {
                 <tr><td colSpan={7} className="px-3 py-8 text-center text-ink-muted">No open positions.</td></tr>
               ) : filtered.map((pos: Position) => (
                 <tr key={pos.id} className="border-b border-border/30 hover:bg-surface-elevated/50 transition-colors">
-                  <td className="px-3 py-2 font-bold text-ink-primary">{pos.symbol}</td>
+                  <td className="px-3 py-2">
+                    <button
+                      onClick={() => setAnalyticsSymbol(pos.symbol)}
+                      className="font-bold text-ink-primary hover:text-brand-400 transition-colors"
+                      title={`Analytics: ${pos.symbol}`}
+                    >
+                      {pos.symbol}
+                    </button>
+                  </td>
                   <td className="px-3 py-2">
                     <span className={pos.direction.toLowerCase().includes('short') ? 'text-loss' : 'text-gain'}>
                       {pos.direction.toLowerCase().includes('short') ? '↓S' : '↑L'}
@@ -72,6 +83,16 @@ export function HoldingsTableWidget({ config }: { config: WidgetConfig }) {
           </table>
         )}
       </div>
+
+      <AnimatePresence>
+        {analyticsSymbol && (
+          <AnalyticsModal
+            symbol={analyticsSymbol}
+            assetType="SET"
+            onClose={() => setAnalyticsSymbol(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
