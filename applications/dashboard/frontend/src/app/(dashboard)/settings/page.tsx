@@ -3,11 +3,13 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical } from 'lucide-react'
+import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink } from 'lucide-react'
+import Link from 'next/link'
 import { useAuthStore } from '@/store/auth'
 import { apiClient } from '@/services/api'
 import { usersService } from '@/services/users'
 import { appConfigService } from '@/services/appConfig'
+import { portfolioDbService } from '@/services/portfolioDb'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -32,6 +34,114 @@ function Section({ title, icon: Icon, children }: { title: string; icon: React.E
       {children}
     </motion.div>
   )
+}
+
+function PortfolioDataSourceSection() {
+  const queryClient = useQueryClient()
+  const [mode, setMode] = useState<'excel' | 'db' | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    portfolioDbService.getMode().then(m => setMode(m as 'excel' | 'db'))
+  }, [])
+
+  const switchMode = async (next: 'excel' | 'db') => {
+    if (next === mode) return
+    setSaving(true)
+    try {
+      await portfolioDbService.setMode(next)
+      setMode(next)
+      // Invalidate sidebar's portfolio-mode cache so it updates immediately
+      queryClient.invalidateQueries({ queryKey: ['portfolio-mode'] })
+      toast.success(`Switched to ${next === 'excel' ? 'Excel' : 'Database'} mode`)
+    } catch {
+      toast.error('Failed to switch mode')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Section title="Portfolio Data Source" icon={Database}>
+      <p className="text-xs text-ink-muted -mt-3">
+        Choose how your portfolio data is stored and managed.
+      </p>
+      {mode === null ? (
+        <div className="flex items-center gap-2 text-ink-muted text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Excel mode */}
+            <button
+              onClick={() => switchMode('excel')}
+              disabled={saving}
+              className={cn(
+                'flex flex-col items-start gap-2 p-4 rounded-xl border-2 transition-all text-left',
+                mode === 'excel'
+                  ? 'border-brand-500/50 bg-brand-500/8'
+                  : 'border-border hover:border-border-focus',
+              )}
+            >
+              <div className="flex items-center justify-between w-full">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className={cn('w-5 h-5', mode === 'excel' ? 'text-brand-400' : 'text-ink-muted')} />
+                  <span className={cn('font-semibold text-sm', mode === 'excel' ? 'text-brand-400' : 'text-ink-secondary')}>
+                    Excel File
+                  </span>
+                </div>
+                {mode === 'excel' && <CheckCircle2 className="w-4 h-4 text-brand-400" />}
+              </div>
+              <p className="text-xs text-ink-muted leading-relaxed">
+                Read positions from the Investment Tracking Excel file. Requires configuring file paths below.
+              </p>
+            </button>
+
+            {/* DB mode */}
+            <button
+              onClick={() => switchMode('db')}
+              disabled={saving}
+              className={cn(
+                'flex flex-col items-start gap-2 p-4 rounded-xl border-2 transition-all text-left',
+                mode === 'db'
+                  ? 'border-brand-500/50 bg-brand-500/8'
+                  : 'border-border hover:border-border-focus',
+              )}
+            >
+              <div className="flex items-center justify-between w-full">
+                <div className="flex items-center gap-2">
+                  <Database className={cn('w-5 h-5', mode === 'db' ? 'text-brand-400' : 'text-ink-muted')} />
+                  <span className={cn('font-semibold text-sm', mode === 'db' ? 'text-brand-400' : 'text-ink-secondary')}>
+                    Database
+                  </span>
+                </div>
+                {mode === 'db' && <CheckCircle2 className="w-4 h-4 text-brand-400" />}
+              </div>
+              <p className="text-xs text-ink-muted leading-relaxed">
+                Manage positions directly in the database. No Excel file needed.
+              </p>
+            </button>
+          </div>
+
+          {mode === 'db' && (
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-brand-500/8 border border-brand-500/20 text-brand-400 text-xs">
+              <Database className="w-3.5 h-3.5 shrink-0" />
+              <span>Using database mode. Manage your positions in </span>
+              <Link href="/settings/portfolio-db" className="font-medium underline underline-offset-2 flex items-center gap-1">
+                Portfolio Manager <ExternalLink className="w-3 h-3" />
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
+  )
+}
+
+// Expose current mode so AppConfigSection can hide itself
+function usePortfolioMode() {
+  const [mode, setMode] = useState<'excel' | 'db' | null>(null)
+  useEffect(() => { portfolioDbService.getMode().then(m => setMode(m as 'excel' | 'db')) }, [])
+  return mode
 }
 
 function AppConfigSection() {
@@ -239,6 +349,7 @@ function PortfolioPrefsSection() {
 
 export default function SettingsPage() {
   const { user, setUser } = useAuthStore()
+  const portfolioMode = usePortfolioMode()
 
   // Profile form
   const [name, setName] = useState(user?.name ?? '')
@@ -363,8 +474,11 @@ export default function SettingsPage() {
       {/* Portfolio preferences — all users */}
       <PortfolioPrefsSection />
 
-      {/* App Config — all users */}
-      <AppConfigSection />
+      {/* Portfolio data source toggle */}
+      <PortfolioDataSourceSection />
+
+      {/* App Config — only shown in Excel mode */}
+      {portfolioMode !== 'db' && <AppConfigSection />}
 
       {/* Account Info */}
       <Section title="Account Details" icon={Shield}>

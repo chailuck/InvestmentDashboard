@@ -4,12 +4,15 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
+  Database,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
+import { portfolioDbService } from '@/services/portfolioDb'
 
 interface SidebarProps {
   collapsed: boolean
@@ -18,31 +21,45 @@ interface SidebarProps {
   onMobileClose: () => void
 }
 
-const NAV_MAIN = [
+const NAV_TOP = [
   { href: '/dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
-  { href: '/portfolio',   label: 'Portfolio',   icon: TrendingUp },
   { href: '/action-plan', label: 'Action Plan', icon: ClipboardList },
   { href: '/analytics',   label: 'Analytics',   icon: BarChart3 },
   { href: '/ai-copilot',  label: 'AI Copilot',  icon: Bot, badge: 'AI' },
 ] as const
 
 const SETTINGS_SUB = [
-  { href: '/settings',             label: 'My Profile',  icon: Settings },
-  { href: '/admin/users',          label: 'Users',        icon: Users,    adminOnly: true },
-  { href: '/settings/documents',   label: 'Documents',    icon: FileText },
+  { href: '/settings',           label: 'My Profile', icon: Settings },
+  { href: '/admin/users',        label: 'Users',       icon: Users,    adminOnly: true },
+  { href: '/settings/documents', label: 'Documents',   icon: FileText },
 ] as const
 
 export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname()
   const { user, clearAuth } = useAuthStore()
 
-  const inSettingsSection = pathname.startsWith('/settings') || pathname.startsWith('/admin') || pathname.startsWith('/settings/documents')
+  const inPortfolioSection = pathname.startsWith('/portfolio') || pathname.startsWith('/settings/portfolio-db')
+  const inSettingsSection = (pathname.startsWith('/settings') && !pathname.startsWith('/settings/portfolio-db'))
+    || pathname.startsWith('/admin')
+
+  const [portfolioOpen, setPortfolioOpen] = useState(inPortfolioSection)
   const [settingsOpen, setSettingsOpen] = useState(inSettingsSection)
 
-  const isActive = (href: string) =>
-    pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
+  // Fetch portfolio mode to conditionally show Portfolio Manager
+  const { data: modeData } = useQuery({
+    queryKey: ['portfolio-mode'],
+    queryFn: portfolioDbService.getMode,
+    staleTime: 60_000,
+  })
+  const isDbMode = modeData === 'db'
 
-  const NavLink = ({ href, label, icon: Icon, badge }: { href: string; label: string; icon: React.ElementType; badge?: string }) => {
+  const isActive = (href: string) =>
+    pathname === href || (href !== '/dashboard' && pathname.startsWith(href + '/'))
+      || pathname === href
+
+  const NavLink = ({ href, label, icon: Icon, badge }: {
+    href: string; label: string; icon: React.ElementType; badge?: string
+  }) => {
     const active = isActive(href)
     return (
       <Link href={href} onClick={onMobileClose} title={collapsed ? label : undefined}
@@ -68,6 +85,61 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
     )
   }
 
+  const SubLink = ({ href, label, icon: Icon }: { href: string; label: string; icon: React.ElementType }) => {
+    const active = pathname === href || pathname.startsWith(href + '/')
+    return (
+      <Link href={href} onClick={onMobileClose}
+        className={cn(
+          'flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-all duration-150',
+          active ? 'text-brand-400 bg-brand-500/10' : 'text-ink-muted hover:text-ink-primary hover:bg-surface-elevated',
+        )}>
+        <Icon className="w-3.5 h-3.5 shrink-0" />
+        <span className="font-medium">{label}</span>
+      </Link>
+    )
+  }
+
+  const AccordionGroup = ({
+    label, icon: Icon, active, open, onToggle: toggle, children,
+  }: {
+    label: string; icon: React.ElementType; active: boolean
+    open: boolean; onToggle: () => void; children: React.ReactNode
+  }) => (
+    <div>
+      <button
+        onClick={() => !collapsed && toggle()}
+        title={collapsed ? label : undefined}
+        className={cn(
+          'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150',
+          active ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20'
+                 : 'text-ink-muted hover:text-ink-primary hover:bg-surface-elevated',
+          collapsed && 'justify-center px-0',
+        )}>
+        <Icon className={cn('w-4 h-4 shrink-0', active && 'text-brand-400')} />
+        {!collapsed && (
+          <>
+            <span className="text-sm font-medium flex-1 text-left">{label}</span>
+            <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', open && 'rotate-180')} />
+          </>
+        )}
+      </button>
+      <AnimatePresence initial={false}>
+        {open && !collapsed && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden">
+            <div className="ml-3 pl-3 border-l border-border/50 mt-0.5 space-y-0.5">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
       {/* Logo */}
@@ -89,58 +161,38 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
 
       {/* Navigation */}
       <nav className="flex-1 py-4 px-2 space-y-0.5 overflow-y-auto no-scrollbar">
-        {NAV_MAIN.map(item => <NavLink key={item.href} {...item} />)}
+        <NavLink href="/dashboard" label="Dashboard" icon={LayoutDashboard} />
+
+        {/* Portfolio accordion */}
+        <AccordionGroup
+          label="Portfolio" icon={TrendingUp}
+          active={inPortfolioSection}
+          open={portfolioOpen}
+          onToggle={() => setPortfolioOpen(o => !o)}
+        >
+          <SubLink href="/portfolio" label="Portfolio Tracker" icon={TrendingUp} />
+          {isDbMode && (
+            <SubLink href="/settings/portfolio-db" label="Portfolio Manager" icon={Database} />
+          )}
+        </AccordionGroup>
+
+        <NavLink href="/action-plan" label="Action Plan" icon={ClipboardList} />
+        <NavLink href="/analytics"   label="Analytics"   icon={BarChart3} />
+        <NavLink href="/ai-copilot"  label="AI Copilot"  icon={Bot} badge="AI" />
 
         {/* Settings accordion */}
-        <div>
-          <button
-            onClick={() => !collapsed && setSettingsOpen(o => !o)}
-            title={collapsed ? 'Settings' : undefined}
-            className={cn(
-              'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150',
-              inSettingsSection
-                ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20'
-                : 'text-ink-muted hover:text-ink-primary hover:bg-surface-elevated',
-              collapsed && 'justify-center px-0',
-            )}>
-            <Settings className={cn('w-4 h-4 shrink-0', inSettingsSection && 'text-brand-400')} />
-            {!collapsed && (
-              <>
-                <span className="text-sm font-medium flex-1 text-left">Settings</span>
-                <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', settingsOpen && 'rotate-180')} />
-              </>
-            )}
-          </button>
-
-          <AnimatePresence initial={false}>
-            {settingsOpen && !collapsed && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="overflow-hidden">
-                <div className="ml-3 pl-3 border-l border-border/50 mt-0.5 space-y-0.5">
-                  {SETTINGS_SUB
-                    .filter(item => !('adminOnly' in item) || !item.adminOnly || user?.role === 'admin')
-                    .map(({ href, label, icon: Icon }) => {
-                      const active = isActive(href)
-                      return (
-                        <Link key={href} href={href} onClick={onMobileClose}
-                          className={cn(
-                            'flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-all duration-150',
-                            active ? 'text-brand-400 bg-brand-500/10' : 'text-ink-muted hover:text-ink-primary hover:bg-surface-elevated',
-                          )}>
-                          <Icon className="w-3.5 h-3.5 shrink-0" />
-                          <span className="font-medium">{label}</span>
-                        </Link>
-                      )
-                    })}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        <AccordionGroup
+          label="Settings" icon={Settings}
+          active={inSettingsSection}
+          open={settingsOpen}
+          onToggle={() => setSettingsOpen(o => !o)}
+        >
+          {SETTINGS_SUB
+            .filter(item => !('adminOnly' in item) || !item.adminOnly || user?.role === 'admin')
+            .map(({ href, label, icon: Icon }) => (
+              <SubLink key={href} href={href} label={label} icon={Icon} />
+            ))}
+        </AccordionGroup>
       </nav>
 
       {/* User section */}
@@ -186,13 +238,17 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
         {mobileOpen && (
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={onMobileClose} />
-            <motion.aside initial={{ x: -280 }} animate={{ x: 0 }} exit={{ x: -280 }}
+              className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+              onClick={onMobileClose} />
+            <motion.aside
+              initial={{ x: -280 }} animate={{ x: 0 }} exit={{ x: -280 }}
               transition={{ type: 'spring', stiffness: 400, damping: 40 }}
-              className="fixed left-0 top-0 bottom-0 w-[240px] bg-surface-card border-r border-border/50 z-50 lg:hidden">
-              <button onClick={onMobileClose} className="absolute top-3.5 right-3 btn-icon">
-                <X className="w-4 h-4" />
-              </button>
+              className="fixed left-0 top-0 bottom-0 w-64 bg-surface-card border-r border-border/50 z-50 lg:hidden flex flex-col">
+              <div className="absolute top-3 right-3">
+                <button onClick={onMobileClose} className="btn-icon">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
               <SidebarContent />
             </motion.aside>
           </>

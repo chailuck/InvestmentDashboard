@@ -30,6 +30,7 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    portfolio_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="excel")  # excel | db
 
     def __repr__(self) -> str:
         return f"<User {self.email} [{self.role}]>"
