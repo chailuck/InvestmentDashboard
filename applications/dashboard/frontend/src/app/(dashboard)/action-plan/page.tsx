@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import {
   ClipboardList, Plus, Edit2, Trash2, Copy, X, Loader2,
-  ShoppingCart, Briefcase, AlertCircle, ScanLine,
+  ShoppingCart, Briefcase, AlertCircle, ScanLine, LayoutDashboard,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -460,6 +460,9 @@ function WeeklyScanSection() {
                   <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">{fmtDt(scan.updated_at)}</td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-1">
+                      <Link href={`/weekly-scan/${scan.id}/dashboard`} className="btn-icon" title="Dashboard">
+                        <LayoutDashboard className="w-3.5 h-3.5" />
+                      </Link>
                       <Link href={`/weekly-scan/${scan.id}`} className="btn-icon" title="Open">
                         <Edit2 className="w-3.5 h-3.5" />
                       </Link>
