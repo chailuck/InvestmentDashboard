@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -365,8 +365,9 @@ export default function WeeklyScanPage() {
   const [copied,         setCopied]         = useState(false)
   const [addToList,      setAddToList]      = useState<string>('')
 
-  // Symbol list tab
+  // Symbol list tab — defaults to the first list when tabs load for the first time
   const [activeListTab, setActiveListTab] = useState<string | null>(null)
+  const defaultTabApplied = useRef(false)
 
   // Column filters
   const [filterSymbol,   setFilterSymbol]   = useState('')
@@ -392,6 +393,14 @@ export default function WeeklyScanPage() {
   const listTabs = scan
     ? [...new Set(scan.items.map(i => i.list_name).filter((n): n is string => !!n))]
     : []
+
+  // Auto-select first list tab on initial load (only once per page visit)
+  useEffect(() => {
+    if (!defaultTabApplied.current && listTabs.length > 0) {
+      setActiveListTab(listTabs[0])
+      defaultTabApplied.current = true
+    }
+  }, [listTabs.length]) // eslint-disable-line
 
   // Sorted A-Z then filtered (tab + column filters)
   const sortedItems = scan

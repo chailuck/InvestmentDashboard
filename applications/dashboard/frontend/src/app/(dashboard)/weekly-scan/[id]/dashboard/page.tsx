@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { format } from 'date-fns'
@@ -281,6 +281,7 @@ export default function ScanDashboardPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<string | null>(null)
+  const defaultTabApplied = useRef(false)
 
   const { data: scan, isLoading: scanLoading, refetch: refetchScan } = useQuery({
     queryKey: ['weekly-scan', id],
@@ -302,6 +303,14 @@ export default function ScanDashboardPage() {
     if (!scan) return []
     return [...new Set(scan.items.map(i => i.list_name).filter((n): n is string => !!n))]
   }, [scan])
+
+  // Auto-select first list tab on initial load
+  useEffect(() => {
+    if (!defaultTabApplied.current && listTabs.length > 0) {
+      setActiveTab(listTabs[0])
+      defaultTabApplied.current = true
+    }
+  }, [listTabs.length]) // eslint-disable-line
 
   // Items filtered by active tab
   const filteredItems = useMemo(() => {

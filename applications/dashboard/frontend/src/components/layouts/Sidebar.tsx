@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -8,11 +8,12 @@ import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
-  Database,
+  Database, ShoppingCart, Briefcase, ArrowUpRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
 import { portfolioDbService } from '@/services/portfolioDb'
+import { actionPlanService } from '@/services/actionPlan'
 
 interface SidebarProps {
   collapsed: boolean
@@ -34,6 +35,182 @@ const SETTINGS_SUB = [
   { href: '/settings/documents', label: 'Documents',   icon: FileText },
 ] as const
 
+// ── Sidebar widgets ────────────────────────────────────────────────────────────
+
+function PurchasePlanWidget() {
+  const { data: plans } = useQuery({
+    queryKey: ['sidebar-purchase-plans'],
+    queryFn: () => actionPlanService.list('purchase', null),
+    staleTime: 2 * 60_000,
+  })
+
+  const latest = plans?.[0]
+
+  const { data: plan } = useQuery({
+    queryKey: ['sidebar-purchase-plan-detail', latest?.id],
+    queryFn: () => actionPlanService.get(latest!.id),
+    staleTime: 2 * 60_000,
+    enabled: !!latest,
+  })
+
+  if (!latest) return null
+
+  const items = (plan?.purchase_items ?? []).slice(0, 5)
+
+  return (
+    <div className="px-3 py-2 space-y-1.5">
+      {/* Header */}
+      <div className="flex items-center gap-1.5">
+        <ShoppingCart className="w-3 h-3 text-brand-400 shrink-0" />
+        <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider flex-1 truncate">
+          Purchase
+        </span>
+        <Link href={`/action-plan/purchase/${latest.id}`}
+          className="text-ink-disabled hover:text-brand-400 transition-colors shrink-0"
+          title="Open purchase plan">
+          <ArrowUpRight className="w-3 h-3" />
+        </Link>
+      </div>
+      {/* Items */}
+      {items.length === 0 ? (
+        <p className="text-[10px] text-ink-disabled pl-4">No items</p>
+      ) : (
+        <div className="space-y-0.5 pl-1">
+          {items.map((item, i) => (
+            <div key={i} className="flex items-center gap-1 text-[9px] tabular-nums">
+              {/* Symbol */}
+              <span className={cn(
+                'font-mono font-bold text-[10px] shrink-0 w-[46px] truncate',
+                item.triggered ? 'text-gain' : 'text-ink-secondary',
+              )}>
+                {item.stock}{item.triggered ? '✓' : ''}
+              </span>
+              {/* SL ← Buy → TP */}
+              {item.sl != null && <span className="text-loss font-semibold shrink-0">{item.sl.toFixed(1)}</span>}
+              {item.sl != null && <span className="text-ink-disabled shrink-0">←</span>}
+              <span className="text-ink-primary font-bold shrink-0">
+                {item.buy_price != null ? item.buy_price.toFixed(1) : '—'}
+              </span>
+              {item.tp != null && <span className="text-ink-disabled shrink-0">→</span>}
+              {item.tp != null && <span className="text-gain font-semibold shrink-0">{item.tp.toFixed(1)}</span>}
+            </div>
+          ))}
+          {(plan?.purchase_items?.length ?? 0) > 5 && (
+            <p className="text-[10px] text-ink-disabled pl-1">
+              +{(plan!.purchase_items.length - 5)} more
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
+  // DB mode: live positions from portfolio manager
+  const { data: dbPositions } = useQuery({
+    queryKey: ['sidebar-portfolio-positions'],
+    queryFn: () => portfolioDbService.getPositions('active'),
+    staleTime: 2 * 60_000,
+    enabled: isDbMode,
+  })
+
+  // Excel / fallback: latest portfolio action plan items
+  const { data: planList } = useQuery({
+    queryKey: ['sidebar-portfolio-plans'],
+    queryFn: () => actionPlanService.list('portfolio', null),
+    staleTime: 2 * 60_000,
+    enabled: !isDbMode,
+  })
+  const latestPlan = planList?.[0]
+  const { data: planDetail } = useQuery({
+    queryKey: ['sidebar-portfolio-plan-detail', latestPlan?.id],
+    queryFn: () => actionPlanService.get(latestPlan!.id),
+    staleTime: 2 * 60_000,
+    enabled: !!latestPlan && !isDbMode,
+  })
+
+  // Normalise both sources into a common row shape
+  type Row = { key: string; symbol: string; pnlPct: number | null; entryPrice: number | null; link: string }
+
+  const rows: Row[] = isDbMode
+    ? (dbPositions ?? [])
+        .filter(p => !p.parentId)
+        .sort((a, b) => Math.abs(b.pnlPct) - Math.abs(a.pnlPct))
+        .slice(0, 5)
+        .map(p => ({
+          key: p.id,
+          symbol: p.symbol,
+          pnlPct: p.pnlPct,
+          entryPrice: p.entryPrice,
+          link: '/settings/portfolio-db',
+        }))
+    : (planDetail?.portfolio_items ?? [])
+        .slice(0, 5)
+        .map((it, i) => {
+          const pnl = it.entry_price && it.current_price
+            ? ((it.current_price - it.entry_price) / it.entry_price) * 100
+            : null
+          return {
+            key: it.id ?? String(i),
+            symbol: it.symbol,
+            pnlPct: pnl,
+            entryPrice: it.entry_price,
+            link: latestPlan ? `/action-plan/portfolio/${latestPlan.id}` : '/action-plan',
+          }
+        })
+
+  if (rows.length === 0) return null
+
+  const linkHref = isDbMode ? '/settings/portfolio-db'
+    : latestPlan ? `/action-plan/portfolio/${latestPlan.id}` : '/action-plan'
+
+  return (
+    <div className="px-3 py-2 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <Briefcase className="w-3 h-3 text-purple-400 shrink-0" />
+        <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider flex-1 truncate">
+          Portfolio <span className="text-ink-disabled font-normal">({rows.length})</span>
+        </span>
+        <Link href={linkHref}
+          className="text-ink-disabled hover:text-brand-400 transition-colors shrink-0"
+          title="Open portfolio">
+          <ArrowUpRight className="w-3 h-3" />
+        </Link>
+      </div>
+      <div className="space-y-0.5 pl-1">
+        {rows.map(row => (
+          <div key={row.key} className="flex items-center gap-1.5 text-[10px]">
+            <span className="font-mono font-bold text-ink-secondary shrink-0 w-[52px] truncate">{row.symbol}</span>
+            {row.pnlPct !== null ? (
+              <>
+                <span className={cn(
+                  'font-semibold shrink-0 w-[42px] text-right tabular-nums',
+                  row.pnlPct >= 0 ? 'text-gain' : 'text-loss',
+                )}>
+                  {row.pnlPct >= 0 ? '+' : ''}{row.pnlPct.toFixed(1)}%
+                </span>
+                <div className="flex-1 h-1 rounded-full bg-surface-overlay overflow-hidden">
+                  <div
+                    className={cn('h-full rounded-full', row.pnlPct >= 0 ? 'bg-gain/60' : 'bg-loss/60')}
+                    style={{ width: `${Math.min(Math.abs(row.pnlPct) * 5, 100)}%` }}
+                  />
+                </div>
+              </>
+            ) : (
+              <span className="text-ink-disabled">
+                {row.entryPrice != null ? `@ ${row.entryPrice.toFixed(2)}` : '—'}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Main sidebar ───────────────────────────────────────────────────────────────
+
 export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname()
   const { user, clearAuth } = useAuthStore()
@@ -45,7 +222,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
   const [portfolioOpen, setPortfolioOpen] = useState(inPortfolioSection)
   const [settingsOpen, setSettingsOpen] = useState(inSettingsSection)
 
-  // Fetch portfolio mode to conditionally show Portfolio Manager
   const { data: modeData } = useQuery({
     queryKey: ['portfolio-mode'],
     queryFn: portfolioDbService.getMode,
@@ -163,7 +339,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
       <nav className="flex-1 py-4 px-2 space-y-0.5 overflow-y-auto no-scrollbar">
         <NavLink href="/dashboard" label="Dashboard" icon={LayoutDashboard} />
 
-        {/* Portfolio accordion */}
         <AccordionGroup
           label="Portfolio" icon={TrendingUp}
           active={inPortfolioSection}
@@ -180,7 +355,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
         <NavLink href="/analytics"   label="Analytics"   icon={BarChart3} />
         <NavLink href="/ai-copilot"  label="AI Copilot"  icon={Bot} badge="AI" />
 
-        {/* Settings accordion */}
         <AccordionGroup
           label="Settings" icon={Settings}
           active={inSettingsSection}
@@ -194,6 +368,14 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
             ))}
         </AccordionGroup>
       </nav>
+
+      {/* Bottom widgets — hidden when collapsed */}
+      {!collapsed && (
+        <div className="shrink-0 border-t border-border/30 divide-y divide-border/20 max-h-[280px] overflow-y-auto no-scrollbar">
+          <PurchasePlanWidget />
+          <PortfolioWidget isDbMode={isDbMode} />
+        </div>
+      )}
 
       {/* User section */}
       <div className={cn('border-t border-border/50 p-3 shrink-0', collapsed && 'px-2')}>
