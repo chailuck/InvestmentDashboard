@@ -100,6 +100,27 @@
 | PUT | `/api/v1/app-config` | Bearer | Save config values |
 | POST | `/api/v1/app-config/test-path` | Bearer | Test if a file path exists |
 
+### Weekly Scan
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/weekly-scan/symbol-lists` | Bearer | List all symbol lists for the current user |
+| POST | `/api/v1/weekly-scan/symbol-lists` | Bearer | Create a new named symbol list |
+| PUT | `/api/v1/weekly-scan/symbol-lists/{list_id}` | Bearer | Update name, market, symbols, or sort_order |
+| DELETE | `/api/v1/weekly-scan/symbol-lists/{list_id}` | Bearer | Delete a symbol list |
+| GET | `/api/v1/weekly-scan/config` | Bearer | Get legacy single-list config (auto-seeds SET50 defaults) |
+| PUT | `/api/v1/weekly-scan/config` | Bearer | Replace legacy symbol list |
+| GET | `/api/v1/weekly-scan/suggest-name` | Bearer | Return suggested scan name for next/last Saturday |
+| GET | `/api/v1/weekly-scan/scans` | Bearer | List all scans (newest first) with colour counts |
+| POST | `/api/v1/weekly-scan/scans` | Bearer | Create scan and populate from current symbol lists |
+| GET | `/api/v1/weekly-scan/scans/{scan_id}` | Bearer | Fetch scan header + all items + colour counts |
+| DELETE | `/api/v1/weekly-scan/scans/{scan_id}` | Bearer | Hard-delete scan and all items |
+| POST | `/api/v1/weekly-scan/scans/{scan_id}/refresh` | Bearer | Merge current symbol lists into existing scan |
+| POST | `/api/v1/weekly-scan/scans/{scan_id}/items` | Bearer | Add a single symbol to a scan |
+| PUT | `/api/v1/weekly-scan/scans/{scan_id}/items/{symbol}` | Bearer | Upsert evaluation fields for one symbol |
+| DELETE | `/api/v1/weekly-scan/scans/{scan_id}/items/{symbol}` | Bearer | Remove a symbol from a scan |
+| GET | `/api/v1/weekly-scan/scans/{scan_id}/week-prices` | Bearer | Monday open + Friday close for all symbols in the scan |
+
 ### Documentation
 
 | Method | Path | Auth | Description |
@@ -164,6 +185,95 @@ Authorization: Bearer eyJ...
 }
 ```
 
+### Weekly Scan — Create Scan
+
+```http
+POST /api/v1/weekly-scan/scans
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{ "name": "WEEKLY_SCAN_07_06_2026" }
+```
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "name": "WEEKLY_SCAN_07_06_2026",
+  "created_at": "2026-06-01T08:00:00+07:00"
+}
+```
+
+### Weekly Scan — Get Scan (with items)
+
+```http
+GET /api/v1/weekly-scan/scans/a1b2c3d4-...
+Authorization: Bearer eyJ...
+```
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "name": "WEEKLY_SCAN_07_06_2026",
+  "created_at": "2026-06-01T08:00:00+07:00",
+  "updated_at": "2026-06-01T09:15:00+07:00",
+  "color_counts": { "CYAN": 3, "GREEN": 8, "YELLOW": 5, "RED": 12, "PURPLE": 4, "NONE": 18 },
+  "items": [
+    {
+      "id": "item-uuid",
+      "symbol": "GULF",
+      "sort_order": 0,
+      "list_name": "SET50",
+      "market": "SET",
+      "color_mark": "GREEN",
+      "strategy": "BREAK OUT",
+      "buy_price": 64.0,
+      "size": 200,
+      "tp": 72.0,
+      "sl": 60.0,
+      "remark": "Breakout from 3-month consolidation",
+      "updated_at": "2026-06-01T09:15:00+07:00"
+    }
+  ]
+}
+```
+
+### Weekly Scan — Update Item
+
+```http
+PUT /api/v1/weekly-scan/scans/a1b2c3d4-.../items/GULF
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "color_mark": "CYAN",
+  "strategy": "BREAK OUT",
+  "buy_price": 64.5,
+  "tp": 75.0,
+  "sl": 60.0
+}
+```
+
+Only provided fields are updated (partial update via Pydantic `exclude_unset=True`).
+
+### Weekly Scan — Week Prices
+
+```http
+GET /api/v1/weekly-scan/scans/a1b2c3d4-.../week-prices
+Authorization: Bearer eyJ...
+```
+
+```json
+{
+  "mon_date": "2026-06-02",
+  "fri_date": "2026-06-06",
+  "prices": {
+    "GULF": { "mon": 63.50, "fri": 65.25 },
+    "KBANK": { "mon": 145.00, "fri": 143.50 },
+    "ADVANC": { "mon": null, "fri": null }
+  }
+}
+```
+
 ---
 
 ## 4. CORS Configuration
@@ -190,9 +300,22 @@ app.add_middleware(
 
 Applied in order (outer to inner — last runs first on request):
 
-1. `SecurityHeadersMiddleware` — adds `X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection`
-2. `RequestIdMiddleware` — injects `X-Request-Id` UUID into every request/response
+1. `SecurityHeadersMiddleware` — adds security headers (see table below)
+2. `RequestIdMiddleware` — injects `X-Request-ID` UUID into every request/response (propagates existing header if present)
 3. `CORSMiddleware` — (outermost for CORS preflight)
+4. `SlowAPIMiddleware` — rate limiting via SlowAPI; default limit `200/minute` per IP; auth endpoints use `5/minute`
+
+**Security response headers set by `SecurityHeadersMiddleware`:**
+
+| Header | Value |
+|--------|-------|
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `X-XSS-Protection` | `1; mode=block` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` |
+| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'` |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` |
 
 ---
 

@@ -47,6 +47,19 @@ Updated on page load; green for positive change, red for negative.
 
 A small widget with a shortcut to the AI Copilot chat. Shows a "Start chatting" prompt.
 
+### 2.7 Portfolio Summary Widget (Enhanced)
+
+The `PortfolioSummaryWidget` displays four metric cards in a responsive 2×2 (mobile) or 1×4 (desktop) grid. Each card shows:
+
+- **Open P&L** — total net P&L across all active positions, formatted in compact THB (e.g. `+12.5K ฿` or `+1.20M ฿`). Also shows the percentage return over total cost basis.
+- **Open Positions** — count of open positions with a win/loss breakdown (e.g. `5W / 2L`).
+- **Win Rate** — percentage of positions with positive P&L, with total trade count as sub-label.
+- **Avg P&L / Trade** — total P&L divided by position count.
+
+Metric values animate on update using Framer Motion's `AnimatePresence` (slide-up transition). The Open P&L card uses brand accent styling when highlighted.
+
+Data source: `GET /api/v1/portfolio-tracker/positions?status=active`
+
 ---
 
 ## 3. Data Refresh
@@ -62,3 +75,11 @@ The market index strip refreshes independently every 60 s.
 ## 4. Empty State
 
 If no portfolio data is available (Excel not configured or not found), the widgets show a placeholder message directing the user to Settings → App Configuration to set the source file path.
+
+---
+
+## 5. Chart Library — ECharts
+
+All charts on the dashboard (allocation donut, performance line) use the `echarts-for-react` wrapper around Apache ECharts. Charts are rendered via `ReactECharts` with `animation: false` for performance. The dark theme is applied by setting `backgroundColor: '#0d1117'` and `textStyle.color: '#64748b'` inside each chart option object.
+
+The shared `EChartsChart` component (`frontend/src/components/analytics/EChartsChart.tsx`) provides the full candlestick / OHLCV chart used in the Analytics modal and Weekly Scan evaluate view. See the Weekly Scan technical documentation for the full chart feature set.
