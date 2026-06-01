@@ -299,23 +299,37 @@ function AddToPlanModal({
 
 // ── Start scan dropdown ───────────────────────────────────────────────────────
 
-function StartScanMenu({ scanId, hasItems }: { scanId: string; hasItems: boolean }) {
+function StartScanMenu({ scanId, hasItems, activeList }: {
+  scanId: string; hasItems: boolean; activeList: string | null
+}) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
-  const go = (mode: string) => { router.push(`/weekly-scan/${scanId}/evaluate?mode=${mode}`); setOpen(false) }
+  const go = (mode: string) => {
+    const params = new URLSearchParams({ mode })
+    if (activeList) params.set('list', activeList)
+    router.push(`/weekly-scan/${scanId}/evaluate?${params.toString()}`)
+    setOpen(false)
+  }
 
   return (
     <div className="relative">
       <button onClick={() => setOpen(v => !v)} disabled={!hasItems}
         className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50">
-        <Play className="w-3.5 h-3.5" /> Start Scan <ChevronDown className="w-3 h-3" />
+        <Play className="w-3.5 h-3.5" />
+        {activeList ? `Scan: ${activeList}` : 'Start Scan'}
+        <ChevronDown className="w-3 h-3" />
       </button>
       <AnimatePresence>
         {open && (
           <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-            className="absolute right-0 top-full mt-1 bg-surface-card border border-border/60 rounded-xl shadow-xl w-56 z-30 overflow-hidden">
+            className="absolute right-0 top-full mt-1 bg-surface-card border border-border/60 rounded-xl shadow-xl w-60 z-30 overflow-hidden">
+            {activeList && (
+              <div className="px-4 py-2 border-b border-border/30 bg-brand-500/8">
+                <span className="text-[10px] text-brand-400 font-semibold">Scanning: {activeList}</span>
+              </div>
+            )}
             {[
-              { label: 'All symbols',    mode: 'all',       desc: 'Every symbol in order' },
+              { label: 'All symbols',    mode: 'all',       desc: activeList ? `All in ${activeList}` : 'Every symbol in order' },
               { label: 'Remaining only', mode: 'remaining', desc: 'Not yet colour-marked' },
               ...COLOR_MARKS.map(c => ({ label: `${c.label} only`, mode: `color_${c.value}`, desc: `${c.value} marked symbols` })),
             ].map(item => (
@@ -343,12 +357,16 @@ export default function WeeklyScanPage() {
   const [addLoading,    setAddLoading]    = useState(false)
   const [refreshing,    setRefreshing]    = useState(false)
   const [deleteSymbol,    setDeleteSymbol]    = useState<string | null>(null)
-  const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
+  const [analyticsSymbol, setAnalyticsSymbol] = useState<{ symbol: string; market: string } | null>(null)
   const [deleting,      setDeleting]      = useState(false)
   const [addToPlan,     setAddToPlan]     = useState<WeeklyScanItem | null>(null)
   const [markingPortfo,  setMarkingPortfo]  = useState(false)
   const [savingConfig,   setSavingConfig]   = useState<'idle' | 'saving' | 'done'>('idle')
   const [copied,         setCopied]         = useState(false)
+  const [addToList,      setAddToList]      = useState<string>('')
+
+  // Symbol list tab
+  const [activeListTab, setActiveListTab] = useState<string | null>(null)
 
   // Column filters
   const [filterSymbol,   setFilterSymbol]   = useState('')
@@ -370,11 +388,17 @@ export default function WeeklyScanPage() {
 
   const invalidate = useCallback(() => queryClient.invalidateQueries({ queryKey: ['weekly-scan', id] }), [id, queryClient])
 
-  // Sorted A-Z then filtered
+  // Derive unique list tabs from items (preserve insertion order)
+  const listTabs = scan
+    ? [...new Set(scan.items.map(i => i.list_name).filter((n): n is string => !!n))]
+    : []
+
+  // Sorted A-Z then filtered (tab + column filters)
   const sortedItems = scan
     ? [...scan.items]
         .sort((a, b) => a.symbol.localeCompare(b.symbol))
         .filter(item => {
+          if (activeListTab !== null && item.list_name !== activeListTab) return false
           if (filterSymbol && !item.symbol.toUpperCase().includes(filterSymbol.toUpperCase())) return false
           if (filterColors.size > 0) {
             const key = item.color_mark ?? 'NONE'
@@ -413,7 +437,12 @@ export default function WeeklyScanPage() {
     const sym = addSymbol.trim().toUpperCase()
     if (!sym) return
     setAddLoading(true)
-    try { await weeklyScanService.addItem(id, sym); setAddSymbol(''); await invalidate() }
+    const targetList = activeListTab ?? (addToList || null)
+    // Derive market from the target list (look at existing items in that list)
+    const marketForList = targetList
+      ? (scan?.items.find(i => i.list_name === targetList)?.market ?? 'SET')
+      : 'SET'
+    try { await weeklyScanService.addItem(id, sym, targetList, marketForList); setAddSymbol(''); await invalidate() }
     catch { } finally { setAddLoading(false) }
   }
 
@@ -457,7 +486,10 @@ export default function WeeklyScanPage() {
     if (!scan || savingConfig === 'saving') return
     setSavingConfig('saving')
     try {
-      const symbols = scan.items.map(i => i.symbol)
+      const symbols = (activeListTab
+        ? scan.items.filter(i => i.list_name === activeListTab)
+        : scan.items
+      ).map(i => i.symbol)
       await weeklyScanService.updateConfig(symbols)
       setSavingConfig('done')
       setTimeout(() => setSavingConfig('idle'), 2000)
@@ -475,7 +507,18 @@ export default function WeeklyScanPage() {
     </div>
   )
 
-  const counts = scan.color_counts
+  // Counts reflect the active tab (only items in that tab)
+  const tabFilteredItems = activeListTab === null
+    ? scan.items
+    : scan.items.filter(i => i.list_name === activeListTab)
+  const counts = {
+    CYAN:   tabFilteredItems.filter(i => i.color_mark === 'CYAN').length,
+    GREEN:  tabFilteredItems.filter(i => i.color_mark === 'GREEN').length,
+    YELLOW: tabFilteredItems.filter(i => i.color_mark === 'YELLOW').length,
+    RED:    tabFilteredItems.filter(i => i.color_mark === 'RED').length,
+    PURPLE: tabFilteredItems.filter(i => i.color_mark === 'PURPLE').length,
+    NONE:   tabFilteredItems.filter(i => !i.color_mark).length,
+  }
 
   return (
     <div className="space-y-4">
@@ -510,7 +553,45 @@ export default function WeeklyScanPage() {
         </div>
       </div>
 
-      {/* Toolbar */}
+      {/* Symbol list tabs — above toolbar */}
+      {listTabs.length === 0 && scan.items.length > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-brand-500/20 bg-brand-500/8 text-xs text-brand-400">
+          <span className="opacity-60">💡</span>
+          No symbol list tabs yet. Click <strong className="font-semibold">"Refresh config"</strong> below to assign symbols to tabs from your configured symbol lists.
+        </div>
+      )}
+
+      {listTabs.length > 0 && (
+        <div className="flex items-center gap-1 flex-wrap">
+          <button
+            onClick={() => setActiveListTab(null)}
+            className={cn(
+              'px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors',
+              activeListTab === null
+                ? 'bg-brand-500/15 text-brand-400 border-brand-500/30'
+                : 'text-ink-muted border-border hover:text-ink-primary hover:bg-surface-elevated',
+            )}>
+            All <span className="ml-1 text-[10px] opacity-60">{scan.items.length}</span>
+          </button>
+          {listTabs.map(name => {
+            const count = scan.items.filter(i => i.list_name === name).length
+            return (
+              <button key={name}
+                onClick={() => setActiveListTab(name)}
+                className={cn(
+                  'px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors',
+                  activeListTab === name
+                    ? 'bg-brand-500/15 text-brand-400 border-brand-500/30'
+                    : 'text-ink-muted border-border hover:text-ink-primary hover:bg-surface-elevated',
+                )}>
+                {name} <span className="ml-1 text-[10px] opacity-60">{count}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Toolbar — below tabs, list-context aware */}
       <div className="card px-4 py-3 flex flex-wrap items-center gap-3">
         <button onClick={handleRefresh} disabled={refreshing}
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors disabled:opacity-50">
@@ -519,7 +600,7 @@ export default function WeeklyScanPage() {
         </button>
 
         <button onClick={saveAsConfig} disabled={savingConfig === 'saving'}
-          title="Save this scan's symbols as the default list for new scans"
+          title={activeListTab ? `Save "${activeListTab}" symbols as config` : 'Save all symbols as config'}
           className={cn(
             'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50',
             savingConfig === 'done'
@@ -529,7 +610,9 @@ export default function WeeklyScanPage() {
           {savingConfig === 'saving'
             ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
             : <BookmarkCheck className="w-3.5 h-3.5" />}
-          {savingConfig === 'done' ? 'Saved as config!' : 'Save as config'}
+          {savingConfig === 'done'
+            ? 'Saved!'
+            : activeListTab ? `Save "${activeListTab}" as config` : 'Save as config'}
         </button>
 
         {/* Auto-mark portfolio purple */}
@@ -541,9 +624,17 @@ export default function WeeklyScanPage() {
           Mark portfolio purple
         </button>
 
-        <form onSubmit={handleAdd} className="flex gap-2 flex-1 min-w-0">
+        <form onSubmit={handleAdd} className="flex gap-1.5 flex-1 min-w-0">
+          {/* List selector — only when on "All" tab and multiple lists exist */}
+          {activeListTab === null && listTabs.length > 0 && (
+            <select value={addToList} onChange={e => setAddToList(e.target.value)}
+              className="bg-surface-elevated border border-border/50 rounded px-2 py-1 text-xs text-ink-secondary focus:outline-none focus:border-brand-500/50 shrink-0 max-w-[110px]">
+              <option value="">No list</option>
+              {listTabs.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          )}
           <input value={addSymbol} onChange={e => setAddSymbol(e.target.value.toUpperCase())}
-            placeholder="Add symbol…"
+            placeholder={activeListTab ? `Add to ${activeListTab}…` : addToList ? `Add to ${addToList}…` : 'Add symbol…'}
             className="input text-xs font-mono uppercase flex-1 min-w-0 py-1.5" />
           <button type="submit" disabled={!addSymbol.trim() || addLoading}
             className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1 disabled:opacity-40">
@@ -552,7 +643,7 @@ export default function WeeklyScanPage() {
           </button>
         </form>
 
-        <StartScanMenu scanId={id} hasItems={scan.items.length > 0} />
+        <StartScanMenu scanId={id} hasItems={sortedItems.length > 0} activeList={activeListTab} />
       </div>
 
       {/* Symbol table — inline editable */}
@@ -676,7 +767,7 @@ export default function WeeklyScanPage() {
                       meta ? `${meta.bg.replace('/20', '/5')} hover:${meta.bg.replace('/20', '/10')}` : 'hover:bg-surface-elevated/40')}>
                     <td className="px-3 py-2 text-ink-disabled">{idx + 1}</td>
                     <td className="px-3 py-2">
-                      <button onClick={() => setAnalyticsSymbol(item.symbol)}
+                      <button onClick={() => setAnalyticsSymbol({ symbol: item.symbol, market: item.market ?? 'SET' })}
                         className="font-bold font-mono text-ink-primary hover:text-brand-400 transition-colors">
                         {item.symbol}
                       </button>
@@ -741,7 +832,11 @@ export default function WeeklyScanPage() {
       {/* Modals */}
       <AnimatePresence>
         {analyticsSymbol && (
-          <AnalyticsModal symbol={analyticsSymbol} assetType="SET" onClose={() => setAnalyticsSymbol(null)} />
+          <AnalyticsModal
+            symbol={analyticsSymbol.symbol}
+            assetType={(analyticsSymbol.market as any) ?? 'SET'}
+            onClose={() => setAnalyticsSymbol(null)}
+          />
         )}
         {addToPlan && (
           <AddToPlanModal item={addToPlan} onClose={() => setAddToPlan(null)} />

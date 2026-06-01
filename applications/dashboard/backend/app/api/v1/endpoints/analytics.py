@@ -1,4 +1,4 @@
-﻿"""Analytics endpoints â€” chart data, analysis logs, fibo charts, symbol notes, search."""
+﻿"""Analytics endpoints â€" chart data, analysis logs, fibo charts, symbol notes, search."""
 
 
 import asyncio
@@ -29,7 +29,7 @@ from app.services.app_config_service import get_app_config
 
 _log = get_logger("analytics")
 
-# Symbol whitelist â€” SET symbols are uppercase alphanumeric with optional dot/hyphen.
+# Symbol whitelist â€" SET symbols are uppercase alphanumeric with optional dot/hyphen.
 # Max 20 chars covers all known exchange symbol formats.
 _SYMBOL_RE = re.compile(r"^[A-Z0-9.\-]{1,20}$")
 
@@ -38,7 +38,7 @@ DB = Annotated[AsyncSession, Depends(get_db)]
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
-# â”€â”€ Defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Defaults â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 DEFAULT_ANALYSIS_LOG_PATH = "/app/investment_agent/analysis_log"
 DEFAULT_FIBO_PATH = "/app/investment_agent/charts/Fibo"
@@ -85,7 +85,7 @@ def _safe_glob(base_dir: str, pattern: str) -> list[str]:
     return results
 
 
-# â”€â”€ Indicator helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Indicator helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 def _calc_rsi(closes: pd.Series, period: int = 14) -> pd.Series:
     delta = closes.diff()
@@ -109,7 +109,7 @@ def _calc_stoch(high: pd.Series, low: pd.Series, close: pd.Series,
 
 
 def _calc_vrvp(df: pd.DataFrame, bins: int = 24) -> list[dict]:
-    """Volume Range Visible Profile â€” bins volume by price range."""
+    """Volume Range Visible Profile â€" bins volume by price range."""
     if df.empty:
         return []
     price_min = df["Low"].min()
@@ -136,7 +136,12 @@ def _ticker_sym(symbol: str, asset_type: str) -> list[str]:
         return [f"{sym}-USD", f"{sym}-USDT", sym]
     if asset_type == "DR":
         return [f"{sym}.BK", sym]
-    # SET: .BK first (Thai SET), bare symbol only as last resort
+    if asset_type == "HK":
+        padded = sym.zfill(4)  # HK tickers are zero-padded 4-digit numbers
+        return [f"{padded}.HK", f"{sym}.HK", sym]
+    if asset_type in ("US", "OTHER"):
+        return [sym]
+    # SET default: .BK first, bare symbol as fallback
     return [f"{sym}.BK", sym]
 
 
@@ -149,9 +154,9 @@ def _exchange_label(ticker: str) -> str:
     # Try to get from yfinance fast_info
     try:
         ex = getattr(yf.Ticker(ticker).fast_info, "exchange", None) or ""
-        return ex if ex else "â€”"
+        return ex if ex else "--"
     except Exception:
-        return "â€”"
+        return "--"
 
 
 _YF_INTERVAL: dict[str, str] = {
@@ -161,7 +166,7 @@ _YF_INTERVAL: dict[str, str] = {
     "1wk": "1wk",
 }
 
-_MAX_DAYS     = 912   # 2.5 years â€” always fetch the full history
+_MAX_DAYS     = 912   # 2.5 years â€" always fetch the full history
 _INTRADAY_MAX = 730   # yfinance caps 1h data at ~730 days
 
 
@@ -188,7 +193,7 @@ def _fetch_ohlcv(symbol: str, asset_type: str, interval: str) -> tuple[pd.DataFr
     return pd.DataFrame(), ""
 
 
-# â”€â”€ Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Endpoints â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 @router.get("/chart")
 async def get_chart_data(
@@ -351,7 +356,7 @@ async def get_fibo_chart(
         return {"found": False, "image": None, "filename": None, "error": str(e)}
 
 
-# â”€â”€ Symbol notes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Symbol notes â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class NoteUpsert(BaseModel):
     symbol: str

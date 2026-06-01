@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink, ListChecks, Upload, Download } from 'lucide-react'
+import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink, ListChecks, Upload, Download, Plus, Trash2, ChevronDown, ChevronUp, GripVertical } from 'lucide-react'
 import Link from 'next/link'
 import { useAuthStore } from '@/store/auth'
 import { apiClient } from '@/services/api'
@@ -351,92 +351,222 @@ function PortfolioPrefsSection() {
   )
 }
 
-function ScanListSection() {
-  const [text, setText] = useState('')
-  const [loaded, setLoaded] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
+// ── Per-list editor card ──────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (loaded) return
-    weeklyScanService.getConfig().then(cfg => {
-      setText(cfg.symbols.join('\n'))
-      setLoaded(true)
-    }).catch(() => setLoaded(true))
-  }, [loaded])
+import { type UserSymbolList, SCAN_MARKETS, type ScanMarket } from '@/services/weeklyScan'
+
+function SymbolListCard({
+  list,
+  onSave,
+  onDelete,
+  onMoveUp,
+  onMoveDown,
+  isFirst,
+  isLast,
+}: {
+  list: UserSymbolList
+  onSave: (id: string, name: string, symbols: string[], market: ScanMarket) => Promise<void>
+  onDelete: (id: string) => Promise<void>
+  onMoveUp: (id: string) => void
+  onMoveDown: (id: string) => void
+  isFirst: boolean
+  isLast: boolean
+}) {
+  const [open,    setOpen]    = useState(false)
+  const [name,    setName]    = useState(list.name)
+  const [market,  setMarket]  = useState<ScanMarket>(list.market)
+  const [text,    setText]    = useState(list.symbols.join('\n'))
+  const [saving,  setSaving]  = useState(false)
+  const [deleting,setDeleting]= useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const symbols = text.split('\n').map(s => s.trim().toUpperCase()).filter(Boolean)
 
   const save = async () => {
     setSaving(true)
     try {
-      await weeklyScanService.updateConfig(symbols)
-      toast.success(`Saved ${symbols.length} symbols`)
+      await onSave(list.id, name.trim() || list.name, symbols, market)
+      toast.success(`Saved "${name}" — ${symbols.length} symbols`)
     } catch {
-      toast.error('Failed to save scan list')
-    } finally {
-      setSaving(false)
-    }
+      toast.error('Failed to save')
+    } finally { setSaving(false) }
   }
 
-  const exportTxt = () => {
-    const blob = new Blob([text], { type: 'text/plain' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = 'scan_list.txt'
-    a.click()
+  const confirmDelete = async () => {
+    if (!confirm(`Delete symbol list "${list.name}"? This cannot be undone.`)) return
+    setDeleting(true)
+    try { await onDelete(list.id) }
+    catch { toast.error('Failed to delete'); setDeleting(false) }
   }
 
   const importFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = ev => {
-      setText(ev.target?.result as string ?? '')
-      toast.success('Imported — review and save')
-    }
+    reader.onload = ev => { setText(ev.target?.result as string ?? ''); toast.success('Imported — save to apply') }
     reader.readAsText(file)
     e.target.value = ''
   }
 
+  const exportTxt = () => {
+    const blob = new Blob([text], { type: 'text/plain' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${name.replace(/\s+/g, '_')}.txt`
+    a.click()
+  }
+
   return (
-    <Section title="Scan List Configuration" icon={ListChecks}>
-      <p className="text-xs text-ink-muted -mt-3">
-        Symbols used when creating a Weekly Scan. One symbol per line. SET50 pre-loaded by default.
-      </p>
-      {!loaded ? (
-        <div className="flex items-center gap-2 text-ink-muted text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
-      ) : (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-ink-muted">{symbols.length} symbols</span>
-            <div className="flex gap-2">
-              <button onClick={() => fileRef.current?.click()}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors">
-                <Upload className="w-3.5 h-3.5" /> Import
-              </button>
-              <input ref={fileRef} type="file" accept=".txt" className="hidden" onChange={importFile} />
-              <button onClick={exportTxt}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors">
-                <Download className="w-3.5 h-3.5" /> Export
-              </button>
-            </div>
-          </div>
-          <textarea
-            value={text}
-            onChange={e => setText(e.target.value)}
-            rows={12}
-            className="input w-full font-mono text-xs py-2 leading-5"
-            placeholder="KBANK&#10;AOT&#10;PTTEP&#10;…"
-            spellCheck={false}
-            style={{ resize: 'vertical' }}
-          />
-          <p className="text-[11px] text-ink-disabled">One symbol per line. Symbols are automatically uppercased and deduplicated on save.</p>
-          <button onClick={save} disabled={saving}
-            className="btn-primary flex items-center gap-2 px-4 py-2 text-sm">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Save Scan List
+    <div className="border border-border/60 rounded-xl overflow-hidden">
+      {/* Header row */}
+      <div className="flex items-center gap-2 px-3 py-2.5 bg-surface-elevated/50">
+        <div className="flex flex-col gap-0.5 shrink-0">
+          <button onClick={() => onMoveUp(list.id)} disabled={isFirst}
+            className="text-ink-disabled hover:text-ink-muted disabled:opacity-20 transition-colors">
+            <ChevronUp className="w-3 h-3" />
           </button>
+          <button onClick={() => onMoveDown(list.id)} disabled={isLast}
+            className="text-ink-disabled hover:text-ink-muted disabled:opacity-20 transition-colors">
+            <ChevronDown className="w-3 h-3" />
+          </button>
+        </div>
+        <GripVertical className="w-3.5 h-3.5 text-ink-disabled shrink-0" />
+        <input value={name} onChange={e => setName(e.target.value)}
+          className="flex-1 bg-transparent text-sm font-semibold text-ink-primary outline-none border-b border-transparent focus:border-brand-500/50 transition-colors"
+          onBlur={() => name !== list.name && onSave(list.id, name.trim() || list.name, list.symbols, market).catch(() => {})} />
+        <select value={market} onChange={e => {
+            const m = e.target.value as ScanMarket
+            setMarket(m)
+            onSave(list.id, name.trim() || list.name, list.symbols, m).catch(() => {})
+          }}
+          className="shrink-0 bg-surface-elevated border border-border/50 rounded px-1.5 py-0.5 text-[10px] text-ink-secondary focus:outline-none focus:border-brand-500/50">
+          {SCAN_MARKETS.map(m => (
+            <option key={m.value} value={m.value} title={m.desc}>{m.label}</option>
+          ))}
+        </select>
+        <span className="text-[10px] text-ink-disabled shrink-0">{symbols.length} symbols</span>
+        <button onClick={() => setOpen(v => !v)}
+          className="text-xs text-brand-400 hover:text-brand-300 transition-colors shrink-0 px-1.5">
+          {open ? 'Close' : 'Edit'}
+        </button>
+        <button onClick={confirmDelete} disabled={deleting}
+          className="text-ink-disabled hover:text-loss transition-colors shrink-0 disabled:opacity-40">
+          {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+      {/* Expanded editor */}
+      {open && (
+        <div className="p-3 space-y-2 border-t border-border/40 bg-surface-base/30">
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => fileRef.current?.click()}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-border text-ink-muted hover:text-ink-primary transition-colors">
+              <Upload className="w-3 h-3" /> Import
+            </button>
+            <input ref={fileRef} type="file" accept=".txt" className="hidden" onChange={importFile} />
+            <button onClick={exportTxt}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-border text-ink-muted hover:text-ink-primary transition-colors">
+              <Download className="w-3 h-3" /> Export
+            </button>
+          </div>
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={8}
+            className="input w-full font-mono text-xs py-2 leading-5" spellCheck={false}
+            placeholder={'KBANK\nAOT\nPTTEP\n…'} style={{ resize: 'vertical' }} />
+          <p className="text-[11px] text-ink-disabled">One symbol per line. Uppercased on save.</p>
+          <button onClick={save} disabled={saving} className="btn-primary flex items-center gap-2 px-4 py-1.5 text-sm">
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Save
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Symbol lists section ──────────────────────────────────────────────────────
+
+function ScanListSection() {
+  const [lists,    setLists]    = useState<UserSymbolList[]>([])
+  const [loading,  setLoading]  = useState(true)
+  const [newName,  setNewName]  = useState('')
+  const [creating, setCreating] = useState(false)
+
+  const reload = () =>
+    weeklyScanService.getSymbolLists()
+      .then(setLists)
+      .catch(() => toast.error('Failed to load symbol lists'))
+      .finally(() => setLoading(false))
+
+  useEffect(() => { reload() }, [])
+
+  const handleSave = async (id: string, name: string, symbols: string[], market: ScanMarket) => {
+    await weeklyScanService.updateSymbolList(id, { name, symbols, market })
+    await reload()
+  }
+
+  const handleDelete = async (id: string) => {
+    await weeklyScanService.deleteSymbolList(id)
+    await reload()
+  }
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return
+    setCreating(true)
+    try {
+      await weeklyScanService.createSymbolList(newName.trim(), [])
+      setNewName('')
+      await reload()
+      toast.success(`Created "${newName.trim()}"`)
+    } catch {
+      toast.error('Failed to create list')
+    } finally { setCreating(false) }
+  }
+
+  const move = async (id: string, dir: 1 | -1) => {
+    const idx = lists.findIndex(l => l.id === id)
+    if (idx < 0) return
+    const swap = lists[idx + dir]
+    if (!swap) return
+    await Promise.all([
+      weeklyScanService.updateSymbolList(id, { sort_order: swap.sort_order }),
+      weeklyScanService.updateSymbolList(swap.id, { sort_order: lists[idx].sort_order }),
+    ])
+    await reload()
+  }
+
+  return (
+    <Section title="Symbol Lists" icon={ListChecks}>
+      <p className="text-xs text-ink-muted -mt-3">
+        Named symbol lists used when creating a Weekly Scan. Each list becomes a separate tab in the scan view.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-ink-muted text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {lists.length === 0 && (
+            <p className="text-xs text-ink-disabled italic">No symbol lists yet. Create one below.</p>
+          )}
+          {lists.map((list, i) => (
+            <SymbolListCard key={list.id} list={list}
+              onSave={handleSave} onDelete={handleDelete}
+              onMoveUp={id => move(id, -1)} onMoveDown={id => move(id, 1)}
+              isFirst={i === 0} isLast={i === lists.length - 1} />
+          ))}
+
+          {/* Add new list */}
+          <div className="flex gap-2 pt-2">
+            <input value={newName} onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              placeholder="New list name…"
+              className="input flex-1 text-sm py-1.5" />
+            <button onClick={handleCreate} disabled={!newName.trim() || creating}
+              className="btn-primary flex items-center gap-1.5 px-4 py-1.5 text-sm disabled:opacity-40">
+              {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+              Add List
+            </button>
+          </div>
         </div>
       )}
     </Section>

@@ -1,4 +1,4 @@
-"""FastAPI application entry point."""
+﻿"""FastAPI application entry point."""
 
 from __future__ import annotations
 
@@ -43,13 +43,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.models.action_plan import ActionPlan, PurchasePlanItem, PortfolioPlanItem  # noqa: F401
     from app.models.symbol_note import SymbolNote  # noqa: F401
     from app.models.portfolio_db import PortfolioDbPosition  # noqa: F401
-    from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem  # noqa: F401
+    from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem, UserSymbolList  # noqa: F401
     from app.auth.jwt import hash_password
 
     async with engine.begin() as conn:
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("ALTER TABLE weekly_scan_items ADD COLUMN IF NOT EXISTS list_name VARCHAR(100)"))
+        await conn.execute(text("ALTER TABLE weekly_scan_items ADD COLUMN IF NOT EXISTS market VARCHAR(20) NOT NULL DEFAULT 'SET'"))
+        await conn.execute(text("ALTER TABLE user_symbol_lists ADD COLUMN IF NOT EXISTS market VARCHAR(20) NOT NULL DEFAULT 'SET'"))
 
     # Seed first admin from env vars (skipped if ADMIN_EMAIL not set)
     if settings.admin_email and settings.admin_password:

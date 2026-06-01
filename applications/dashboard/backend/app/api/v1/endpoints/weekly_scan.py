@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import get_current_user_id
 from app.database.session import get_db
-from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem
+from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem, UserSymbolList
 
 UserId = Annotated[str, Depends(get_current_user_id)]
 DB     = Annotated[AsyncSession, Depends(get_db)]
@@ -67,6 +67,8 @@ def _item_dict(item: WeeklyScanItem) -> dict[str, Any]:
         "id": str(item.id),
         "symbol": item.symbol,
         "sort_order": item.sort_order,
+        "list_name": item.list_name,
+        "market": item.market,
         "color_mark": item.color_mark,
         "strategy": item.strategy,
         "buy_price": float(item.buy_price) if item.buy_price is not None else None,
@@ -96,6 +98,19 @@ class ItemEval(BaseModel):
 
 class ItemAdd(BaseModel):
     symbol: str
+    list_name: str | None = None
+    market: str = 'SET'
+
+class SymbolListCreate(BaseModel):
+    name: str
+    market: str = 'SET'
+    symbols: list[str] = []
+
+class SymbolListUpdate(BaseModel):
+    name: str | None = None
+    market: str | None = None
+    symbols: list[str] | None = None
+    sort_order: int | None = None
 
 # ── Week-price helpers ────────────────────────────────────────────────────────
 
@@ -111,19 +126,24 @@ def _parse_week_dates(scan_name: str) -> tuple[date | None, date | None]:
         return None, None
 
 
-def _sym_to_ticker(symbol: str) -> str:
-    if symbol.endswith('-DR') or 'USD' in symbol:
-        return symbol
-    return f"{symbol}.BK"
+def _sym_to_ticker(symbol: str, market: str = 'SET') -> str:
+    sym = symbol.strip().upper()
+    if market == 'CRYPTO' or sym.endswith('-DR') or 'USD' in sym:
+        return sym
+    if market == 'HK':
+        return f"{sym.zfill(4)}.HK"
+    if market in ('US', 'OTHER'):
+        return sym
+    return f"{sym}.BK"   # SET default
 
 
-def _fetch_sym_prices(symbol: str, monday: date, friday: date) -> dict[str, float | None]:
+def _fetch_sym_prices(symbol: str, monday: date, friday: date, market: str = 'SET') -> dict[str, float | None]:
     today       = date.today()
     fetch_start = (monday - timedelta(days=7)).strftime("%Y-%m-%d")
     fetch_end   = (min(friday, today) + timedelta(days=4)).strftime("%Y-%m-%d")
 
     try:
-        df = yf.Ticker(_sym_to_ticker(symbol)).history(
+        df = yf.Ticker(_sym_to_ticker(symbol, market)).history(
             start=fetch_start, end=fetch_end,
             interval="1d", auto_adjust=False, back_adjust=False,
         )
@@ -160,7 +180,115 @@ def _fetch_sym_prices(symbol: str, monday: date, friday: date) -> dict[str, floa
 
     return {"mon": mon_price, "fri": fri_price}
 
-# â"€â"€ Config endpoints â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+# ── Symbol-list endpoints ────────────────────────────────────────────────────
+
+def _list_dict(sl: UserSymbolList) -> dict[str, Any]:
+    return {
+        "id": str(sl.id),
+        "name": sl.name,
+        "market": sl.market,
+        "symbols": sl.symbols,
+        "sort_order": sl.sort_order,
+        "updated_at": sl.updated_at.isoformat() if sl.updated_at else None,
+    }
+
+
+@router.get("/symbol-lists")
+async def list_symbol_lists(user_id: UserId, db: DB) -> list[dict[str, Any]]:
+    uid = uuid.UUID(user_id)
+    result = await db.execute(
+        select(UserSymbolList)
+        .where(UserSymbolList.user_id == uid)
+        .order_by(UserSymbolList.sort_order)
+    )
+    rows = result.scalars().all()
+
+    # Migration helper: if user has no lists yet but has a legacy config, seed a "Default" list
+    if not rows:
+        config = await db.scalar(select(UserScanConfig).where(UserScanConfig.user_id == uid))
+        if config and config.symbols:
+            seeded = UserSymbolList(
+                user_id=uid,
+                name="Default",
+                symbols=config.symbols,
+                sort_order=0,
+            )
+            db.add(seeded)
+            await db.commit()
+            await db.refresh(seeded)
+            return [_list_dict(seeded)]
+
+    return [_list_dict(sl) for sl in rows]
+
+
+@router.post("/symbol-lists")
+async def create_symbol_list(body: SymbolListCreate, user_id: UserId, db: DB) -> dict[str, Any]:
+    uid = uuid.UUID(user_id)
+    # Place new list after the current highest sort_order
+    max_order = await db.scalar(
+        select(UserSymbolList.sort_order)
+        .where(UserSymbolList.user_id == uid)
+        .order_by(UserSymbolList.sort_order.desc())
+        .limit(1)
+    )
+    next_order = (max_order + 1) if max_order is not None else 0
+    symbols = [s.strip().upper() for s in body.symbols if s.strip()]
+    sl = UserSymbolList(
+        user_id=uid,
+        name=body.name.strip(),
+        market=body.market,
+        symbols=symbols,
+        sort_order=next_order,
+    )
+    db.add(sl)
+    await db.commit()
+    await db.refresh(sl)
+    return _list_dict(sl)
+
+
+@router.put("/symbol-lists/{list_id}")
+async def update_symbol_list(
+    list_id: str, body: SymbolListUpdate, user_id: UserId, db: DB
+) -> dict[str, Any]:
+    uid = uuid.UUID(user_id)
+    sl = await db.scalar(
+        select(UserSymbolList).where(
+            UserSymbolList.id == uuid.UUID(list_id),
+            UserSymbolList.user_id == uid,
+        )
+    )
+    if sl is None:
+        raise HTTPException(404, "Symbol list not found")
+    if body.name is not None:
+        sl.name = body.name.strip()
+    if body.market is not None:
+        sl.market = body.market
+    if body.symbols is not None:
+        sl.symbols = [s.strip().upper() for s in body.symbols if s.strip()]
+    if body.sort_order is not None:
+        sl.sort_order = body.sort_order
+    await db.commit()
+    await db.refresh(sl)
+    return _list_dict(sl)
+
+
+@router.delete("/symbol-lists/{list_id}")
+async def delete_symbol_list(list_id: str, user_id: UserId, db: DB) -> Response:
+    uid = uuid.UUID(user_id)
+    sl = await db.scalar(
+        select(UserSymbolList).where(
+            UserSymbolList.id == uuid.UUID(list_id),
+            UserSymbolList.user_id == uid,
+        )
+    )
+    if sl is None:
+        raise HTTPException(404, "Symbol list not found")
+    await db.delete(sl)
+    await db.commit()
+    return Response(status_code=204)
+
+
+# ── Config endpoints ──────────────────────────────────────────────────────────
 
 @router.get("/config")
 async def get_scan_config(user_id: UserId, db: DB) -> dict[str, Any]:
@@ -228,16 +356,41 @@ async def list_scans(user_id: UserId, db: DB) -> list[dict[str, Any]]:
 @router.post("/scans")
 async def create_scan(body: ScanCreate, user_id: UserId, db: DB) -> dict[str, Any]:
     uid = uuid.UUID(user_id)
-    # Load config symbols
-    config = await db.scalar(select(UserScanConfig).where(UserScanConfig.user_id == uid))
-    symbols = config.symbols if config else SET50_DEFAULT
 
     scan = WeeklyScan(user_id=uid, name=body.name.strip())
     db.add(scan)
     await db.flush()
 
-    for i, sym in enumerate(symbols):
-        db.add(WeeklyScanItem(scan_id=scan.id, symbol=sym.upper(), sort_order=i))
+    # Prefer named symbol lists; fall back to legacy UserScanConfig
+    lists_result = await db.execute(
+        select(UserSymbolList)
+        .where(UserSymbolList.user_id == uid)
+        .order_by(UserSymbolList.sort_order)
+    )
+    symbol_lists = lists_result.scalars().all()
+
+    counter = 0
+    if symbol_lists:
+        for sl in symbol_lists:
+            for sym in sl.symbols:
+                sym = sym.strip().upper()
+                if sym:
+                    db.add(WeeklyScanItem(
+                        scan_id=scan.id,
+                        symbol=sym,
+                        sort_order=counter,
+                        list_name=sl.name,
+                        market=sl.market,
+                    ))
+                    counter += 1
+    else:
+        config = await db.scalar(select(UserScanConfig).where(UserScanConfig.user_id == uid))
+        symbols = config.symbols if config else SET50_DEFAULT
+        for sym in symbols:
+            sym = sym.strip().upper()
+            if sym:
+                db.add(WeeklyScanItem(scan_id=scan.id, symbol=sym, sort_order=counter))
+                counter += 1
 
     await db.commit()
     await db.refresh(scan)
@@ -279,7 +432,7 @@ async def delete_scan(scan_id: str, user_id: UserId, db: DB) -> Response:
 
 @router.post("/scans/{scan_id}/refresh")
 async def refresh_scan(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
-    """Merge current config symbols into the scan â€" adds new, preserves existing evaluations."""
+    """Merge current symbol lists into the scan, re-assigning list_name for every item."""
     uid = uuid.UUID(user_id)
     scan = await db.scalar(
         select(WeeklyScan)
@@ -289,20 +442,47 @@ async def refresh_scan(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
     if scan is None:
         raise HTTPException(404, "Scan not found")
 
-    config = await db.scalar(select(UserScanConfig).where(UserScanConfig.user_id == uid))
-    symbols = [s.upper() for s in (config.symbols if config else SET50_DEFAULT)]
+    # Auto-seed "Default" list from legacy config if user has no lists yet
+    lists_result = await db.execute(
+        select(UserSymbolList).where(UserSymbolList.user_id == uid).order_by(UserSymbolList.sort_order)
+    )
+    symbol_lists = list(lists_result.scalars().all())
+
+    if not symbol_lists:
+        config = await db.scalar(select(UserScanConfig).where(UserScanConfig.user_id == uid))
+        seed_syms = config.symbols if (config and config.symbols) else SET50_DEFAULT
+        seeded = UserSymbolList(user_id=uid, name="Default", symbols=seed_syms, sort_order=0)
+        db.add(seeded)
+        await db.flush()
+        symbol_lists = [seeded]
 
     existing = {it.symbol: it for it in scan.items}
     next_order = max((it.sort_order for it in scan.items), default=-1) + 1
+    # Track first-list winner so a symbol appearing in multiple lists gets the first one
+    assigned: set[str] = set()
 
-    for sym in symbols:
-        if sym not in existing:
-            db.add(WeeklyScanItem(scan_id=scan.id, symbol=sym, sort_order=next_order))
-            next_order += 1
+    for sl in symbol_lists:
+        for sym in sl.symbols:
+            sym = sym.strip().upper()
+            if not sym:
+                continue
+            if sym in existing:
+                item = existing[sym]
+                # Always re-assign list_name and market; first matching list wins
+                if sym not in assigned:
+                    item.list_name = sl.name
+                    item.market    = sl.market
+                    assigned.add(sym)
+            else:
+                db.add(WeeklyScanItem(
+                    scan_id=scan.id, symbol=sym,
+                    sort_order=next_order, list_name=sl.name, market=sl.market,
+                ))
+                assigned.add(sym)
+                next_order += 1
 
     await db.execute(text("UPDATE weekly_scans SET updated_at = now() WHERE id = :id"), {"id": scan.id})
     await db.commit()
-    await db.refresh(scan)
 
     items_result = await db.execute(
         select(WeeklyScanItem).where(WeeklyScanItem.scan_id == scan.id).order_by(WeeklyScanItem.sort_order)
@@ -331,7 +511,7 @@ async def add_item(scan_id: str, body: ItemAdd, user_id: UserId, db: DB) -> dict
     if any(it.symbol == sym for it in scan.items):
         raise HTTPException(409, f"{sym} already in scan")
     next_order = max((it.sort_order for it in scan.items), default=-1) + 1
-    item = WeeklyScanItem(scan_id=scan.id, symbol=sym, sort_order=next_order)
+    item = WeeklyScanItem(scan_id=scan.id, symbol=sym, sort_order=next_order, list_name=body.list_name, market=body.market)
     db.add(item)
     await db.commit()
     await db.refresh(item)
@@ -397,7 +577,9 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
         raise HTTPException(404, "Scan not found")
 
     monday, friday = _parse_week_dates(scan.name)
-    symbols = [it.symbol for it in scan.items]
+    items          = scan.items
+    sym_market     = {it.symbol: it.market for it in items}
+    symbols        = list(sym_market.keys())
 
     if not symbols or monday is None:
         return {
@@ -411,7 +593,9 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
 
     async def _fetch(sym: str) -> tuple[str, dict]:
         async with sem:
-            result = await loop.run_in_executor(None, _fetch_sym_prices, sym, monday, friday)
+            result = await loop.run_in_executor(
+                None, _fetch_sym_prices, sym, monday, friday, sym_market.get(sym, 'SET')
+            )
         return sym, result
 
     pairs  = await asyncio.gather(*[_fetch(s) for s in symbols])

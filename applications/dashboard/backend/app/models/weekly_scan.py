@@ -1,4 +1,4 @@
-"""Weekly Manual Scan SQLAlchemy models."""
+﻿"""Weekly Manual Scan SQLAlchemy models."""
 
 from __future__ import annotations
 
@@ -23,6 +23,26 @@ class UserScanConfig(Base):
         nullable=False, unique=True, index=True,
     )
     symbols: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UserSymbolList(Base):
+    """A named symbol list belonging to a user (supports multiple lists per user)."""
+
+    __tablename__ = "user_symbol_lists"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    market: Mapped[str] = mapped_column(String(20), nullable=False, default='SET')
+    symbols: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -68,6 +88,8 @@ class WeeklyScanItem(Base):
     )
     symbol: Mapped[str] = mapped_column(String(30), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    list_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    market: Mapped[str] = mapped_column(String(20), nullable=False, default='SET')
 
     # Evaluation fields — all nullable until the user evaluates
     color_mark: Mapped[str | None] = mapped_column(String(10), nullable=True)   # CYAN|GREEN|YELLOW|RED|PURPLE

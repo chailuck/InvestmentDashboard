@@ -1,6 +1,6 @@
 import { apiClient } from './api'
 
-export type AssetType = 'SET' | 'CRYPTO' | 'DR'
+export type AssetType = 'SET' | 'CRYPTO' | 'DR' | 'US' | 'HK' | 'OTHER'
 
 export interface ChartData {
   symbol: string

@@ -30,8 +30,9 @@ const STRATEGY_META: { value: string; label: string; Icon: React.ElementType; sh
 
 // ── Queue builder ─────────────────────────────────────────────────────────────
 
-function buildQueue(scan: WeeklyScan, mode: string): WeeklyScanItem[] {
-  const items = [...scan.items].sort((a, b) => a.symbol.localeCompare(b.symbol))
+function buildQueue(scan: WeeklyScan, mode: string, list: string | null): WeeklyScanItem[] {
+  let items = [...scan.items].sort((a, b) => a.symbol.localeCompare(b.symbol))
+  if (list) items = items.filter(i => i.list_name === list)
   if (mode === 'remaining') return items.filter(i => !i.color_mark)
   if (mode.startsWith('color_')) {
     const color = mode.slice(6) as ColorMark
@@ -340,6 +341,7 @@ export default function EvaluatePage() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const mode = searchParams.get('mode') ?? 'all'
+  const list = searchParams.get('list')
 
   const [scan,        setScan]        = useState<WeeklyScan | null>(null)
   const [loadingInit, setLoadingInit] = useState(true)
@@ -354,7 +356,7 @@ export default function EvaluatePage() {
   useEffect(() => {
     weeklyScanService.getScan(id).then(s => {
       setScan(s)
-      const q = buildQueue(s, mode)
+      const q = buildQueue(s, mode, list)
       setQueue(q)
       if (q.length > 0) setForm(emptyForm(q[0]))
       setLoadingInit(false)
@@ -464,7 +466,9 @@ export default function EvaluatePage() {
         </div>
         {currentItem && <TopInfoBar symbol={currentItem.symbol} />}
         <div className="ml-auto flex items-center gap-1.5 shrink-0">
-          <span className="text-[10px] text-ink-muted font-mono hidden md:block">{scan.name}</span>
+          <span className="text-[10px] text-ink-muted font-mono hidden md:block">
+            {scan.name}{list && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-400 not-italic">{list}</span>}
+          </span>
           <button onClick={goPrev} disabled={idx === 0 || saving} className="btn-icon disabled:opacity-30">
             <ArrowLeft className="w-4 h-4" />
           </button>

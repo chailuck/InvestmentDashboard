@@ -39,6 +39,8 @@ export interface WeeklyScanItem {
   id: string
   symbol: string
   sort_order: number
+  list_name: string | null
+  market: string
   color_mark: ColorMark | null
   strategy: string | null
   buy_price: number | null
@@ -56,6 +58,25 @@ export interface WeeklyScan {
   updated_at: string
   items: WeeklyScanItem[]
   color_counts: ColorCounts
+}
+
+export type ScanMarket = 'SET' | 'US' | 'CRYPTO' | 'HK' | 'OTHER'
+
+export const SCAN_MARKETS: { value: ScanMarket; label: string; desc: string }[] = [
+  { value: 'SET',    label: 'SET',    desc: 'Thai SET Exchange (.BK)' },
+  { value: 'US',     label: 'US',     desc: 'US Markets (NYSE/NASDAQ)' },
+  { value: 'CRYPTO', label: 'Crypto', desc: 'Cryptocurrency (-USD)' },
+  { value: 'HK',     label: 'HK',     desc: 'Hong Kong Exchange (.HK)' },
+  { value: 'OTHER',  label: 'Other',  desc: 'Other (symbol as-is)' },
+]
+
+export interface UserSymbolList {
+  id: string
+  name: string
+  market: ScanMarket
+  symbols: string[]
+  sort_order: number
+  updated_at: string | null
 }
 
 export interface WeekPriceEntry {
@@ -109,8 +130,8 @@ export const weeklyScanService = {
     return data
   },
 
-  async addItem(scanId: string, symbol: string): Promise<WeeklyScanItem> {
-    const { data } = await apiClient.post(`/weekly-scan/scans/${scanId}/items`, { symbol })
+  async addItem(scanId: string, symbol: string, listName?: string | null, market?: string): Promise<WeeklyScanItem> {
+    const { data } = await apiClient.post(`/weekly-scan/scans/${scanId}/items`, { symbol, list_name: listName ?? null, market: market ?? 'SET' })
     return data
   },
 
@@ -128,6 +149,25 @@ export const weeklyScanService = {
   async getWeekPrices(scanId: string): Promise<WeekPrices> {
     const { data } = await apiClient.get(`/weekly-scan/scans/${scanId}/week-prices`)
     return data
+  },
+
+  async getSymbolLists(): Promise<UserSymbolList[]> {
+    const { data } = await apiClient.get('/weekly-scan/symbol-lists')
+    return data
+  },
+
+  async createSymbolList(name: string, symbols: string[], market: ScanMarket = 'SET'): Promise<UserSymbolList> {
+    const { data } = await apiClient.post('/weekly-scan/symbol-lists', { name, symbols, market })
+    return data
+  },
+
+  async updateSymbolList(id: string, patch: Partial<Pick<UserSymbolList, 'name' | 'market' | 'symbols' | 'sort_order'>>): Promise<UserSymbolList> {
+    const { data } = await apiClient.put(`/weekly-scan/symbol-lists/${id}`, patch)
+    return data
+  },
+
+  async deleteSymbolList(id: string): Promise<void> {
+    await apiClient.delete(`/weekly-scan/symbol-lists/${id}`)
   },
 }
 
