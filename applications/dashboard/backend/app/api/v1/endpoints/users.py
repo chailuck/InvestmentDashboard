@@ -1,6 +1,5 @@
-"""User management endpoints (admin CRUD + self-service)."""
+﻿"""User management endpoints (admin CRUD + self-service)."""
 
-from __future__ import annotations
 
 import uuid
 from typing import Annotated
@@ -42,7 +41,7 @@ def _to_detail(user: User) -> UserDetail:
     )
 
 
-# ── List users (admin) ──────────────────────────────────────────────────────
+# â”€â”€ List users (admin) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.get("", response_model=UserListResponse)
 async def list_users(
     _admin: AdminUser,
@@ -71,7 +70,7 @@ async def list_users(
     return UserListResponse(users=[_to_detail(u) for u in users], total=total)
 
 
-# ── Create user (admin) ────────────────────────────────────────────────────
+# â”€â”€ Create user (admin) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.post("", response_model=UserDetail, status_code=status.HTTP_201_CREATED)
 async def create_user(body: UserCreate, _admin: AdminUser, db: DB) -> UserDetail:
     existing = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
@@ -91,7 +90,7 @@ async def create_user(body: UserCreate, _admin: AdminUser, db: DB) -> UserDetail
     return _to_detail(user)
 
 
-# ── Get single user (admin or self) ───────────────────────────────────────
+# â”€â”€ Get single user (admin or self) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.get("/{user_id}", response_model=UserDetail)
 async def get_user(user_id: str, current_user: CurrentUser, db: DB) -> UserDetail:
     if current_user.role != "admin" and str(current_user.id) != user_id:
@@ -103,7 +102,7 @@ async def get_user(user_id: str, current_user: CurrentUser, db: DB) -> UserDetai
     return _to_detail(target)
 
 
-# ── Update user (admin: any field; self: name only) ────────────────────────
+# â”€â”€ Update user (admin: any field; self: name only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.put("/{user_id}", response_model=UserDetail)
 async def update_user(user_id: str, body: UserUpdate, current_user: CurrentUser, db: DB) -> UserDetail:
     is_admin = current_user.role == "admin"
@@ -137,7 +136,7 @@ async def update_user(user_id: str, body: UserUpdate, current_user: CurrentUser,
     return _to_detail(target)
 
 
-# ── Activate / deactivate (admin) ──────────────────────────────────────────
+# â”€â”€ Activate / deactivate (admin) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.post("/{user_id}/deactivate", response_model=UserDetail)
 async def deactivate_user(user_id: str, _admin: AdminUser, db: DB) -> UserDetail:
     target = (await db.execute(select(User).where(User.id == uuid.UUID(user_id)))).scalar_one_or_none()
@@ -162,7 +161,7 @@ async def activate_user(user_id: str, _admin: AdminUser, db: DB) -> UserDetail:
     return _to_detail(target)
 
 
-# ── Admin force-reset password ─────────────────────────────────────────────
+# â”€â”€ Admin force-reset password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.post("/{user_id}/reset-password")
 async def admin_reset_password(
     user_id: str, body: AdminResetPasswordRequest, _admin: AdminUser, db: DB
@@ -175,7 +174,7 @@ async def admin_reset_password(
     return {"message": "Password reset successfully"}
 
 
-# ── Self: change own password ──────────────────────────────────────────────
+# â”€â”€ Self: change own password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.post("/me/change-password")
 async def change_own_password(body: ChangePasswordRequest, current_user: CurrentUser, db: DB) -> dict[str, str]:
     if not verify_password(body.current_password, current_user.hashed_password):

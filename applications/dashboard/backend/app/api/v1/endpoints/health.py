@@ -1,6 +1,5 @@
-"""Health check endpoints."""
+﻿"""Health check endpoints."""
 
-from __future__ import annotations
 
 import time
 

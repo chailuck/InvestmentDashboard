@@ -8,11 +8,15 @@ from typing import AsyncIterator
 import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.v1.router import v1_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.rate_limit import limiter
 from app.database.redis import close_redis, get_redis
 from app.database.session import engine
 from app.middleware.security import RequestIdMiddleware, SecurityHeadersMiddleware
@@ -82,9 +86,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Rate limiter — attach to app state before middleware is registered
+    app.state.limiter = limiter
+
     # Middleware (order matters — outermost runs last on response)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(SlowAPIMiddleware)
     # When origins = ["*"] we must disable allow_credentials (browser requirement).
     # The app now uses the Next.js proxy so the browser never calls the backend
     # directly — CORS is only needed for direct local curl/dev access.
@@ -97,6 +105,16 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Rate limit exceeded handler
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_handler(request, exc: RateLimitExceeded):  # type: ignore[override]
+        retry_after = str(getattr(exc, "retry_after", 60))
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please try again later."},
+            headers={"Retry-After": retry_after},
+        )
 
     # Routes
     app.include_router(v1_router)

@@ -1,6 +1,5 @@
-"""Portfolio endpoints — mock data responses for initial scaffold."""
+﻿"""Portfolio endpoints â€” mock data responses for initial scaffold."""
 
-from __future__ import annotations
 
 import random
 from datetime import date, timedelta
@@ -21,7 +20,7 @@ router = APIRouter(prefix="/portfolios", tags=["Portfolios"])
 
 UserId = Annotated[str, Depends(get_current_user_id)]
 
-# ── Mock data helpers ──────────────────────────────────────────────
+# â”€â”€ Mock data helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 MOCK_HOLDINGS: list[HoldingOut] = [
     HoldingOut(id="h1", portfolioId="default", symbol="AAPL", name="Apple Inc.",

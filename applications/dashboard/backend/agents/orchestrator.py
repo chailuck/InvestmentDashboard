@@ -173,7 +173,7 @@ class AgentOrchestrator:
                 finally:
                     self.queue.task_done()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         for i in range(count):
             t = loop.create_task(_worker(), name=f"agent-worker-{i}")
             if i == 0:

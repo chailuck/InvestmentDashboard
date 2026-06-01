@@ -1,16 +1,16 @@
-"""Authentication endpoints."""
+﻿"""Authentication endpoints."""
 
-from __future__ import annotations
 
 import secrets
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_current_user, get_current_user_id
+from app.auth.dependencies import BLACKLIST_KEY_PREFIX, bearer_scheme, get_current_user, get_current_user_id
 from app.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -18,13 +18,16 @@ from app.auth.jwt import (
     verify_password,
     verify_token,
 )
-from app.database.redis import auth_cache
+from app.core.logging import get_logger
+from app.core.rate_limit import limiter
+from app.database.redis import auth_cache, get_redis
 from app.database.session import get_db
 from app.models.user import User
-from app.schemas.auth import LoginRequest, RefreshRequest, TokenResponse, UserResponse
+from app.schemas.auth import LoginRequest, RefreshRequest, TokenResponse, UserResponse, UserUpdateRequest
 from app.schemas.users import ForgotPasswordRequest, ResetPasswordRequest
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+_log = get_logger("auth")
 
 _RESET_TTL = 3600  # 1 hour
 
@@ -40,11 +43,13 @@ def _user_response(user: User) -> UserResponse:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+@limiter.limit("5/minute")
+async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(body.password, user.hashed_password):
+        _log.warning("Failed login attempt", email=body.email, ip=request.client.host if request.client else "unknown")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     if not user.is_active:
@@ -58,6 +63,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> Token
     user.last_login_at = datetime.now(timezone.utc)
     await db.commit()
 
+    _log.info("Successful login", user_id=str(user.id), email=user.email)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -92,9 +98,33 @@ async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/logout")
-async def logout(user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
-    # Blacklist token JTI — piggyback on auth_cache with short TTL
-    await auth_cache.set(f"blacklist:{user_id}", "1", ttl=3600 * 24 * 7)
+async def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict[str, str]:
+    """
+    Invalidate the current access token by adding its JTI to the Redis blacklist.
+    TTL is set to the token's remaining lifetime so the blacklist entry auto-expires.
+    """
+    if not credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing credentials")
+
+    try:
+        payload = verify_token(credentials.credentials)
+    except ValueError as exc:
+        # Token is already invalid â€” treat as successful logout
+        _log.info("Logout called with invalid token", error=str(exc))
+        return {"message": "Logged out successfully"}
+
+    jti = payload.get("jti")
+    exp = payload.get("exp")
+
+    if jti and exp:
+        now = int(datetime.now(timezone.utc).timestamp())
+        ttl = max(int(exp) - now, 1)  # never 0 â€” some Redis configs treat 0 as no expiry
+        r = await get_redis()
+        await r.set(f"{BLACKLIST_KEY_PREFIX}{jti}", "1", ex=ttl)
+        _log.info("Token blacklisted on logout", jti=jti, ttl_seconds=ttl)
+
     return {"message": "Logged out successfully"}
 
 
@@ -105,21 +135,22 @@ async def me(current_user: User = Depends(get_current_user)) -> UserResponse:
 
 @router.put("/me", response_model=UserResponse)
 async def update_me(
-    body: dict,
+    body: UserUpdateRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
-    if name := body.get("name"):
-        current_user.name = name.strip()
+    current_user.name = body.name
     await db.commit()
     await db.refresh(current_user)
     return _user_response(current_user)
 
 
-# ── Password reset flow ─────────────────────────────────────────────────────
+# â”€â”€ Password reset flow â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.post("/forgot-password")
+@limiter.limit("3/minute")
 async def forgot_password(
+    request: Request,
     body: ForgotPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
@@ -143,7 +174,7 @@ async def forgot_password(
     if settings.is_development:
         # Surface the token directly so the dev UI can use it without email
         return {
-            "message": "Reset token generated (dev mode — token returned directly).",
+            "message": "Reset token generated (dev mode â€” token returned directly).",
             "reset_token": token,
         }
     return {"message": "If that email is registered, a reset link has been sent."}

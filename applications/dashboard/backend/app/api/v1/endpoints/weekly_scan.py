@@ -1,6 +1,5 @@
-"""Weekly Manual Scan endpoints."""
+﻿"""Weekly Manual Scan endpoints."""
 
-from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timedelta
@@ -21,7 +20,7 @@ DB     = Annotated[AsyncSession, Depends(get_db)]
 
 router = APIRouter(prefix="/weekly-scan", tags=["weekly-scan"])
 
-# ── Default symbol list (SET50 + extras) ──────────────────────────────────────
+# â”€â”€ Default symbol list (SET50 + extras) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 SET50_DEFAULT = [
     "ADVANC", "AOT", "AWC", "BANPU", "BBL", "BDMS", "BEM", "BGRIM", "BH", "BTS",
@@ -32,7 +31,7 @@ SET50_DEFAULT = [
     "BTCUSD-DR", "GOLUSD-DR",
 ]
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _next_saturday() -> str:
     today = date.today()
@@ -40,6 +39,14 @@ def _next_saturday() -> str:
     if days_until_saturday == 0:
         days_until_saturday = 7
     sat = today + timedelta(days=days_until_saturday)
+    return sat.strftime("%d_%m_%Y")
+
+
+def _prev_saturday() -> str:
+    today = date.today()
+    # Mon=0 … Sat=5 … Sun=6 → days since last Saturday (0 if today is Saturday)
+    days_since = (today.weekday() - 5) % 7
+    sat = today - timedelta(days=days_since)
     return sat.strftime("%d_%m_%Y")
 
 
@@ -66,7 +73,7 @@ def _item_dict(item: WeeklyScanItem) -> dict[str, Any]:
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
     }
 
-# ── Pydantic schemas ──────────────────────────────────────────────────────────
+# â”€â”€ Pydantic schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ConfigUpdate(BaseModel):
     symbols: list[str]
@@ -86,7 +93,7 @@ class ItemEval(BaseModel):
 class ItemAdd(BaseModel):
     symbol: str
 
-# ── Config endpoints ──────────────────────────────────────────────────────────
+# â”€â”€ Config endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/config")
 async def get_scan_config(user_id: UserId, db: DB) -> dict[str, Any]:
@@ -117,10 +124,15 @@ async def update_scan_config(body: ConfigUpdate, user_id: UserId, db: DB) -> dic
 
 
 @router.get("/suggest-name")
-async def suggest_name(_: UserId) -> dict[str, str]:
-    return {"name": f"WEEKLY_SCAN_{_next_saturday()}"}
+async def suggest_name(user_id: UserId, db: DB) -> dict[str, str]:
+    uid = uuid.UUID(user_id)
+    has_scans = await db.scalar(
+        select(WeeklyScan.id).where(WeeklyScan.user_id == uid).limit(1)
+    )
+    date_str = _next_saturday() if has_scans else _prev_saturday()
+    return {"name": f"WEEKLY_SCAN_{date_str}"}
 
-# ── Scan list endpoints ───────────────────────────────────────────────────────
+# â”€â”€ Scan list endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/scans")
 async def list_scans(user_id: UserId, db: DB) -> list[dict[str, Any]]:
@@ -200,7 +212,7 @@ async def delete_scan(scan_id: str, user_id: UserId, db: DB) -> Response:
 
 @router.post("/scans/{scan_id}/refresh")
 async def refresh_scan(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
-    """Merge current config symbols into the scan — adds new, preserves existing evaluations."""
+    """Merge current config symbols into the scan â€” adds new, preserves existing evaluations."""
     uid = uuid.UUID(user_id)
     scan = await db.scalar(
         select(WeeklyScan)
@@ -236,7 +248,7 @@ async def refresh_scan(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
         "color_counts": _color_counts(items),
     }
 
-# ── Item endpoints ────────────────────────────────────────────────────────────
+# â”€â”€ Item endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.post("/scans/{scan_id}/items")
 async def add_item(scan_id: str, body: ItemAdd, user_id: UserId, db: DB) -> dict[str, Any]:

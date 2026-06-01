@@ -1,5 +1,3 @@
-version: "3.9"
-
 networks:
   dashboard-net:
     driver: bridge
@@ -73,8 +71,8 @@ services:
     volumes:
       - ./backend:/app:cached
       - uploads_data:/app/uploads
-      - D:/Documents/Pop/AI Agents/InvestmentAgent01/investmentPlan:/app/investment_data:ro
-      - D:/Documents/Pop/AI Agents/InvestmentAgent01:/app/investment_agent:ro
+      - ${INVESTMENT_DATA_PATH:-./data/investmentPlan}:/app/investment_data:ro
+      - ${INVESTMENT_AGENT_PATH:-./data/investmentAgent}:/app/investment_agent:ro
       - ./docs:/app/docs:ro
     ports:
       - "8000:8000"

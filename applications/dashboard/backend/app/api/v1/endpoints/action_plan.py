@@ -1,18 +1,17 @@
-"""Action Plan CRUD endpoints.
+﻿"""Action Plan CRUD endpoints.
 
 Endpoints
 ---------
-GET  /action-plans/suggest-name          → unique plan name for today (YYYY-MM-DD[-NN])
-GET  /action-plans/stock-price           → latest price from yfinance (.BK first)
-GET  /action-plans                       → list plans (type + optional month filter)
-POST /action-plans                       → create empty plan
-GET  /action-plans/{id}                  → fetch plan + items
-PUT  /action-plans/{id}                  → replace name and/or items
-DEL  /action-plans/{id}                  → hard delete
-POST /action-plans/{id}/duplicate        → copy plan with new name
+GET  /action-plans/suggest-name          â†’ unique plan name for today (YYYY-MM-DD[-NN])
+GET  /action-plans/stock-price           â†’ latest price from yfinance (.BK first)
+GET  /action-plans                       â†’ list plans (type + optional month filter)
+POST /action-plans                       â†’ create empty plan
+GET  /action-plans/{id}                  â†’ fetch plan + items
+PUT  /action-plans/{id}                  â†’ replace name and/or items
+DEL  /action-plans/{id}                  â†’ hard delete
+POST /action-plans/{id}/duplicate        â†’ copy plan with new name
 """
 
-from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timezone
@@ -35,10 +34,10 @@ UserId = Annotated[str, Depends(get_current_user_id)]
 DB = Annotated[AsyncSession, Depends(get_db)]
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _f(v: Any) -> float | None:
-    """Decimal / None → float / None (safe for JSON)."""
+    """Decimal / None â†’ float / None (safe for JSON)."""
     return float(v) if v is not None else None
 
 
@@ -115,7 +114,7 @@ def _plan_detail(plan: ActionPlan) -> dict[str, Any]:
     }
 
 
-# ── Suggest unique plan name ──────────────────────────────────────────────
+# â”€â”€ Suggest unique plan name â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/suggest-name")
 async def suggest_name(
@@ -125,7 +124,7 @@ async def suggest_name(
 ) -> dict[str, str]:
     """
     Return a name guaranteed not to exist for this user+type.
-    Pattern: YYYY-MM-DD, then YYYY-MM-DD-01, YYYY-MM-DD-02, …
+    Pattern: YYYY-MM-DD, then YYYY-MM-DD-01, YYYY-MM-DD-02, â€¦
     """
     uid = uuid.UUID(user_id)
     today = date.today().strftime("%Y-%m-%d")
@@ -152,7 +151,7 @@ async def suggest_name(
     return {"name": candidate}  # fallback (shouldn't happen)
 
 
-# ── Live stock price ──────────────────────────────────────────────────────
+# â”€â”€ Live stock price â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/stock-price")
 async def get_stock_price(
@@ -166,7 +165,7 @@ async def get_stock_price(
     import yfinance as yf
 
     sym = symbol.strip().upper()
-    # Only try .BK — bare symbol would match a US-listed ticker with the same name
+    # Only try .BK â€” bare symbol would match a US-listed ticker with the same name
     for ticker_sym in [f"{sym}.BK"]:
         try:
             hist = yf.Ticker(ticker_sym).history(period="5d")
@@ -179,7 +178,7 @@ async def get_stock_price(
     raise HTTPException(status_code=404, detail=f"Price not found for {symbol}")
 
 
-# ── List plans ────────────────────────────────────────────────────────────
+# â”€â”€ List plans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("")
 async def list_plans(
@@ -218,7 +217,7 @@ async def list_plans(
     ]
 
 
-# ── Create plan ───────────────────────────────────────────────────────────
+# â”€â”€ Create plan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_plan(body: ActionPlanCreate, user_id: UserId, db: DB) -> dict[str, Any]:
@@ -236,7 +235,7 @@ async def create_plan(body: ActionPlanCreate, user_id: UserId, db: DB) -> dict[s
     return {"id": str(plan.id), "name": plan.name, "plan_type": plan.plan_type}
 
 
-# ── Get plan ──────────────────────────────────────────────────────────────
+# â”€â”€ Get plan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/{plan_id}")
 async def get_plan(plan_id: uuid.UUID, user_id: UserId, db: DB) -> dict[str, Any]:
@@ -244,7 +243,7 @@ async def get_plan(plan_id: uuid.UUID, user_id: UserId, db: DB) -> dict[str, Any
     return _plan_detail(plan)
 
 
-# ── Update plan ───────────────────────────────────────────────────────────
+# â”€â”€ Update plan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.put("/{plan_id}")
 async def update_plan(
@@ -308,7 +307,7 @@ async def update_plan(
     return {"status": "ok"}
 
 
-# ── Delete plan ───────────────────────────────────────────────────────────
+# â”€â”€ Delete plan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.delete("/{plan_id}")
 async def delete_plan(plan_id: uuid.UUID, user_id: UserId, db: DB) -> Response:
@@ -318,7 +317,7 @@ async def delete_plan(plan_id: uuid.UUID, user_id: UserId, db: DB) -> Response:
     return Response(status_code=204)
 
 
-# ── Duplicate plan ────────────────────────────────────────────────────────
+# â”€â”€ Duplicate plan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.post("/{plan_id}/duplicate", status_code=status.HTTP_201_CREATED)
 async def duplicate_plan(

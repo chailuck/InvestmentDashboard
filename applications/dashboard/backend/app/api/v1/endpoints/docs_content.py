@@ -1,6 +1,5 @@
-"""Serve markdown documentation from /app/docs/ with hierarchical manifest support."""
+﻿"""Serve markdown documentation from /app/docs/ with hierarchical manifest support."""
 
-from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -50,7 +49,7 @@ async def get_manifest(_: UserId) -> dict:
 async def get_file(_: UserId, path: str = Query(...)) -> dict[str, str]:
     """
     Serve a markdown file relative to DOCS_DIR.
-    Path traversal is blocked — only files inside DOCS_DIR are allowed.
+    Path traversal is blocked â€” only files inside DOCS_DIR are allowed.
     """
     # Safety: resolve and check prefix
     target = (DOCS_DIR / path).resolve()
@@ -64,7 +63,7 @@ async def get_file(_: UserId, path: str = Query(...)) -> dict[str, str]:
 # Backward-compatible route (used by old frontend code)
 @router.get("/{doc_name}")
 async def get_doc(doc_name: str, _: UserId) -> dict[str, str]:
-    """Legacy route — maps well-known keys to files."""
+    """Legacy route â€” maps well-known keys to files."""
     mapping = {
         "requirements": "REQUIREMENTS.md",
         "design": "DESIGN.md",

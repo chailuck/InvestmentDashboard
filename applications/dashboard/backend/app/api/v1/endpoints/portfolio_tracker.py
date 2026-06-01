@@ -1,6 +1,5 @@
-"""Portfolio tracker endpoints — routes to Excel or DB based on user's portfolio_mode."""
+﻿"""Portfolio tracker endpoints â€” routes to Excel or DB based on user's portfolio_mode."""
 
-from __future__ import annotations
 
 from datetime import date
 from typing import Annotated, Any
@@ -28,12 +27,12 @@ async def _mode(user_id: str, db: AsyncSession) -> str:
     return await get_user_portfolio_mode(user_id, db)
 
 
-# ── Refresh ───────────────────────────────────────────────────────────────────
+# â”€â”€ Refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.post("/refresh")
 async def refresh_portfolio(user_id: UserId, db: DB) -> dict[str, Any]:
     if await _mode(user_id, db) == "db":
-        return {"status": "ok", "message": "Database mode — no file to refresh. Data is managed directly in the database."}
+        return {"status": "ok", "message": "Database mode â€” no file to refresh. Data is managed directly in the database."}
     from app.services.portfolio_excel import copy_excel_from_source, _source_path, _working_path
     src = _source_path()
     dst = _working_path()
@@ -56,7 +55,7 @@ async def refresh_portfolio(user_id: UserId, db: DB) -> dict[str, Any]:
         raise _svc_error(exc)
 
 
-# ── Raw data ──────────────────────────────────────────────────────────────────
+# â”€â”€ Raw data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/raw-data")
 async def get_raw_data(user_id: UserId, db: DB) -> dict[str, Any]:
@@ -83,7 +82,7 @@ async def get_raw_data(user_id: UserId, db: DB) -> dict[str, Any]:
         raise _svc_error(exc)
 
 
-# ── Positions ─────────────────────────────────────────────────────────────────
+# â”€â”€ Positions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/positions")
 async def list_positions(
@@ -105,7 +104,7 @@ async def list_positions(
     return {"positions": positions, "total": len(positions), "totalNetPnl": round(total_pnl, 0)}
 
 
-# ── Performance chart ─────────────────────────────────────────────────────────
+# â”€â”€ Performance chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/performance")
 async def get_performance(
@@ -125,7 +124,7 @@ async def get_performance(
         raise _svc_error(exc)
 
 
-# ── Performance by date (table) ───────────────────────────────────────────────
+# â”€â”€ Performance by date (table) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/performance/by-date")
 async def get_performance_by_date(
@@ -145,7 +144,7 @@ async def get_performance_by_date(
         raise _svc_error(exc)
 
 
-# ── Transactions drill-down ───────────────────────────────────────────────────
+# â”€â”€ Transactions drill-down â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/performance/transactions")
 async def get_period_transactions(
@@ -167,7 +166,7 @@ async def get_period_transactions(
         raise _svc_error(exc)
 
 
-# ── Performance by stock ──────────────────────────────────────────────────────
+# â”€â”€ Performance by stock â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/performance/by-stock")
 async def get_performance_by_stock(
@@ -186,7 +185,7 @@ async def get_performance_by_stock(
         raise _svc_error(exc)
 
 
-# ── Market indices (same regardless of mode) ──────────────────────────────────
+# â”€â”€ Market indices (same regardless of mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/market/set-indices")
 async def get_set_indices(_: UserId) -> list[dict[str, Any]]:

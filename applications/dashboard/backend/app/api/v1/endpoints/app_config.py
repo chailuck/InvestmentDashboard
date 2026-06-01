@@ -1,6 +1,5 @@
-"""App configuration endpoint — admin-only settings (excel paths, etc.)."""
+﻿"""App configuration endpoint â€” admin-only settings (excel paths, etc.)."""
 
-from __future__ import annotations
 
 from pathlib import Path
 
@@ -49,4 +48,4 @@ async def test_path(body: AppConfigUpdate, _: User = Depends(get_current_user)) 
     if not p.is_file():
         return {"ok": False, "message": f"Path exists but is not a file: {path_str}"}
     size_kb = round(p.stat().st_size / 1024, 1)
-    return {"ok": True, "message": f"File found ({size_kb} KB) — ready to use."}
+    return {"ok": True, "message": f"File found ({size_kb} KB) â€” ready to use."}

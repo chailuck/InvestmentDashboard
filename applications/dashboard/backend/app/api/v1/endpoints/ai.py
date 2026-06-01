@@ -1,6 +1,5 @@
-"""AI copilot — streaming chat powered by Anthropic + InvestmentAgent01 skills."""
+﻿"""AI copilot â€” streaming chat powered by Anthropic + InvestmentAgent01 skills."""
 
-from __future__ import annotations
 
 import asyncio
 import json
@@ -29,7 +28,7 @@ AGENT_DIR = Path("/app/investment_agent")
 _SESSIONS: dict[str, list] = {}
 
 
-# ── System prompt ──────────────────────────────────────────────────────────────
+# â”€â”€ System prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _system_prompt() -> str:
     parts: list[str] = []
@@ -53,17 +52,17 @@ def _system_prompt() -> str:
     parts.append(
         "\n\n---\n# Dashboard AI Instructions\n"
         "You are running inside a web dashboard. Use the tools provided to fetch real data.\n"
-        "- /portList → call get_portfolio_positions\n"
-        "- /portAction, /portPlan → call get_portfolio_positions + get_performance_summary\n"
-        "- /portHist → call get_performance_summary\n"
-        "- /analyze TICKER → call get_live_price then read_knowledge_doc for analysis context\n"
+        "- /portList â†’ call get_portfolio_positions\n"
+        "- /portAction, /portPlan â†’ call get_portfolio_positions + get_performance_summary\n"
+        "- /portHist â†’ call get_performance_summary\n"
+        "- /analyze TICKER â†’ call get_live_price then read_knowledge_doc for analysis context\n"
         "- For unknown /commands, explain available commands.\n"
         "Respond in English unless the user writes in Thai. Use markdown formatting."
     )
     return "\n\n".join(parts)
 
 
-# ── Tool definitions ───────────────────────────────────────────────────────────
+# â”€â”€ Tool definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 TOOLS: list[dict] = [
     {
@@ -103,7 +102,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_performance_summary",
-        "description": "Get portfolio P&L performance — cumulative history and breakdown by stock.",
+        "description": "Get portfolio P&L performance â€” cumulative history and breakdown by stock.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -163,7 +162,7 @@ TOOLS: list[dict] = [
 ]
 
 
-# ── Tool execution ─────────────────────────────────────────────────────────────
+# â”€â”€ Tool execution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _execute_tool(name: str, inputs: dict) -> str:
     try:
@@ -173,22 +172,22 @@ def _execute_tool(name: str, inputs: dict) -> str:
             positions = get_positions(status=status)
             if not positions:
                 return f"No {status} positions found."
-            lines = [f"## Positions ({status.upper()}) — {len(positions)} total\n"]
+            lines = [f"## Positions ({status.upper()}) â€” {len(positions)} total\n"]
             lines.append("| Symbol | Dir | Entry | Current | Size | Net P&L | % |")
             lines.append("|--------|-----|------:|--------:|-----:|--------:|--:|")
             for p in positions:
                 sign = "+" if p["netPnl"] >= 0 else ""
                 lines.append(
                     f"| **{p['symbol']}** "
-                    f"| {'↑L' if 'short' not in p['direction'].lower() else '↓S'} "
+                    f"| {'â†‘L' if 'short' not in p['direction'].lower() else 'â†“S'} "
                     f"| {p['entryPrice']:.2f} | {p['currentPrice']:.2f} "
                     f"| {p['positionSize']:,} "
-                    f"| {sign}{p['netPnl']:,.0f} ฿ "
+                    f"| {sign}{p['netPnl']:,.0f} à¸¿ "
                     f"| {sign}{p['pnlPct']:.2f}% |"
                 )
             total = sum(p["netPnl"] for p in positions)
             sign = "+" if total >= 0 else ""
-            lines.append(f"\n**Total P&L: {sign}{total:,.0f} ฿**")
+            lines.append(f"\n**Total P&L: {sign}{total:,.0f} à¸¿**")
             return "\n".join(lines)
 
         elif name == "get_live_price":
@@ -209,7 +208,7 @@ def _execute_tool(name: str, inputs: dict) -> str:
             chg = q.get("regularMarketChange") or 0
             chg_pct = q.get("regularMarketChangePercent") or 0
             sign = "+" if chg >= 0 else ""
-            arrow = "📈" if chg >= 0 else "📉"
+            arrow = "ðŸ“ˆ" if chg >= 0 else "ðŸ“‰"
             return (
                 f"**{ticker}** {arrow}\n"
                 f"- Price: **{price:,.2f} THB**\n"
@@ -226,11 +225,11 @@ def _execute_tool(name: str, inputs: dict) -> str:
             perf = get_daily_performance(from_date=from_date, period=period)
             by_stock = get_performance_by_stock(from_date=from_date)
 
-            lines = [f"## Performance — Last {months} Month(s)\n"]
+            lines = [f"## Performance â€” Last {months} Month(s)\n"]
             if perf:
                 cumulative = perf[-1]["cumulativePnl"]
                 sign = "+" if cumulative >= 0 else ""
-                lines.append(f"**Cumulative P&L:** {sign}{cumulative:,.0f} ฿\n")
+                lines.append(f"**Cumulative P&L:** {sign}{cumulative:,.0f} à¸¿\n")
 
             if by_stock:
                 lines.append("### By Stock")
@@ -240,7 +239,7 @@ def _execute_tool(name: str, inputs: dict) -> str:
                     sign = "+" if s["net"] >= 0 else ""
                     lines.append(
                         f"| **{s['symbol']}** "
-                        f"| {sign}{s['net']:,.0f} ฿ "
+                        f"| {sign}{s['net']:,.0f} à¸¿ "
                         f"| {s.get('investment', 0):,.0f} "
                         f"| {s.get('currentValue', 0):,.0f} "
                         f"| {sign}{s.get('pnlPct', 0):.1f}% "
@@ -284,7 +283,7 @@ def _execute_tool(name: str, inputs: dict) -> str:
         return f"Tool error [{name}]: {exc}"
 
 
-# ── Streaming generator ────────────────────────────────────────────────────────
+# â”€â”€ Streaming generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _stream_response(message: str, session_id: str) -> AsyncIterator[str]:
     settings = get_settings()
@@ -361,7 +360,7 @@ async def _stream_response(message: str, session_id: str) -> AsyncIterator[str]:
     yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
 
 
-# ── Endpoints ──────────────────────────────────────────────────────────────────
+# â”€â”€ Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ChatRequest(BaseModel):
     message: str

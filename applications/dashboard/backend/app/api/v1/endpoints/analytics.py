@@ -1,20 +1,19 @@
-"""Analytics endpoints — chart data, analysis logs, fibo charts, symbol notes, search."""
+﻿"""Analytics endpoints â€” chart data, analysis logs, fibo charts, symbol notes, search."""
 
-from __future__ import annotations
 
 import asyncio
 import base64
 import glob
 import os
+import re
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -23,16 +22,23 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user_id
+from app.core.logging import get_logger
 from app.database.session import get_db
 from app.models.symbol_note import SymbolNote
 from app.services.app_config_service import get_app_config
+
+_log = get_logger("analytics")
+
+# Symbol whitelist â€” SET symbols are uppercase alphanumeric with optional dot/hyphen.
+# Max 20 chars covers all known exchange symbol formats.
+_SYMBOL_RE = re.compile(r"^[A-Z0-9.\-]{1,20}$")
 
 UserId = Annotated[str, Depends(get_current_user_id)]
 DB = Annotated[AsyncSession, Depends(get_db)]
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
+# â”€â”€ Defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 DEFAULT_ANALYSIS_LOG_PATH = "/app/investment_agent/analysis_log"
 DEFAULT_FIBO_PATH = "/app/investment_agent/charts/Fibo"
@@ -45,7 +51,41 @@ def _get_paths() -> tuple[str, str]:
     return log_path, fibo_path
 
 
-# ── Indicator helpers ─────────────────────────────────────────────────────────
+def _validate_symbol(symbol: str) -> str:
+    """Normalize and validate a trading symbol.
+
+    Raises HTTP 400 if the symbol contains path traversal characters or
+    does not match the allowed character set for exchange symbols.
+    """
+    sym = symbol.strip().upper()
+    if not _SYMBOL_RE.match(sym):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid symbol: must be 1-20 alphanumeric characters, dots, or hyphens",
+        )
+    return sym
+
+
+def _safe_glob(base_dir: str, pattern: str) -> list[str]:
+    """Return glob results that are strictly within base_dir.
+
+    Any result whose resolved path is outside base_dir is silently dropped.
+    This is a defense-in-depth guard against path traversal even after symbol
+    validation, in case the base_dir itself contains symlinks.
+    """
+    base = Path(base_dir).resolve()
+    results: list[str] = []
+    for p in glob.glob(pattern):
+        try:
+            resolved = Path(p).resolve()
+            resolved.relative_to(base)  # raises ValueError if outside base
+            results.append(p)
+        except ValueError:
+            _log.warning("Path traversal attempt blocked", attempted_path=p, base_dir=str(base))
+    return results
+
+
+# â”€â”€ Indicator helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _calc_rsi(closes: pd.Series, period: int = 14) -> pd.Series:
     delta = closes.diff()
@@ -69,7 +109,7 @@ def _calc_stoch(high: pd.Series, low: pd.Series, close: pd.Series,
 
 
 def _calc_vrvp(df: pd.DataFrame, bins: int = 24) -> list[dict]:
-    """Volume Range Visible Profile — bins volume by price range."""
+    """Volume Range Visible Profile â€” bins volume by price range."""
     if df.empty:
         return []
     price_min = df["Low"].min()
@@ -109,9 +149,9 @@ def _exchange_label(ticker: str) -> str:
     # Try to get from yfinance fast_info
     try:
         ex = getattr(yf.Ticker(ticker).fast_info, "exchange", None) or ""
-        return ex if ex else "—"
+        return ex if ex else "â€”"
     except Exception:
-        return "—"
+        return "â€”"
 
 
 _YF_INTERVAL: dict[str, str] = {
@@ -121,7 +161,7 @@ _YF_INTERVAL: dict[str, str] = {
     "1wk": "1wk",
 }
 
-_MAX_DAYS     = 912   # 2.5 years — always fetch the full history
+_MAX_DAYS     = 912   # 2.5 years â€” always fetch the full history
 _INTRADAY_MAX = 730   # yfinance caps 1h data at ~730 days
 
 
@@ -148,7 +188,7 @@ def _fetch_ohlcv(symbol: str, asset_type: str, interval: str) -> tuple[pd.DataFr
     return pd.DataFrame(), ""
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# â”€â”€ Endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/chart")
 async def get_chart_data(
@@ -157,7 +197,7 @@ async def get_chart_data(
     asset_type: str = Query("SET"),
     interval: str = Query("1d"),
 ) -> dict[str, Any]:
-    df, ticker_used = await asyncio.get_event_loop().run_in_executor(
+    df, ticker_used = await asyncio.get_running_loop().run_in_executor(
         None, _fetch_ohlcv, symbol, asset_type, interval
     )
     if df.empty:
@@ -251,7 +291,7 @@ async def search_symbol(
                 continue
         return {"symbol": sym, "found": False}
 
-    result = await asyncio.get_event_loop().run_in_executor(None, _lookup)
+    result = await asyncio.get_running_loop().run_in_executor(None, _lookup)
     return result
 
 
@@ -261,11 +301,11 @@ async def get_analysis_log(
     symbol: str = Query(...),
 ) -> dict[str, Any]:
     log_path, _ = _get_paths()
-    sym = symbol.strip().upper()
+    sym = _validate_symbol(symbol)  # raises HTTP 400 on path traversal or invalid chars
     # Search HTML first, then MD; pick the most recently modified overall
-    all_files = []
+    all_files: list[str] = []
     for ext in ["html", "md"]:
-        all_files.extend(glob.glob(os.path.join(log_path, f"*{sym}*.{ext}")))
+        all_files.extend(_safe_glob(log_path, os.path.join(log_path, f"*{sym}*.{ext}")))
     if not all_files:
         return {"found": False, "content": None, "filename": None, "file_type": None}
     latest = max(all_files, key=os.path.getmtime)
@@ -288,16 +328,16 @@ async def get_fibo_chart(
     symbol: str = Query(...),
 ) -> dict[str, Any]:
     _, fibo_path = _get_paths()
-    sym = symbol.strip().upper()
+    sym = _validate_symbol(symbol)  # raises HTTP 400 on path traversal or invalid chars
     patterns = [
         os.path.join(fibo_path, f"*{sym}*.png"),
         os.path.join(fibo_path, f"*{sym}*.jpg"),
         os.path.join(fibo_path, f"*{sym}*.jpeg"),
         os.path.join(fibo_path, f"*{sym}*.webp"),
     ]
-    files = []
+    files: list[str] = []
     for p in patterns:
-        files.extend(glob.glob(p))
+        files.extend(_safe_glob(fibo_path, p))
     files = sorted(files, key=os.path.getmtime, reverse=True)
     if not files:
         return {"found": False, "image": None, "filename": None}
@@ -311,7 +351,7 @@ async def get_fibo_chart(
         return {"found": False, "image": None, "filename": None, "error": str(e)}
 
 
-# ── Symbol notes ──────────────────────────────────────────────────────────────
+# â”€â”€ Symbol notes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class NoteUpsert(BaseModel):
     symbol: str

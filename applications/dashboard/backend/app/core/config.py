@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import secrets
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import AnyHttpUrl, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,7 +21,10 @@ class Settings(BaseSettings):
     app_name: str = "Investment Dashboard API"
     app_env: Literal["development", "staging", "production"] = "development"
     app_debug: bool = False
-    app_secret_key: str = secrets.token_urlsafe(32)
+    # APP_SECRET_KEY is required — no default. Server will refuse to start without it.
+    # Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    # Minimum 32 characters to ensure adequate entropy for HMAC-SHA256 signing.
+    app_secret_key: str = Field(min_length=32)
     log_level: str = "INFO"
     api_prefix: str = "/api/v1"
 

@@ -4,16 +4,23 @@ from __future__ import annotations
 
 import uuid
 
+import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import verify_token
+from app.core.logging import get_logger
+from app.database.redis import get_redis
 from app.database.session import get_db
 from app.models.user import User
 
 bearer_scheme = HTTPBearer(auto_error=False)
+_log = get_logger("auth.dependencies")
+
+# Redis key prefix for blacklisted JTIs — must match the prefix used in logout
+BLACKLIST_KEY_PREFIX = "blacklist:"
 
 
 async def get_current_user_id(
@@ -26,12 +33,38 @@ async def get_current_user_id(
         )
     try:
         payload = verify_token(credentials.credentials)
-        return str(payload["sub"])
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(exc),
         ) from exc
+
+    jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing jti claim",
+        )
+
+    # Check Redis blacklist — fail closed if Redis is unavailable
+    try:
+        r = await get_redis()
+        is_blacklisted = await r.exists(f"{BLACKLIST_KEY_PREFIX}{jti}")
+    except aioredis.RedisError as exc:
+        _log.error("Redis unavailable during auth blacklist check", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        ) from exc
+
+    if is_blacklisted:
+        _log.warning("Rejected blacklisted token", jti=jti)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+        )
+
+    return str(payload["sub"])
 
 
 async def get_current_user(

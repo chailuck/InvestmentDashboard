@@ -1,6 +1,5 @@
-"""Portfolio DB endpoints — CRUD for users who maintain positions in the database."""
+﻿"""Portfolio DB endpoints â€” CRUD for users who maintain positions in the database."""
 
-from __future__ import annotations
 
 import asyncio
 import uuid
@@ -25,7 +24,7 @@ UserId = Annotated[str, Depends(get_current_user_id)]
 DB = Annotated[AsyncSession, Depends(get_db)]
 
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
+# â”€â”€ Schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class PositionIn(BaseModel):
     symbol: str
@@ -41,14 +40,14 @@ class PositionIn(BaseModel):
     remarks: Optional[str] = None
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _f(v) -> float | None:
     return float(v) if v is not None else None
 
 
 def _fetch_price(symbol: str) -> float | None:
-    # Only try .BK — bare symbol would match US-listed tickers with same name
+    # Only try .BK â€” bare symbol would match US-listed tickers with same name
     for t in [f"{symbol}.BK"]:
         try:
             hist = yf.Ticker(t).history(period="2d")
@@ -113,7 +112,7 @@ async def _get_or_404(pos_id: uuid.UUID, user_id: str, db: AsyncSession) -> Port
     return pos
 
 
-# ── Portfolio mode helpers ────────────────────────────────────────────────────
+# â”€â”€ Portfolio mode helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def get_user_portfolio_mode(user_id: str, db: AsyncSession) -> str:
     uid = uuid.UUID(user_id)
@@ -122,7 +121,7 @@ async def get_user_portfolio_mode(user_id: str, db: AsyncSession) -> str:
     return mode or "excel"
 
 
-# ── List positions (used by portfolio tracker in DB mode) ────────────────────
+# â”€â”€ List positions (used by portfolio tracker in DB mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def list_positions_db(
     user_id: str,
@@ -150,7 +149,7 @@ async def list_positions_db(
     prices: dict[str, float | None] = {}
     if active_symbols:
         price_results = await asyncio.gather(
-            *[asyncio.get_event_loop().run_in_executor(None, _fetch_price, s) for s in active_symbols],
+            *[asyncio.get_running_loop().run_in_executor(None, _fetch_price, s) for s in active_symbols],
             return_exceptions=True,
         )
         for sym, pr in zip(active_symbols, price_results):
@@ -170,7 +169,7 @@ async def list_positions_db(
     return {"positions": serialized, "total": len(serialized), "totalNetPnl": round(total_pnl, 0)}
 
 
-# ── Performance helpers (DB mode) ────────────────────────────────────────────
+# â”€â”€ Performance helpers (DB mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _period_key(d: date, period: str) -> str:
     if period == "weekly":
@@ -347,7 +346,7 @@ async def get_performance_by_stock_db(user_id: str, db: AsyncSession,
     return sorted(result, key=lambda x: x["net"], reverse=True)
 
 
-# ── CRUD endpoints ────────────────────────────────────────────────────────────
+# â”€â”€ CRUD endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/positions")
 async def get_positions(
@@ -411,7 +410,7 @@ async def delete_position(pos_id: uuid.UUID, user_id: UserId, db: DB):
     return Response(status_code=204)
 
 
-# ── Sell (partial or full) ────────────────────────────────────────────────────
+# â”€â”€ Sell (partial or full) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class SellIn(BaseModel):
     quantity: int
@@ -433,7 +432,7 @@ async def sell_position(pos_id: uuid.UUID, body: SellIn, user_id: UserId, db: DB
     uid = uuid.UUID(user_id)
 
     if body.quantity == pos.position_size:
-        # Full sell — close in place
+        # Full sell â€” close in place
         pos.status = "closed"
         pos.exit_date = body.exit_date
         pos.exit_price = body.exit_price
@@ -443,7 +442,7 @@ async def sell_position(pos_id: uuid.UUID, body: SellIn, user_id: UserId, db: DB
         await db.refresh(pos)
         return {"type": "full", "position": _serialize(pos)}
 
-    # Partial sell — create closed child, shrink parent
+    # Partial sell â€” create closed child, shrink parent
     remaining = pos.position_size - body.quantity
     child = PortfolioDbPosition(
         user_id=uid,
@@ -501,7 +500,7 @@ async def undo_sell(pos_id: uuid.UUID, user_id: UserId, db: DB) -> dict[str, Any
     return {"status": "ok", "restored_quantity": restored_qty, "position": _serialize(parent)}
 
 
-# ── Portfolio mode ─────────────────────────────────────────────────────────────
+# â”€â”€ Portfolio mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/mode")
 async def get_mode(user_id: UserId, db: DB) -> dict[str, str]:
