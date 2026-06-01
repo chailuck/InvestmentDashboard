@@ -6,14 +6,17 @@ import { useQuery } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import {
   ArrowLeft, RefreshCw, TrendingUp, TrendingDown, BarChart2,
-  Loader2, AlertCircle, Target,
+  Loader2, AlertCircle, Target, Upload, X, Check, ShoppingCart,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import {
   weeklyScanService, COLOR_MARKS, SCAN_STRATEGIES,
   colorMarkMeta, type WeeklyScanItem, type ColorMark,
 } from '@/services/weeklyScan'
+import { actionPlanService, type PlanSummary, type PurchaseItem } from '@/services/actionPlan'
+import { portfolioTrackerService, type SetIndex } from '@/services/portfolioTracker'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -275,6 +278,298 @@ function PerformanceTable({ items, prices, monDate, friDate }: {
   )
 }
 
+// ── Bulk export modal (Feature 1) ──────────────────────────────────────────────
+
+function BulkExportModal({ items, onClose }: { items: WeeklyScanItem[]; onClose: () => void }) {
+  const candidates = items.filter(i => i.color_mark === 'CYAN' || i.color_mark === 'GREEN')
+  const [plans, setPlans] = useState<PlanSummary[]>([])
+  const [selectedId, setSelectedId] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [done, setDone] = useState(false)
+  const [exportedCount, setExportedCount] = useState(0)
+
+  useEffect(() => {
+    actionPlanService.list('purchase', null).then(all => {
+      setPlans(all)
+      if (all.length > 0) setSelectedId(all[0].id)
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  const confirm = async () => {
+    if (!selectedId || candidates.length === 0) return
+    setSaving(true)
+    try {
+      const plan = await actionPlanService.get(selectedId)
+      const existing = plan.purchase_items
+      const existingSymbols = new Set(existing.map(p => p.stock.toUpperCase()))
+
+      const newItems: Omit<PurchaseItem, 'id'>[] = candidates
+        .filter(item => !existingSymbols.has(item.symbol.toUpperCase()))
+        .map((item, idx) => ({
+          sort_order: existing.length + idx,
+          stock: item.symbol,
+          current_price: null,
+          size: item.size ?? null,
+          buy_price: item.buy_price ?? null,
+          tp: item.tp ?? null,
+          sl: item.sl ?? null,
+          strategy: item.strategy ?? null,
+          reason: item.remark ?? null,
+          triggered: false,
+        }))
+
+      await actionPlanService.update(selectedId, {
+        purchase_items: [...existing.map(({ id: _id, ...r }) => r), ...newItems],
+      })
+      setExportedCount(newItems.length)
+      setDone(true)
+      setTimeout(onClose, 1500)
+    } catch { } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div initial={{ opacity: 0, scale: 0.95, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-surface-card border border-border/60 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/50">
+          <h2 className="text-sm font-semibold text-ink-primary flex items-center gap-2">
+            <ShoppingCart className="w-4 h-4 text-brand-400" />
+            Export CYAN + GREEN to Plan
+          </h2>
+          <button onClick={onClose} className="btn-icon"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-500/8 border border-brand-500/20 text-xs">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />
+            <span className="text-ink-secondary">Export <strong className="text-ink-primary">{candidates.length}</strong> symbols ({candidates.filter(i => i.color_mark === 'CYAN').length} Cyan, {candidates.filter(i => i.color_mark === 'GREEN').length} Green) · duplicates will be skipped</span>
+          </div>
+
+          {loading ? (
+            <div className="flex items-center gap-2 text-ink-muted text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Loading plans…</div>
+          ) : plans.length === 0 ? (
+            <p className="text-sm text-ink-muted">No purchase plans found. Create one first.</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-ink-muted">Select a purchase plan:</p>
+              <div className="max-h-48 overflow-y-auto space-y-1.5">
+                {plans.map(p => (
+                  <label key={p.id} className={cn('flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all',
+                    selectedId === p.id ? 'border-brand-500/50 bg-brand-500/8' : 'border-border hover:border-border-focus')}>
+                    <input type="radio" value={p.id} checked={selectedId === p.id}
+                      onChange={() => setSelectedId(p.id)} className="shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-ink-primary truncate">{p.name}</p>
+                      <p className="text-[10px] text-ink-muted">{format(new Date(p.created_at), 'dd MMM yyyy')}</p>
+                    </div>
+                    {selectedId === p.id && <Check className="w-3.5 h-3.5 text-brand-400 ml-auto shrink-0" />}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {done && (
+            <div className="flex items-center gap-2 text-gain text-xs px-3 py-2 rounded-lg bg-gain/10 border border-gain/20">
+              <Check className="w-3.5 h-3.5" />
+              {exportedCount > 0
+                ? `Added ${exportedCount} new symbol${exportedCount !== 1 ? 's' : ''} to plan!`
+                : 'All symbols already in plan — nothing added.'}
+            </div>
+          )}
+
+          <div className="flex gap-2 justify-end">
+            <button onClick={onClose} className="btn-ghost text-sm px-4 py-1.5">Cancel</button>
+            <button
+              onClick={confirm}
+              disabled={!selectedId || saving || done || candidates.length === 0 || plans.length === 0}
+              className="btn-primary text-sm px-4 py-1.5 flex items-center gap-2 disabled:opacity-40">
+              {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <Upload className="w-3.5 h-3.5" />
+              Export {candidates.length}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+// ── Review tab — pick performance chart (Feature 2) ───────────────────────────
+
+function ReviewTab({ items, prices, weekPrices }: {
+  items: WeeklyScanItem[]
+  prices: Record<string, { mon: number | null; fri: number | null }>
+  weekPrices: { mon_date: string | null; fri_date: string | null } | null
+}) {
+  const [set50Pct, setSet50Pct] = useState<number | null>(null)
+  const [set50Loading, setSet50Loading] = useState(true)
+
+  useEffect(() => {
+    portfolioTrackerService.getSetIndices().then(indices => {
+      const set50 = indices.find(i => i.name === 'SET50' || i.name === 'SET 50')
+      setSet50Pct(set50?.changePct ?? null)
+    }).catch(() => {}).finally(() => setSet50Loading(false))
+  }, [])
+
+  const picks = useMemo(() => {
+    return items
+      .filter(i => i.color_mark === 'CYAN' || i.color_mark === 'GREEN')
+      .map(item => {
+        const p = prices[item.symbol]
+        const ret = (p?.mon && p?.fri && p.mon !== 0)
+          ? (p.fri - p.mon) / p.mon * 100
+          : null
+        return { symbol: item.symbol, color_mark: item.color_mark, ret }
+      })
+      .filter(i => i.ret !== null)
+      .sort((a, b) => (b.ret ?? 0) - (a.ret ?? 0))
+  }, [items, prices])
+
+  const accuracy = picks.length > 0
+    ? Math.round(picks.filter(p => (p.ret ?? 0) >= 0).length / picks.length * 100)
+    : null
+
+  const chartOption = useMemo(() => ({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      formatter: (p: any[]) => `<b>${p[0].axisValue}</b><br/>${p[0].data >= 0 ? '+' : ''}${p[0].data.toFixed(2)}%`,
+    },
+    grid: { left: 55, right: 20, top: 10, bottom: 60 },
+    xAxis: {
+      type: 'category',
+      data: picks.map(p => p.symbol),
+      axisLabel: { color: '#64748b', fontSize: 9, rotate: 45, interval: 0 },
+      axisLine: { lineStyle: { color: '#2d3748' } },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#64748b', fontSize: 9, formatter: (v: number) => `${v.toFixed(1)}%` },
+      splitLine: { lineStyle: { color: '#1a2332', type: 'dashed' } },
+    },
+    series: [{
+      type: 'bar',
+      data: picks.map(p => ({
+        value: p.ret,
+        itemStyle: { color: (p.ret ?? 0) >= 0 ? '#22C55E' : '#EF4444', borderRadius: [3, 3, 0, 0] },
+      })),
+      barMaxWidth: 28,
+    }],
+  }), [picks])
+
+  if (picks.length === 0) return (
+    <div className="card p-8 flex flex-col items-center justify-center gap-3 text-center">
+      <AlertCircle className="w-8 h-8 text-ink-disabled" />
+      <p className="text-sm text-ink-muted">No CYAN/GREEN picks with price data available for this week.</p>
+      <p className="text-xs text-ink-disabled">Prices are fetched from the week dates in the scan name.</p>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      {/* Summary stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Picks Reviewed"
+          value={String(picks.length)}
+          sub="CYAN + GREEN with prices"
+        />
+        <StatCard
+          label="Accuracy"
+          value={accuracy !== null ? `${accuracy}%` : '—'}
+          sub={`${picks.filter(p => (p.ret ?? 0) >= 0).length} positive of ${picks.length}`}
+          accent={accuracy !== null ? (accuracy >= 50 ? 'text-gain' : 'text-loss') : undefined}
+        />
+        <StatCard
+          label="Best Pick"
+          value={picks[0]?.symbol ?? '—'}
+          sub={picks[0] ? `+${picks[0].ret!.toFixed(2)}%` : undefined}
+          accent="text-gain"
+        />
+        <StatCard
+          label="SET50 This Week"
+          value={set50Loading ? '…' : (set50Pct !== null ? `${set50Pct >= 0 ? '+' : ''}${set50Pct.toFixed(2)}%` : '—')}
+          sub="Benchmark reference"
+          accent={set50Pct !== null ? (set50Pct >= 0 ? 'text-gain' : 'text-loss') : undefined}
+        />
+      </div>
+
+      {/* Week return bar chart */}
+      <div className="card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">
+            CYAN/GREEN Pick Returns
+            {weekPrices?.mon_date && weekPrices?.fri_date && (
+              <span className="ml-2 text-[10px] text-ink-disabled font-normal">
+                {format(new Date(weekPrices.mon_date), 'dd MMM')} – {format(new Date(weekPrices.fri_date), 'dd MMM yyyy')}
+              </span>
+            )}
+          </p>
+          {set50Pct !== null && (
+            <div className={cn(
+              'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold border',
+              set50Pct >= 0
+                ? 'text-gain bg-gain/10 border-gain/20'
+                : 'text-loss bg-loss/10 border-loss/20',
+            )}>
+              <span>SET50</span>
+              <span>{set50Pct >= 0 ? '+' : ''}{set50Pct.toFixed(2)}%</span>
+            </div>
+          )}
+        </div>
+        <ReactECharts option={chartOption} style={{ height: 300 }} opts={{ renderer: 'canvas' }} />
+      </div>
+
+      {/* Pick table */}
+      <div className="card overflow-hidden">
+        <div className="px-4 py-3 border-b border-border/40">
+          <p className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">Pick Detail</p>
+        </div>
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border/40 bg-surface-elevated/60 text-ink-muted">
+              <th className="px-3 py-2 text-left font-medium">Symbol</th>
+              <th className="px-3 py-2 text-left font-medium">Mark</th>
+              <th className="px-3 py-2 text-right font-medium">Mon Open</th>
+              <th className="px-3 py-2 text-right font-medium">Fri Close</th>
+              <th className="px-3 py-2 text-right font-medium">W-Return</th>
+              <th className="px-3 py-2 text-right font-medium">vs SET50</th>
+            </tr>
+          </thead>
+          <tbody>
+            {picks.map(pick => {
+              const p = prices[pick.symbol]
+              const meta = pick.color_mark ? colorMarkMeta(pick.color_mark as ColorMark) : null
+              const diff = (pick.ret !== null && set50Pct !== null) ? pick.ret - set50Pct : null
+              return (
+                <tr key={pick.symbol} className="border-b border-border/20 hover:bg-surface-elevated/40">
+                  <td className="px-3 py-2 font-bold font-mono text-ink-primary">{pick.symbol}</td>
+                  <td className="px-3 py-2">
+                    {meta
+                      ? <span className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded-full border', meta.bg, meta.text, meta.border)}>{meta.label}</span>
+                      : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-ink-secondary">{p?.mon?.toFixed(2) ?? '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-ink-secondary">{p?.fri?.toFixed(2) ?? '—'}</td>
+                  <td className={cn('px-3 py-2 text-right tabular-nums font-semibold', (pick.ret ?? 0) >= 0 ? 'text-gain' : 'text-loss')}>
+                    {pick.ret !== null ? `${pick.ret >= 0 ? '+' : ''}${pick.ret.toFixed(2)}%` : '—'}
+                  </td>
+                  <td className={cn('px-3 py-2 text-right tabular-nums text-[10px]', diff === null ? 'text-ink-disabled' : diff >= 0 ? 'text-gain' : 'text-loss')}>
+                    {diff !== null ? `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%` : '—'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function ScanDashboardPage() {
@@ -282,6 +577,8 @@ export default function ScanDashboardPage() {
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const defaultTabApplied = useRef(false)
+  const [dashTab, setDashTab] = useState<'overview' | 'review'>('overview')
+  const [showExportModal, setShowExportModal] = useState(false)
 
   const { data: scan, isLoading: scanLoading, refetch: refetchScan } = useQuery({
     queryKey: ['weekly-scan', id],
@@ -357,6 +654,8 @@ export default function ScanDashboardPage() {
     </div>
   )
 
+  const cyanGreenCount = filteredItems.filter(i => i.color_mark === 'CYAN' || i.color_mark === 'GREEN').length
+
   return (
     <div className="space-y-5 pb-8">
       {/* Header */}
@@ -380,10 +679,34 @@ export default function ScanDashboardPage() {
           className="btn-icon disabled:opacity-40" title="Refresh data">
           <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />
         </button>
+        {/* Feature 1 — Bulk export button */}
+        <button
+          onClick={() => setShowExportModal(true)}
+          disabled={cyanGreenCount === 0}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 transition-colors disabled:opacity-30"
+          title="Export CYAN and GREEN picks to a purchase plan">
+          <Upload className="w-3.5 h-3.5" />
+          Export {cyanGreenCount} to Plan
+        </button>
         <button onClick={() => router.push(`/weekly-scan/${id}`)}
           className="text-xs px-3 py-1.5 rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:bg-surface-elevated transition-colors">
           Open Scan
         </button>
+      </div>
+
+      {/* Feature 2 — Dashboard tab switcher */}
+      <div className="flex items-center gap-1 border-b border-border/40">
+        {(['overview', 'review'] as const).map(tab => (
+          <button key={tab} onClick={() => setDashTab(tab)}
+            className={cn(
+              'px-4 py-2 text-xs font-semibold capitalize transition-colors border-b-2 -mb-px',
+              dashTab === tab
+                ? 'border-brand-400 text-brand-400'
+                : 'border-transparent text-ink-muted hover:text-ink-primary',
+            )}>
+            {tab === 'overview' ? 'Overview' : 'Review'}
+          </button>
+        ))}
       </div>
 
       {/* Symbol list tabs */}
@@ -408,53 +731,67 @@ export default function ScanDashboardPage() {
         </div>
       )}
 
-      {/* Stat cards */}
-      {stats && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatCard
-            label="Total Symbols"
-            value={String(stats.total)}
-            sub={`${stats.evaluated} evaluated`}
+      {/* Feature 2 — Review tab content */}
+      {dashTab === 'review' ? (
+        <ReviewTab items={filteredItems} prices={prices} weekPrices={weekPrices ?? null} />
+      ) : (
+        <>
+          {/* Stat cards */}
+          {stats && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <StatCard
+                label="Total Symbols"
+                value={String(stats.total)}
+                sub={`${stats.evaluated} evaluated`}
+              />
+              <StatCard
+                label="Evaluated"
+                value={`${Math.round(stats.evaluated / stats.total * 100)}%`}
+                sub={`${stats.total - stats.evaluated} pending`}
+                accent={stats.evaluated === stats.total ? 'text-gain' : 'text-ink-primary'}
+              />
+              <StatCard
+                label="Avg Weekly P&L"
+                value={fmtPct(stats.avgPnl)}
+                sub={pricesLoading ? 'loading prices…' : `${Object.values(prices).filter(p => p.mon && p.fri).length} symbols with prices`}
+                accent={stats.avgPnl === null ? undefined : stats.avgPnl >= 0 ? 'text-gain' : 'text-loss'}
+              />
+              <StatCard
+                label="Best Performer"
+                value={stats.bestItem?.symbol ?? '—'}
+                sub={stats.bestItem
+                  ? fmtPct(pnl(prices[stats.bestItem.symbol]?.mon ?? null, prices[stats.bestItem.symbol]?.fri ?? null))
+                  : undefined}
+                accent="text-gain"
+              />
+            </div>
+          )}
+
+          {/* Charts row */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <ColorDistChart items={filteredItems} />
+            <StrategyDistChart items={filteredItems} />
+          </div>
+
+          {/* Performance bar chart */}
+          <PerformanceChart items={filteredItems} prices={prices} />
+
+          {/* Performance detail table */}
+          <PerformanceTable
+            items={filteredItems}
+            prices={prices}
+            monDate={weekPrices?.mon_date ?? null}
+            friDate={weekPrices?.fri_date ?? null}
           />
-          <StatCard
-            label="Evaluated"
-            value={`${Math.round(stats.evaluated / stats.total * 100)}%`}
-            sub={`${stats.total - stats.evaluated} pending`}
-            accent={stats.evaluated === stats.total ? 'text-gain' : 'text-ink-primary'}
-          />
-          <StatCard
-            label="Avg Weekly P&L"
-            value={fmtPct(stats.avgPnl)}
-            sub={pricesLoading ? 'loading prices…' : `${Object.values(prices).filter(p => p.mon && p.fri).length} symbols with prices`}
-            accent={stats.avgPnl === null ? undefined : stats.avgPnl >= 0 ? 'text-gain' : 'text-loss'}
-          />
-          <StatCard
-            label="Best Performer"
-            value={stats.bestItem?.symbol ?? '—'}
-            sub={stats.bestItem
-              ? fmtPct(pnl(prices[stats.bestItem.symbol]?.mon ?? null, prices[stats.bestItem.symbol]?.fri ?? null))
-              : undefined}
-            accent="text-gain"
-          />
-        </div>
+        </>
       )}
 
-      {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ColorDistChart items={filteredItems} />
-        <StrategyDistChart items={filteredItems} />
-      </div>
-
-      {/* Performance bar chart */}
-      <PerformanceChart items={filteredItems} prices={prices} />
-
-      {/* Performance detail table */}
-      <PerformanceTable
-        items={filteredItems}
-        prices={prices}
-        monDate={weekPrices?.mon_date ?? null}
-        friDate={weekPrices?.fri_date ?? null}
-      />
+      {/* Feature 1 — Bulk export modal */}
+      <AnimatePresence>
+        {showExportModal && (
+          <BulkExportModal items={filteredItems} onClose={() => setShowExportModal(false)} />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

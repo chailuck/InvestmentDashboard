@@ -11,6 +11,8 @@ from app.database.session import Base
 
 
 class SymbolNote(Base):
+    """Per-user personal note attached to a symbol, persisted across all scans."""
+
     __tablename__ = "symbol_notes"
     __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_symbol_note_user_symbol"),)
 
@@ -19,9 +21,7 @@ class SymbolNote(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     symbol: Mapped[str] = mapped_column(String(30), nullable=False)
-    asset_type: Mapped[str] = mapped_column(String(10), nullable=False, default="SET")  # SET | CRYPTO | DR
-    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

@@ -90,6 +90,12 @@ export interface WeekPrices {
   prices: Record<string, WeekPriceEntry>
 }
 
+export interface SymbolNote {
+  symbol: string
+  note: string | null
+  updated_at: string | null
+}
+
 export const weeklyScanService = {
   async getConfig(): Promise<ScanConfig> {
     const { data } = await apiClient.get('/weekly-scan/config')
@@ -168,6 +174,16 @@ export const weeklyScanService = {
 
   async deleteSymbolList(id: string): Promise<void> {
     await apiClient.delete(`/weekly-scan/symbol-lists/${id}`)
+  },
+
+  async getSymbolNote(symbol: string): Promise<SymbolNote> {
+    const { data } = await apiClient.get(`/weekly-scan/symbol-notes/${encodeURIComponent(symbol)}`)
+    return data
+  },
+
+  async upsertSymbolNote(symbol: string, note: string | null): Promise<SymbolNote> {
+    const { data } = await apiClient.put(`/weekly-scan/symbol-notes/${encodeURIComponent(symbol)}`, { note })
+    return data
   },
 }
 

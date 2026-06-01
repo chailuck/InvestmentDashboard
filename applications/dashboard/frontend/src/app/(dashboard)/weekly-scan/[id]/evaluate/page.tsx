@@ -80,6 +80,11 @@ function AnalysisBlock({ symbol }: { symbol: string }) {
   const [interval, setInterval] = useState<ChartInterval>('1d')
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
+  // Feature 5 — Personal note
+  const [noteText,   setNoteText]   = useState('')
+  const [noteSaved,  setNoteSaved]  = useState(false)
+  const [noteSaving, setNoteSaving] = useState(false)
+
   useEffect(() => {
     setLog(null); setFibo(null)
     Promise.all([
@@ -87,6 +92,24 @@ function AnalysisBlock({ symbol }: { symbol: string }) {
       analyticsService.getFiboChart(symbol).then(setFibo),
     ])
   }, [symbol])
+
+  // Feature 5 — fetch note when symbol changes
+  useEffect(() => {
+    setNoteText('')
+    setNoteSaved(false)
+    weeklyScanService.getSymbolNote(symbol).then(n => {
+      setNoteText(n.note ?? '')
+    }).catch(() => {})
+  }, [symbol])
+
+  const handleNoteBlur = async () => {
+    setNoteSaving(true)
+    try {
+      await weeklyScanService.upsertSymbolNote(symbol, noteText.trim() || null)
+      setNoteSaved(true)
+      setTimeout(() => setNoteSaved(false), 2000)
+    } catch { } finally { setNoteSaving(false) }
+  }
 
   useEffect(() => {
     if (log?.file_type === 'html' && log.content && iframeRef.current) {
@@ -134,6 +157,24 @@ function AnalysisBlock({ symbol }: { symbol: string }) {
           <img src={fibo.image!} alt="Fibo" className="w-full rounded" />
         </div>
       )}
+
+      {/* Feature 5 — Personal note */}
+      <div className="card p-3">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[10px] text-ink-muted font-semibold uppercase tracking-wider">Personal Note</p>
+          {noteSaving && <span className="text-[10px] text-ink-disabled flex items-center gap-1"><Loader2 className="w-2.5 h-2.5 animate-spin" /> Saving…</span>}
+          {noteSaved && !noteSaving && <span className="text-[10px] text-gain">Saved</span>}
+        </div>
+        <textarea
+          value={noteText}
+          onChange={e => setNoteText(e.target.value)}
+          onBlur={handleNoteBlur}
+          rows={3}
+          className="input w-full text-xs py-1.5"
+          placeholder="Add a personal note for this symbol…"
+          style={{ resize: 'vertical' }}
+        />
+      </div>
     </div>
   )
 }
@@ -432,6 +473,44 @@ export default function EvaluatePage() {
     setTimeout(() => setIdx(i => Math.min(i + 1, queue.length - 1)), 350)
   }, [id, currentItem, queue.length])
 
+  // Feature 4 — Keyboard shortcuts
+  useEffect(() => {
+    const updateMark = (mark: ColorMark) => {
+      if (!currentItem) return
+      const newColor: ColorMark | '' = form.color_mark === mark ? '' : mark
+      const newForm: EvalForm = { ...form, color_mark: newColor }
+      setForm(newForm)
+      if (newColor === 'RED' && idx < queue.length - 1) {
+        handleSkipNext(newForm)
+      }
+    }
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      switch (e.key) {
+        case '1': updateMark('CYAN');   break
+        case '2': updateMark('GREEN');  break
+        case '3': updateMark('YELLOW'); break
+        case '4': updateMark('RED');    break
+        case '5': updateMark('PURPLE'); break
+        case 'ArrowRight':
+        case 'n':
+          if (idx < queue.length - 1) goNext()
+          break
+        case 'ArrowLeft':
+        case 'p':
+          if (idx > 0) goPrev()
+          break
+        case 's':
+          handleSaveClose()
+          break
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [currentItem, form, idx, queue, goNext, goPrev, handleSaveClose, handleSkipNext]) // eslint-disable-line
+
   if (loadingInit) return (
     <div className="flex items-center justify-center h-screen gap-2 text-ink-muted">
       <Loader2 className="w-5 h-5 animate-spin" /> Loading…
@@ -451,6 +530,36 @@ export default function EvaluatePage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-56px)] overflow-hidden">
+      {/* Feature 4 — Keyboard legend bar */}
+      <div className="shrink-0 border-b border-border/30 bg-surface-base/60 px-4 py-1 flex items-center gap-3 overflow-x-auto text-[10px] text-ink-disabled">
+        <span className="font-semibold text-ink-muted shrink-0">Shortcuts:</span>
+        {[
+          { key: '1', label: 'Cyan' },
+          { key: '2', label: 'Green' },
+          { key: '3', label: 'Yellow' },
+          { key: '4', label: 'Red' },
+          { key: '5', label: 'Purple' },
+        ].map(({ key, label }) => (
+          <span key={key} className="flex items-center gap-1 shrink-0">
+            <kbd className="px-1 py-0.5 rounded border border-border/60 bg-surface-elevated font-mono text-[9px] text-ink-secondary">{key}</kbd>
+            <span>{label}</span>
+          </span>
+        ))}
+        <span className="mx-1 text-border/60">·</span>
+        <span className="flex items-center gap-1 shrink-0">
+          <kbd className="px-1 py-0.5 rounded border border-border/60 bg-surface-elevated font-mono text-[9px] text-ink-secondary">←</kbd>
+          <kbd className="px-1 py-0.5 rounded border border-border/60 bg-surface-elevated font-mono text-[9px] text-ink-secondary">→</kbd>
+          <span>or</span>
+          <kbd className="px-1 py-0.5 rounded border border-border/60 bg-surface-elevated font-mono text-[9px] text-ink-secondary">p</kbd>
+          <kbd className="px-1 py-0.5 rounded border border-border/60 bg-surface-elevated font-mono text-[9px] text-ink-secondary">n</kbd>
+          <span>Navigate</span>
+        </span>
+        <span className="mx-1 text-border/60">·</span>
+        <span className="flex items-center gap-1 shrink-0">
+          <kbd className="px-1 py-0.5 rounded border border-border/60 bg-surface-elevated font-mono text-[9px] text-ink-secondary">S</kbd>
+          <span>Save &amp; Close</span>
+        </span>
+      </div>
       {/* Top bar */}
       <div className="shrink-0 bg-surface-card border-b border-border/50 px-4 py-2 flex items-center gap-3">
         <button onClick={handleSaveClose} className="btn-icon shrink-0" title="Save & close">

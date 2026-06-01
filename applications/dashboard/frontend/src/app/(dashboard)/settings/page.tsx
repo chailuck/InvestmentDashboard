@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink, ListChecks, Upload, Download, Plus, Trash2, ChevronDown, ChevronUp, GripVertical } from 'lucide-react'
+import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink, ListChecks, Upload, Download, Plus, Trash2, ChevronDown, ChevronUp, GripVertical, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 import { useAuthStore } from '@/store/auth'
 import { apiClient } from '@/services/api'
@@ -378,9 +378,30 @@ function SymbolListCard({
   const [text,    setText]    = useState(list.symbols.join('\n'))
   const [saving,  setSaving]  = useState(false)
   const [deleting,setDeleting]= useState(false)
+  const [syncing, setSyncing] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const symbols = text.split('\n').map(s => s.trim().toUpperCase()).filter(Boolean)
+
+  const syncFromPortfolio = async () => {
+    setSyncing(true)
+    try {
+      const positions = await portfolioDbService.getPositions('active')
+      const portfolioSymbols = [...new Set(positions.map(p => p.symbol.toUpperCase()))]
+      const currentSet = new Set(symbols)
+      const newSymbols = portfolioSymbols.filter(s => !currentSet.has(s))
+      if (newSymbols.length === 0) {
+        toast.success('No new symbols — portfolio is already in this list')
+        return
+      }
+      const merged = [...symbols, ...newSymbols]
+      setText(merged.join('\n'))
+      await onSave(list.id, name.trim() || list.name, merged, market)
+      toast.success(`Added ${newSymbols.length} new symbol${newSymbols.length !== 1 ? 's' : ''} from portfolio`)
+    } catch {
+      toast.error('Failed to sync from portfolio')
+    } finally { setSyncing(false) }
+  }
 
   const save = async () => {
     setSaving(true)
@@ -457,7 +478,12 @@ function SymbolListCard({
       {/* Expanded editor */}
       {open && (
         <div className="p-3 space-y-2 border-t border-border/40 bg-surface-base/30">
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-2 flex-wrap justify-end">
+            <button onClick={syncFromPortfolio} disabled={syncing}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-brand-500/40 bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 transition-colors disabled:opacity-40">
+              {syncing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              Sync from Portfolio
+            </button>
             <button onClick={() => fileRef.current?.click()}
               className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-border text-ink-muted hover:text-ink-primary transition-colors">
               <Upload className="w-3 h-3" /> Import

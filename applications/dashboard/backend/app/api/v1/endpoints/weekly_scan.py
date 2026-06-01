@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 from app.auth.dependencies import get_current_user_id
 from app.database.session import get_db
 from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem, UserSymbolList
+from app.models.symbol_note import SymbolNote
 
 UserId = Annotated[str, Depends(get_current_user_id)]
 DB     = Annotated[AsyncSession, Depends(get_db)]
@@ -111,6 +112,9 @@ class SymbolListUpdate(BaseModel):
     market: str | None = None
     symbols: list[str] | None = None
     sort_order: int | None = None
+
+class SymbolNoteUpdate(BaseModel):
+    note: str | None = None
 
 # ── Week-price helpers ────────────────────────────────────────────────────────
 
@@ -605,4 +609,45 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
         "mon_date": monday.isoformat(),
         "fri_date": friday.isoformat(),
         "prices": prices,
+    }
+
+
+# ── Symbol notes endpoints ────────────────────────────────────────────────────
+
+@router.get("/symbol-notes/{symbol}")
+async def get_symbol_note(symbol: str, user_id: UserId, db: DB) -> dict[str, Any]:
+    """Return the personal note for a symbol, or null if none exists."""
+    uid = uuid.UUID(user_id)
+    sym = symbol.strip().upper()
+    row = await db.scalar(
+        select(SymbolNote).where(SymbolNote.user_id == uid, SymbolNote.symbol == sym)
+    )
+    return {
+        "symbol": sym,
+        "note": row.note if row else None,
+        "updated_at": row.updated_at.isoformat() if row else None,
+    }
+
+
+@router.put("/symbol-notes/{symbol}")
+async def upsert_symbol_note(
+    symbol: str, body: SymbolNoteUpdate, user_id: UserId, db: DB
+) -> dict[str, Any]:
+    """Create or update the personal note for a symbol (upsert by user+symbol)."""
+    uid = uuid.UUID(user_id)
+    sym = symbol.strip().upper()
+    row = await db.scalar(
+        select(SymbolNote).where(SymbolNote.user_id == uid, SymbolNote.symbol == sym)
+    )
+    if row is None:
+        row = SymbolNote(user_id=uid, symbol=sym, note=body.note)
+        db.add(row)
+    else:
+        row.note = body.note
+    await db.commit()
+    await db.refresh(row)
+    return {
+        "symbol": sym,
+        "note": row.note,
+        "updated_at": row.updated_at.isoformat(),
     }
