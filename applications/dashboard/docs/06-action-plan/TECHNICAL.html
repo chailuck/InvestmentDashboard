@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Action Plan — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Action Plan — Technical Design</h1>
+
+<h2>1. Database schema</h2>
+<p>Three PostgreSQL tables store action plan data. All use UUID primary keys and belong to the same SQLAlchemy model file.</p>
+<pre><code>-- Header record for both plan types
+CREATE TABLE action_plans (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name        VARCHAR(200) NOT NULL,
+    plan_type   VARCHAR(20)  NOT NULL,    -- 'purchase' | 'portfolio'
+    created_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX ON action_plans (created_by, plan_type);
+
+-- Purchase plan line items
+CREATE TABLE purchase_plan_items (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    plan_id       UUID NOT NULL REFERENCES action_plans(id) ON DELETE CASCADE,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    stock         VARCHAR(20)  NOT NULL DEFAULT '',
+    current_price NUMERIC(14,4),   -- yfinance snapshot at save time
+    size          INTEGER,
+    buy_price     NUMERIC(14,4),
+    tp            NUMERIC(14,4),
+    sl            NUMERIC(14,4),
+    strategy      VARCHAR(200),
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX ON purchase_plan_items (plan_id);
+
+-- Portfolio plan line items
+CREATE TABLE portfolio_plan_items (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    plan_id       UUID NOT NULL REFERENCES action_plans(id) ON DELETE CASCADE,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    symbol        VARCHAR(20)  NOT NULL DEFAULT '',
+    current_price NUMERIC(14,4),
+    size          INTEGER,
+    entry_price   NUMERIC(14,4),
+    tp            NUMERIC(14,4),
+    sl            NUMERIC(14,4),
+    order_size    INTEGER,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX ON portfolio_plan_items (plan_id);</code></pre>
+<p><strong>ORM file:</strong> <code>backend/app/models/action_plan.py</code> — classes <code>ActionPlan</code>, <code>PurchasePlanItem</code>, <code>PortfolioPlanItem</code></p>
+
+<h2>2. Backend — FastAPI</h2>
+
+<h3>File locations</h3>
+<pre><code>backend/app/models/action_plan.py              — SQLAlchemy ORM models
+backend/app/schemas/action_plan.py             — Pydantic input/output schemas
+backend/app/api/v1/endpoints/action_plan.py    — Router and endpoint handlers</code></pre>
+
+<h3>Endpoints</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/action-plans/suggest-name?plan_type=</code></td><td>Returns today's date; appends <code>-01</code>, <code>-02</code>, etc. if taken</td></tr>
+    <tr><td>GET</td><td><code>/action-plans/stock-price?symbol=</code></td><td>yfinance price lookup: tries <code>SYM.BK</code> then <code>SYM</code></td></tr>
+    <tr><td>GET</td><td><code>/action-plans?plan_type=&amp;months=</code></td><td>Lists plans for the current user; filters by type and recency</td></tr>
+    <tr><td>POST</td><td><code>/action-plans</code></td><td>Creates an empty plan header; returns <code>id</code></td></tr>
+    <tr><td>GET</td><td><code>/action-plans/{id}</code></td><td>Fetches plan header with all items (eagerly loaded)</td></tr>
+    <tr><td>PUT</td><td><code>/action-plans/{id}</code></td><td>Replace all items (delete-all + bulk insert in one transaction)</td></tr>
+    <tr><td>DELETE</td><td><code>/action-plans/{id}</code></td><td>Hard delete plan and all cascade-deleted items</td></tr>
+    <tr><td>POST</td><td><code>/action-plans/{id}/duplicate?new_name=</code></td><td>Deep-copies items from source plan to new plan</td></tr>
+  </tbody>
+</table>
+<p>All endpoints require a valid Bearer JWT token via <code>get_current_user_id</code>. Plans are filtered by <code>created_by = current_user_id</code> — users cannot access each other's plans.</p>
+
+<h3>Update strategy (PUT)</h3>
+<p>The PUT endpoint uses a <strong>delete-all + bulk-insert</strong> strategy within a single database transaction. This avoids partial-update bugs where a stale row could survive, and keeps the code simple at the cost of slightly higher write load.</p>
+<pre><code>@router.put("/{plan_id}")
+async def update_plan(plan_id: uuid.UUID, body: PlanUpdate, _: UserId, db: AsyncSession):
+    # Verify plan belongs to current user
+    plan = await _get_plan_or_404(plan_id, db)
+
+    if body.name:
+        plan.name = body.name
+        plan.updated_at = datetime.now(UTC)
+
+    if plan.plan_type == "purchase":
+        await db.execute(delete(PurchasePlanItem).where(PurchasePlanItem.plan_id == plan_id))
+        await db.flush()
+        for i, item in enumerate(body.purchase_items or []):
+            db.add(PurchasePlanItem(plan_id=plan_id, sort_order=i, **item.model_dump()))
+
+    elif plan.plan_type == "portfolio":
+        await db.execute(delete(PortfolioPlanItem).where(PortfolioPlanItem.plan_id == plan_id))
+        await db.flush()
+        for i, item in enumerate(body.portfolio_items or []):
+            db.add(PortfolioPlanItem(plan_id=plan_id, sort_order=i, **item.model_dump()))
+
+    await db.commit()</code></pre>
+
+<h3>Stock price lookup</h3>
+<p>The <code>stock-price</code> endpoint tries the Thai SET ticker suffix first (<code>SYM.BK</code>), then falls back to the bare symbol. This handles both Thai and non-Thai symbols from the same endpoint.</p>
+<pre><code>for ticker_sym in [f"{sym}.BK", sym]:
+    hist = yf.Ticker(ticker_sym).history(period="5d")
+    if not hist.empty:
+        return float(hist["Close"].iloc[-1])
+return None   # price unavailable — UI shows "—"</code></pre>
+
+<h2>3. Frontend — Next.js 14 (App Router)</h2>
+
+<h3>File locations</h3>
+<pre><code>frontend/src/services/actionPlan.ts                               — API service
+frontend/src/app/(dashboard)/action-plan/page.tsx                 — list page
+frontend/src/app/(dashboard)/action-plan/purchase/[id]/page.tsx   — purchase editor
+frontend/src/app/(dashboard)/action-plan/portfolio/[id]/page.tsx  — portfolio editor</code></pre>
+
+<h3>Frontend service (<code>actionPlan.ts</code>)</h3>
+<pre><code>actionPlanService.suggestName(type)           // GET /suggest-name?plan_type=
+actionPlanService.getStockPrice(symbol)       // GET /stock-price?symbol=
+actionPlanService.list(type, months?)         // GET /?plan_type=&months=
+actionPlanService.create(name, type)          // POST /
+actionPlanService.get(id)                     // GET /{id}
+actionPlanService.update(id, payload)         // PUT /{id}
+actionPlanService.delete(id)                  // DELETE /{id}
+actionPlanService.duplicate(id, newName)      // POST /{id}/duplicate?new_name=</code></pre>
+
+<h3>Purchase editor row state</h3>
+<pre><code>interface PurchaseRow {
+  _key: string           // nanoid for React key; not sent to server
+  stock: string
+  current_price: number | null
+  size: number | null
+  buy_price: number | null
+  tp: number | null
+  sl: number | null
+  strategy: string       // one of STRATEGY_OPTIONS or free-text
+  fetchingPrice: boolean // shows loading spinner in CURRENT PRICE cell
+}
+
+// RR calculation (display-only)
+const rr = (buy_price &amp;&amp; sl &amp;&amp; tp &amp;&amp; buy_price &gt; sl)
+  ? (tp - buy_price) / (buy_price - sl)
+  : null
+
+// Stock price on-blur handler
+const onStockBlur = async (key: string, symbol: string) =&gt; {
+  if (!symbol.trim()) return
+  setRow(key, { fetchingPrice: true })
+  const price = await actionPlanService.getStockPrice(symbol)
+  setRow(key, { current_price: price, fetchingPrice: false })
+}</code></pre>
+
+<h3>Portfolio editor merge logic</h3>
+<p>On mount, the portfolio editor fetches both the saved plan and live positions in parallel, then merges them. The live position data takes precedence for read-only fields; saved plan values fill the editable TP/SL/order_size fields.</p>
+<pre><code>useEffect(() =&gt; {
+  const load = async () =&gt; {
+    const [plan, positions] = await Promise.all([
+      actionPlanService.get(id),
+      portfolioTrackerService.getPositions({ status: 'active' }),
+    ])
+    // Build a lookup from saved items: symbol → {tp, sl, order_size}
+    const savedMap = Object.fromEntries(
+      (plan.portfolio_items ?? []).map(item =&gt; [item.symbol, item])
+    )
+    // Merge live positions with saved planning data
+    const merged = positions.map(pos =&gt; ({
+      symbol:        pos.symbol,
+      current_price: pos.currentPrice,
+      size:          pos.positionSize,
+      entry_price:   pos.entryPrice,
+      tp:            savedMap[pos.symbol]?.tp ?? null,
+      sl:            savedMap[pos.symbol]?.sl ?? null,
+      order_size:    savedMap[pos.symbol]?.order_size ?? null,
+    }))
+    setRows(merged)
+  }
+  load()
+}, [id])</code></pre>
+
+<h2>4. Data flow diagram</h2>
+<pre><code>Browser → /api/proxy/api/v1/action-plans/...
+           ↓ (Next.js server-side proxy, forwards JWT)
+     http://backend:8000/api/v1/action-plans/...
+           ↓
+     FastAPI (action_plan.py)
+           ↓
+     SQLAlchemy AsyncSession → PostgreSQL
+       (action_plans, purchase_plan_items, portfolio_plan_items)
+
+Stock price data flow:
+  Browser (user blurs STOCK field)
+    → GET /api/proxy/api/v1/action-plans/stock-price?symbol=BH
+        → FastAPI
+            → yf.Ticker("BH.BK").history(period="5d")
+                → Yahoo Finance API
+                    → price returned to browser
+                        → populates CURRENT PRICE cell</code></pre>
+</body>
+</html>

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portfolio Tracker — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Portfolio Tracker — Technical Design</h1>
+
+<h2>1. File structure</h2>
+<pre><code>backend/app/api/v1/endpoints/portfolio_tracker.py  — API route handlers
+backend/app/services/portfolio_excel.py             — all business logic
+frontend/src/services/portfolioTracker.ts           — frontend API service layer
+frontend/src/app/(dashboard)/portfolio/page.tsx     — page component (all logic)</code></pre>
+
+<h2>2. Excel service (<code>portfolio_excel.py</code>)</h2>
+
+<h3>2.1 Path resolution</h3>
+<p>Two paths are used: the source path (read-only original Excel on the host volume) and the working path (writable copy inside the container). The Settings → App Configuration UI writes to <code>/app/uploads/app_config.json</code> which takes priority over environment variables.</p>
+<pre><code>def _source_path() -> Path:
+    cfg = get_app_config()   # reads /app/uploads/app_config.json
+    return Path(cfg.get("excel_source_path") or settings.investment_excel_source_path)
+
+def _working_path() -> Path:
+    cfg = get_app_config()
+    return Path(cfg.get("excel_working_path") or settings.investment_excel_path)</code></pre>
+<table>
+  <thead><tr><th>Path</th><th>Default</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>Source path</td><td><code>/app/investment_data/Investment tracking.xlsx</code></td><td>Read-only original; mapped from host via Docker volume</td></tr>
+    <tr><td>Working path</td><td><code>/app/uploads/investment_tracking.xlsx</code></td><td>Writable copy; read by all portfolio functions</td></tr>
+  </tbody>
+</table>
+
+<h3>2.2 Cache system</h3>
+<p>Each Uvicorn worker maintains an in-memory <code>_CACHE</code> dict. Entries expire when the <code>.cache_bust</code> sentinel file's mtime is newer than the entry's timestamp. This provides cross-worker cache invalidation without a shared cache layer.</p>
+<pre><code>_CACHE: dict = {}
+_CACHE_BUST_FILE = Path("/app/uploads/.cache_bust")
+
+def _cache_bust_ts() -> float:
+    try:
+        return _CACHE_BUST_FILE.stat().st_mtime
+    except OSError:
+        return 0.0
+
+def _write_cache_bust():
+    _CACHE_BUST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _CACHE_BUST_FILE.write_text(str(time.time()))
+
+def _cached(key: str, ttl: float, fn: Callable) -> Any:
+    now = time.time()
+    bust = _cache_bust_ts()
+    entry = _CACHE.get(key)
+    if entry and (now - entry[0] < ttl) and (entry[0] > bust):
+        return entry[1]    # cache hit
+    val = fn()             # recompute
+    _CACHE[key] = (now, val)
+    return val</code></pre>
+<p>Cache keys include the function name and any relevant parameters. TTL for the main DataFrame is 300 seconds; live price fetches use a shorter TTL.</p>
+
+<h3>2.3 DataFrame loading</h3>
+<pre><code>def _load_df() -> pd.DataFrame:
+    path = _ensure_working_copy()   # copies from source if working copy doesn't exist
+    df = pd.read_excel(str(path), sheet_name="Sheet1")
+
+    # Normalise column names (strip whitespace)
+    df.columns = df.columns.str.strip()
+
+    # Parse date columns
+    for col in ["Entry Date", "Exit Date"]:
+        df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    # Detect open positions: Exit Price is NaN or the string "NOT SELL"
+    df["_is_open"] = (
+        df["Exit Price"].isna() |
+        (df["Exit Price"].astype(str).str.strip().str.upper() == "NOT SELL")
+    )
+    return df</code></pre>
+
+<h3>2.4 Live prices</h3>
+<p>Live prices are fetched from Yahoo Finance's quote API directly (not via the yfinance library) for lower latency. Thai SET stocks get the <code>.BK</code> suffix.</p>
+<pre><code>def fetch_live_prices(symbols: list[str]) -> dict[str, float]:
+    # Append .BK for Thai SET stocks
+    tickers = [s + ".BK" if not s.endswith(".BK") else s for s in symbols]
+    quotes = _yahoo_quote_direct(tickers)
+    return {
+        s: quotes.get(s + ".BK", {}).get("regularMarketPrice")
+        for s in symbols
+    }</code></pre>
+
+<h3>2.5 P&amp;L calculation</h3>
+<p>P&amp;L is calculated per row based on direction (Long or Short). Open positions use the live price; closed positions use the Excel Exit Price.</p>
+<pre><code>def _calc_pnl(row: pd.Series, live_prices: dict[str, float]) -> tuple[float, float, float]:
+    symbol = row["Symbol"]
+    entry  = float(row["Entry Price"])
+    size   = int(row["Position Size"])
+    is_long = "short" not in str(row.get("Direction", "")).lower()
+
+    if row["_is_open"]:
+        current = live_prices.get(symbol, entry)   # fallback to entry if no live price
+    else:
+        current = float(row["Exit Price"])
+
+    if is_long:
+        net_pnl = (current - entry) * size
+    else:
+        net_pnl = (entry - current) * size   # short: profit when price falls
+
+    pnl_pct = (net_pnl / (entry * size)) * 100 if entry and size else 0
+    return current, net_pnl, pnl_pct</code></pre>
+
+<h3>2.6 Performance aggregation</h3>
+<p>Daily performance groups positions by their "bucket date" (Exit Date for closed, today for open) and computes cumulative P&amp;L over the date range.</p>
+<pre><code>def get_daily_performance(from_date, to_date, period="daily") -> list[dict]:
+    date_range = pd.date_range(
+        from_date or df["_bucket_date"].min(),
+        to_date or date.today(),
+        freq="D"
+    )
+    grouped = df.groupby("_bucket_date")["_net_pnl"].sum()
+    result = []
+    cumulative = 0.0
+    for d in date_range:
+        daily = float(grouped.get(d.date(), 0.0))
+        cumulative += daily
+        result.append({
+            "date": str(d.date()),
+            "label": _fmt_period_label(d, period),
+            "dailyPnl": daily,
+            "cumulativePnl": cumulative
+        })
+    return result</code></pre>
+
+<h2>3. API endpoints</h2>
+<p>All endpoints use the prefix <code>/api/v1/portfolio-tracker</code> and require a valid Bearer token via the <code>UserId</code> dependency.</p>
+<table>
+  <thead><tr><th>Endpoint</th><th>Key behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><code>POST /refresh</code></td><td>Validates source exists; <code>shutil.copy2(src, dst)</code>; calls <code>_write_cache_bust()</code>; returns sizes</td></tr>
+    <tr><td><code>GET /positions</code></td><td>Query params: <code>status</code>, <code>from_date</code>, <code>to_date</code>. Calls <code>_load_df()</code>, <code>fetch_live_prices()</code>, <code>_calc_pnl()</code> per row</td></tr>
+    <tr><td><code>GET /performance</code></td><td>Query params: <code>from_date</code>, <code>to_date</code>, <code>period</code>. Returns list of <code>{date, label, dailyPnl, cumulativePnl}</code></td></tr>
+    <tr><td><code>GET /performance/by-date</code></td><td>Returns <code>[{period, label, net, accumulatedPnl, wins, losses, total, winRate}]</code></td></tr>
+    <tr><td><code>GET /performance/transactions</code></td><td>Query params: <code>period_key</code>, <code>period</code>. Returns individual trades for the drill-down modal</td></tr>
+    <tr><td><code>GET /performance/by-stock</code></td><td>Returns P&amp;L aggregated per ticker with investment/value/wins/losses</td></tr>
+    <tr><td><code>GET /raw-data</code></td><td>Returns all rows from <code>_load_df()</code> as JSON without any processing</td></tr>
+    <tr><td><code>GET /market/set-indices</code></td><td>Calls <code>_yahoo_quote_direct(SET_TICKERS)</code> and returns formatted index data</td></tr>
+    <tr><td><code>GET /market/global-indices</code></td><td>Same for global tickers</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Frontend page components</h2>
+<p>All UI logic lives in the single page file <code>portfolio/page.tsx</code> as pure functional components. This keeps related logic co-located without requiring a complex component tree.</p>
+<table>
+  <thead><tr><th>Component</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>MetricCard</code></td><td>Single KPI tile with title, value, and optional sub-label</td></tr>
+    <tr><td><code>PeriodSelector</code></td><td>Daily / Weekly / Monthly toggle buttons</td></tr>
+    <tr><td><code>PositionsTable</code></td><td>Main sortable positions grid with coloured P&amp;L cells</td></tr>
+    <tr><td><code>PerformanceChart</code></td><td>ECharts dual-axis chart (cumulative line + period bars)</td></tr>
+    <tr><td><code>PerformanceByDateTable</code></td><td>Collapsible table with clickable rows for drill-down</td></tr>
+    <tr><td><code>TransactionModal</code></td><td>Full-screen overlay with individual trade rows</td></tr>
+    <tr><td><code>PerformanceByStockChart</code></td><td>Horizontal bar chart per stock symbol</td></tr>
+    <tr><td><code>PerformanceByStockTable</code></td><td>Collapsible table with investment/value/wins per symbol</td></tr>
+    <tr><td><code>RefreshModal</code></td><td>Self-contained; runs refresh logic in its own <code>useEffect</code> on mount</td></tr>
+    <tr><td><code>RawDataModal</code></td><td>Full-screen Excel data viewer modal</td></tr>
+  </tbody>
+</table>
+
+<h3>Refresh modal pattern</h3>
+<p>The refresh modal mounts via a boolean flag. It runs all async work inside a <code>useEffect</code> on mount rather than in an event handler. This is necessary because React 18 batches state updates inside async functions — running async work inline in a click handler would prevent intermediate state updates (like progress steps) from rendering.</p>
+<pre><code>// Parent component
+const [showRefresh, setShowRefresh] = useState(false)
+{showRefresh &amp;&amp; &lt;RefreshModal onClose={() =&gt; setShowRefresh(false)} /&gt;}
+
+// RefreshModal — runs async work after mount
+useEffect(() =&gt; {
+  let cancelled = false
+  const run = async () =&gt; {
+    setPhase('copying')
+    try {
+      const res = await portfolioTrackerService.refresh()
+      if (cancelled) return
+      setPhase('reloading')
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['portfolio-positions'] }),
+        queryClient.refetchQueries({ queryKey: ['portfolio-performance'] }),
+      ])
+      if (!cancelled) setPhase('done')
+    } catch (e) {
+      if (!cancelled) setPhase('error')
+    }
+  }
+  run()
+  return () =&gt; { cancelled = true }   // cleanup on unmount
+}, [])</code></pre>
+
+<h2>5. Frontend service</h2>
+<p><strong>File:</strong> <code>frontend/src/services/portfolioTracker.ts</code></p>
+<p>All API calls go through this service which wraps <code>apiClient</code> (Axios with the <code>/api/proxy</code> base URL and JWT interceptor).</p>
+<pre><code>portfolioTrackerService.refresh()
+portfolioTrackerService.getPositions({ status, from_date, to_date })
+portfolioTrackerService.getPerformance({ from_date, to_date, period })
+portfolioTrackerService.getPerformanceByDate({ from_date, to_date, period })
+portfolioTrackerService.getPerformanceByStock({ from_date, to_date })
+portfolioTrackerService.getTransactions({ period_key, period, from_date, to_date })
+portfolioTrackerService.getRawData()
+portfolioTrackerService.getSetIndices()
+portfolioTrackerService.getGlobalIndices()</code></pre>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Copilot — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>AI Copilot — Functional Specification</h1>
+
+<h2>1. Overview</h2>
+<p>The AI Copilot (<code>/ai-copilot</code>) is a streaming chat interface powered by Anthropic Claude. Unlike a generic chatbot, the Copilot has direct access to the user's portfolio data, live stock prices, and a personal trading knowledge base. Responses stream token-by-token for a real-time feel, and the AI can autonomously call tools to retrieve live data before answering.</p>
+<p>The Copilot can answer complex questions like "Which of my open positions has the best risk/reward right now?" by fetching live prices, reading the Excel portfolio data, and reasoning over both in a single response.</p>
+<div class="callout warn">The AI Copilot requires <code>ANTHROPIC_API_KEY</code> to be set in <code>backend/.env</code>. Without it, the endpoint returns a 400 error and the UI displays an informational error message.</div>
+
+<h2>2. Interface</h2>
+<ul>
+  <li><strong>Chat history:</strong> Scrollable list of alternating user and assistant messages, rendered as Markdown (code blocks, tables, bold/italic all render correctly)</li>
+  <li><strong>Input box:</strong> Multi-line text input; <kbd>Enter</kbd> sends the message; <kbd>Shift+Enter</kbd> inserts a newline</li>
+  <li><strong>Session controls:</strong> A <strong>New Session</strong> button clears the conversation history both on the backend (Redis/memory) and in the UI, and assigns a new session ID</li>
+  <li><strong>Tool indicators:</strong> While the AI calls a tool, an inline chip appears showing which tool is currently running (e.g., "get_portfolio_positions…"). When the tool call completes, the chip disappears</li>
+  <li><strong>Stop button:</strong> Allows cancelling a running response stream mid-generation</li>
+</ul>
+
+<h2>3. Slash commands</h2>
+<p>The following slash commands are recognised by the AI and trigger specific tool calls automatically. Any freeform text is also accepted — the AI handles natural language questions about investments, Thai SET stocks, and trading strategy.</p>
+<table>
+  <thead><tr><th>Command</th><th>Description</th><th>Tools used</th></tr></thead>
+  <tbody>
+    <tr><td><code>/portList</code></td><td>List all open positions with live P&amp;L</td><td><code>get_portfolio_positions</code></td></tr>
+    <tr><td><code>/portAction</code></td><td>Generate a portfolio action plan (TP/SL recommendations)</td><td><code>get_portfolio_positions</code>, <code>read_knowledge_doc</code></td></tr>
+    <tr><td><code>/portPlan</code></td><td>Suggest portfolio adjustments based on current conditions</td><td><code>get_portfolio_positions</code>, <code>get_performance_summary</code></td></tr>
+    <tr><td><code>/portHist</code></td><td>Show performance history with trends</td><td><code>get_performance_summary</code>, <code>run_analysis_script</code></td></tr>
+    <tr><td><code>/analyze TICKER</code></td><td>Technical and contextual analysis of a specific stock</td><td><code>get_live_price</code>, <code>read_knowledge_doc</code></td></tr>
+  </tbody>
+</table>
+
+<h2>4. AI tools</h2>
+<p>The AI can autonomously decide to call these tools during a conversation. Each tool call is shown to the user as a status chip before the result is incorporated into the response.</p>
+<table>
+  <thead><tr><th>Tool</th><th>When triggered</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>get_portfolio_positions</code></td><td>Questions about current holdings, P&amp;L, exposure</td><td>Reads the Excel file and fetches live Yahoo Finance prices; returns position list with P&amp;L</td></tr>
+    <tr><td><code>get_live_price</code></td><td>Questions about the current price of a specific stock</td><td>Queries Yahoo Finance quote API for a ticker; handles <code>.BK</code> suffix automatically</td></tr>
+    <tr><td><code>get_performance_summary</code></td><td>Questions about historical performance</td><td>Reads performance data grouped by stock and by time period from the Excel service</td></tr>
+    <tr><td><code>read_knowledge_doc</code></td><td>Questions requiring trading knowledge or strategy context</td><td>Reads Markdown files from <code>/app/investment_agent/knowledge/</code> (e.g., Fibonacci rules, personal trading style)</td></tr>
+    <tr><td><code>run_analysis_script</code></td><td>Deep analysis requests</td><td>Runs a Python script from <code>/app/investment_agent/</code> as a subprocess; returns stdout</td></tr>
+  </tbody>
+</table>
+<p>The AI can chain up to <strong>6 tool calls</strong> per message before being forced to provide a final response. This allows it to, for example, fetch portfolio positions, check live prices for each, and read a knowledge document — all in one message.</p>
+
+<h2>5. Knowledge base</h2>
+<p>The AI's system prompt is built dynamically by reading files from <code>/app/investment_agent/</code> (mounted read-only from the host via Docker volume). This allows the knowledge base to be updated on the host without rebuilding or restarting the containers.</p>
+<table>
+  <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>CLAUDE.md</code></td><td>Main agent persona — trading style, preferred strategies, communication preferences</td></tr>
+    <tr><td><code>knowledge/personal-trading-style.md</code></td><td>Personal trading rules and risk management guidelines</td></tr>
+    <tr><td><code>knowledge/knowledge_fibo.md</code></td><td>Fibonacci analysis knowledge and application rules</td></tr>
+    <tr><td><code>knowledge/technical-analysis.md</code></td><td>Technical analysis principles and indicator interpretation</td></tr>
+    <tr><td>Other <code>*.md</code> files</td><td>Any additional documents added to the knowledge directory are automatically included</td></tr>
+  </tbody>
+</table>
+<div class="callout tip">To teach the AI new trading rules or strategies, add a Markdown file to the knowledge directory on the host. No restart required — the system prompt is rebuilt on every API call.</div>
+
+<h2>6. Session management</h2>
+<ul>
+  <li>Each browser tab gets a unique <code>session_id</code> (UUID) generated when the first message is sent</li>
+  <li>The session stores the last 20 messages server-side, in-memory per Uvicorn worker</li>
+  <li>Clicking <strong>New Session</strong> calls <code>DELETE /api/v1/ai/copilot/session/{id}</code> to clear the history and generates a fresh session ID in the UI</li>
+  <li>Sessions are <strong>not persisted</strong> — they are lost when the backend container restarts or when the connection lands on a different Uvicorn worker</li>
+  <li>The session context allows the AI to refer back to earlier messages in the conversation ("As I mentioned earlier..." or "Building on what we discussed about GULF...")</li>
+</ul>
+
+<h2>7. Language behaviour</h2>
+<p>The AI responds in English by default. If the user writes a message in Thai, the AI detects this and responds in Thai. Mixed-language conversations are handled gracefully — the AI will match the language of the most recent user message.</p>
+
+<h2>8. Error handling</h2>
+<table>
+  <thead><tr><th>Error condition</th><th>User-visible message</th></tr></thead>
+  <tbody>
+    <tr><td>API key not configured</td><td>"Anthropic API key not configured. Set <code>ANTHROPIC_API_KEY</code> in <code>backend/.env</code> and restart the backend container."</td></tr>
+    <tr><td>Anthropic API error (rate limit, network)</td><td>"Unable to reach the AI service. Please try again in a moment."</td></tr>
+    <tr><td>Network error / SSE disconnect</td><td>"Connection lost. Please check your network and try again."</td></tr>
+    <tr><td>Tool failure (e.g. Yahoo Finance unavailable)</td><td>The AI explains the failure inline: "I couldn't fetch the live price for GULF right now. Based on the last known data..."</td></tr>
+    <tr><td>Excel file not found during tool call</td><td>The AI explains: "I wasn't able to read the portfolio data. Please check the file path in Settings → App Configuration."</td></tr>
+  </tbody>
+</table>
+</body>
+</html>

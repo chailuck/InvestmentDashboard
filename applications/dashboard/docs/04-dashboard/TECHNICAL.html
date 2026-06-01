@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Dashboard — Technical Design</h1>
+
+<h2>1. File structure</h2>
+<pre><code>frontend/src/app/(dashboard)/dashboard/page.tsx          — main page component
+frontend/src/components/dashboard/
+  AllocationChartWidget.tsx     — donut chart (portfolio allocation)
+  PortfolioSummaryWidget.tsx    — four animated metric cards
+  PortfolioChartWidget.tsx      — mini performance line chart
+  HoldingsTableWidget.tsx       — compact positions table
+  AIInsightsWidget.tsx          — shortcut to AI Copilot
+  RiskMetricsWidget.tsx         — risk metrics summary
+frontend/src/components/analytics/
+  EChartsChart.tsx              — shared full-featured candlestick component
+  AnalyticsModal.tsx            — full-screen chart modal</code></pre>
+
+<h2>2. Allocation chart</h2>
+<p><strong>File:</strong> <code>AllocationChartWidget.tsx</code></p>
+<p>The allocation chart fetches all active positions, computes the market value per symbol (summing multiple positions in the same stock), then builds an ECharts pie series with the donut style.</p>
+<pre><code>const { data } = useQuery({
+  queryKey: ['portfolio-positions', 'active'],
+  queryFn: () => portfolioTrackerService.getPositions({ status: 'active' }),
+  refetchInterval: 60_000,
+  staleTime: 60_000,
+})
+
+// Aggregate value per symbol (handles multiple positions in same stock)
+const slices = positions.reduce((acc, pos) => {
+  const value = pos.currentPrice * pos.positionSize
+  acc[pos.symbol] = (acc[pos.symbol] ?? 0) + value
+  return acc
+}, {} as Record&lt;string, number&gt;)
+
+// Build ECharts option
+const option: EChartsOption = {
+  backgroundColor: '#0d1117',
+  series: [{
+    type: 'pie',
+    radius: ['40%', '70%'],    // donut style
+    label: { color: '#c9d1d9' },
+    data: Object.entries(slices).map(([name, value]) => ({ name, value })),
+    emphasis: { itemStyle: { shadowBlur: 10 } }
+  }]
+}</code></pre>
+
+<h2>3. Market indices</h2>
+<p>Two separate backend endpoints handle Thai and global indices. Both call Yahoo Finance's <code>v7/finance/quote</code> endpoint directly (not via the yfinance library) for lower latency.</p>
+<pre><code># backend/app/services/portfolio_excel.py
+
+SET_TICKERS    = ["^SET.BK", "^SET50.BK", "^SET100.BK", "^MAI.BK", "^sSET.BK"]
+GLOBAL_TICKERS = ["^GSPC", "^IXIC", "^DJI", "BTC-USD", "GC=F"]
+
+def _yahoo_quote_direct(tickers: list[str]) -> dict:
+    url = "https://query1.finance.yahoo.com/v7/finance/quote"
+    params = {
+        "symbols": ",".join(tickers),
+        "fields": "regularMarketPrice,regularMarketChange,regularMarketChangePercent,shortName"
+    }
+    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, params=params, timeout=10)
+    results = resp.json()["quoteResponse"]["result"]
+    return {r["symbol"]: r for r in results}
+
+def fetch_set_indices() -> list[dict]:
+    quotes = _yahoo_quote_direct(SET_TICKERS)
+    return [
+        {
+            "name": ticker.replace("^", "").replace(".BK", ""),
+            "value": quotes.get(ticker, {}).get("regularMarketPrice"),
+            "change": quotes.get(ticker, {}).get("regularMarketChange"),
+            "changePct": quotes.get(ticker, {}).get("regularMarketChangePercent"),
+        }
+        for ticker in SET_TICKERS
+    ]</code></pre>
+
+<h2>4. EChartsChart component</h2>
+<p><strong>File:</strong> <code>frontend/src/components/analytics/EChartsChart.tsx</code></p>
+<p>A reusable full-featured OHLCV candlestick chart. Used in three places: the Analytics modal on the Dashboard, the Weekly Scan detail table (analytics popup), and the Weekly Scan evaluate view (full-screen chart).</p>
+<pre><code>// Usage
+import { EChartsChart, type ChartInterval } from '@/components/analytics/EChartsChart'
+
+&lt;EChartsChart
+  symbol="GULF"
+  assetType="SET"           // drives yfinance ticker suffix
+  interval="1d"             // '1h' | '4h' | '1d' | '1wk'
+  onIntervalChange={setInterval}
+  height={400}
+/&gt;
+
+// Exported types
+export type ChartInterval = '1h' | '4h' | '1d' | '1wk'
+export type ChartRange    = '6mo' | '1y' | '2y' | '2.5y'</code></pre>
+<p><strong>Chart panels (stacked vertically, synchronised x-axis):</strong></p>
+<table>
+  <thead><tr><th>Panel</th><th>Height %</th><th>Content</th></tr></thead>
+  <tbody>
+    <tr><td>Price + VRVP</td><td>~60%</td><td>Candlestick OHLC bars with VRVP horizontal bar overlay</td></tr>
+    <tr><td>Volume</td><td>~15%</td><td>Volume bars coloured green (up) / red (down)</td></tr>
+    <tr><td>RSI</td><td>~12%</td><td>RSI line with 70 and 30 overbought/oversold reference lines</td></tr>
+    <tr><td>Stochastic</td><td>~13%</td><td>%K and %D lines with 80 and 20 reference lines</td></tr>
+  </tbody>
+</table>
+<p>The component manages its own range state internally. The <code>zoomStartForRange</code> helper computes the ECharts <code>dataZoom.start</code> percentage so the visible window covers the last N calendar days regardless of the total candle count in the dataset.</p>
+<pre><code>function zoomStartForRange(dates: string[], days: number): number {
+  if (!dates.length || days &gt;= 912) return 0
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - days)
+  const cutoffStr = cutoff.toISOString().slice(0, 10)
+  const idx = dates.findIndex(d =&gt; d.slice(0, 10) &gt;= cutoffStr)
+  if (idx &lt;= 0) return 0
+  return (idx / dates.length) * 100
+}</code></pre>
+
+<h2>5. PortfolioSummaryWidget</h2>
+<p><strong>File:</strong> <code>PortfolioSummaryWidget.tsx</code></p>
+<p>Renders four animated metric cards. THB values are formatted with the <code>fmtTHB</code> helper which compacts large numbers into K/M notation:</p>
+<pre><code>function fmtTHB(n: number): string {
+  const sign = n &gt;= 0 ? '+' : ''
+  if (Math.abs(n) &gt;= 1_000_000) return `${sign}${(n / 1_000_000).toFixed(2)}M ฿`
+  if (Math.abs(n) &gt;= 1_000)     return `${sign}${(n / 1_000).toFixed(1)}K ฿`
+  return `${sign}${n.toLocaleString('th-TH', { maximumFractionDigits: 0 })} ฿`
+}</code></pre>
+<p>Each card uses Framer Motion for entry and value-change animations:</p>
+<pre><code>// Card entry animation
+&lt;motion.div
+  initial={{ opacity: 0, y: 8 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.3, delay: index * 0.05 }}
+&gt;
+
+// Value change animation (AnimatePresence)
+&lt;AnimatePresence mode="wait"&gt;
+  &lt;motion.span
+    key={value}    // key change triggers exit/enter when value changes
+    initial={{ opacity: 0, y: 6 }}
+    animate={{ opacity: 1, y: 0 }}
+    exit={{ opacity: 0, y: -6 }}
+  &gt;
+    {value}
+  &lt;/motion.span&gt;
+&lt;/AnimatePresence&gt;</code></pre>
+
+<h2>6. Dashboard layout</h2>
+<p><strong>File:</strong> <code>frontend/src/app/(dashboard)/layout.tsx</code></p>
+<p>The shared layout for all dashboard pages uses a flex row with a fixed-width sidebar and a scrollable main content area:</p>
+<pre><code>export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore()
+
+  // Client-side guard — redirect to /login if not authenticated
+  useEffect(() => {
+    if (!user) router.replace('/login')
+  }, [user])
+
+  return (
+    &lt;div className="flex h-screen bg-[#0d1117]"&gt;
+      &lt;Sidebar /&gt;
+      &lt;main className="flex-1 overflow-y-auto p-6"&gt;
+        {children}
+      &lt;/main&gt;
+    &lt;/div&gt;
+  )
+}</code></pre>
+<p>The actual widget layout on the dashboard page uses Tailwind's CSS grid. The two-column layout with different widget sizes is achieved with <code>grid-cols-2</code> and <code>col-span-1</code> / <code>col-span-2</code> classes.</p>
+</body>
+</html>

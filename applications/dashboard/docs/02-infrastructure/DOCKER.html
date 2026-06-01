@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docker &amp; Deployment — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Docker &amp; Deployment</h1>
+
+<h2>1. docker-compose.yml — full service definitions</h2>
+<p>All five services (PostgreSQL, Redis, Backend, Frontend, Adminer) are defined in a single <code>docker-compose.yml</code> at the root of the <code>applications/dashboard</code> directory. They all share the <code>dashboard-net</code> bridge network and communicate by hostname.</p>
+<pre><code>version: "3.9"
+networks:
+  dashboard-net:
+    driver: bridge
+
+volumes:
+  postgres_data:    # PostgreSQL data files
+  redis_data:       # Redis AOF persistence
+  uploads_data:     # Working Excel copy + app_config.json + .cache_bust
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: inv_postgres
+    restart: unless-stopped
+    networks: [dashboard-net]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: investment_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d investment_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: inv_redis
+    restart: unless-stopped
+    networks: [dashboard-net]
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes: [redis_data:/data]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: inv_backend
+    restart: unless-stopped
+    networks: [dashboard-net]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/investment_db
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: '["*"]'
+      LOG_LEVEL: INFO
+    env_file: [backend/.env]   # overlays secrets on top of environment block
+    volumes:
+      - ./backend:/app:cached                              # hot-reload in dev
+      - uploads_data:/app/uploads                         # working Excel copy
+      - /path/to/investmentPlan:/app/investment_data:ro   # source Excel (ro)
+      - /path/to/investmentAgent:/app/investment_agent:ro # AI knowledge base (ro)
+      - ./docs:/app/docs:ro                               # documentation
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: inv_frontend
+    restart: unless-stopped
+    networks: [dashboard-net]
+    depends_on:
+      backend: { condition: service_healthy }
+    environment:
+      BACKEND_URL: http://backend:8000   # runtime only — never baked at build
+      NODE_ENV: production
+    ports: ["3000:3000"]
+
+  adminer:
+    image: adminer:latest
+    container_name: inv_adminer
+    restart: unless-stopped
+    networks: [dashboard-net]
+    depends_on: [postgres]
+    ports: ["8080:8080"]
+    profiles: [dev]   # only starts with: docker compose --profile dev up</code></pre>
+
+<div class="callout warn">Update the two host paths (<code>/path/to/investmentPlan</code> and <code>/path/to/investmentAgent</code>) before running <code>docker compose up</code>. If the source Excel path is wrong the portfolio tracker will fail with a 503 error.</div>
+
+<h2>2. Backend Dockerfile</h2>
+<p>A multi-stage build that separates package installation from the runtime image. The builder stage installs all Python packages into <code>/root/.local</code> using the <code>--user</code> flag. The runtime stage copies them into a non-root user's home directory. This avoids installing build tools (gcc, libpq-dev) in the final image.</p>
+<pre><code>FROM python:3.12-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y gcc libpq-dev curl
+COPY backend/requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+FROM python:3.12-slim AS runtime
+# Create non-root user for security
+RUN addgroup --gid 1001 appgroup && \
+    adduser --uid 1001 --gid 1001 --disabled-password --no-create-home appuser
+WORKDIR /app
+RUN apt-get update && apt-get install -y libpq5 curl
+# Copy installed packages from builder
+COPY --from=builder /root/.local /home/appuser/.local
+COPY backend/ .
+RUN chown -R appuser:appgroup /app
+USER appuser
+ENV PATH=/home/appuser/.local/bin:$PATH
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]</code></pre>
+<p><strong>Why multi-stage?</strong> The builder stage needs <code>gcc</code> and <code>libpq-dev</code> to compile some Python extensions. Including these in the final image would increase the image size and attack surface. The runtime stage only needs the compiled <code>.so</code> files and the <code>libpq5</code> runtime library.</p>
+
+<h2>3. Frontend Dockerfile</h2>
+<p>A three-stage build: <code>deps</code> installs npm packages, <code>builder</code> runs <code>next build</code>, and <code>runtime</code> uses Next.js's standalone output mode to produce a minimal server that does not need the <code>node_modules</code> directory.</p>
+<pre><code>FROM node:20-alpine AS deps
+WORKDIR /app
+RUN apk add --no-cache libc6-compat
+COPY frontend/package.json ./
+RUN npm install --no-audit --legacy-peer-deps
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ .
+RUN npm run build    # produces .next/standalone + .next/static
+
+FROM node:20-alpine AS runtime
+RUN addgroup --gid 1001 nodejs && \
+    adduser --uid 1001 --ingroup nodejs --disabled-password nextjs
+WORKDIR /app
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+USER nextjs
+ENV NODE_ENV=production PORT=3000
+CMD ["node", "server.js"]</code></pre>
+<div class="callout warn"><code>next.config.js</code> must have <code>output: 'standalone'</code> for this Dockerfile to work. Without it the <code>.next/standalone</code> directory will not be generated and the runtime stage will fail.</div>
+
+<h2>4. Environment variables — complete reference</h2>
+
+<h3>Backend secrets (<code>backend/.env</code>)</h3>
+<p>These are loaded by Docker Compose via the <code>env_file</code> directive and overlay any duplicate keys set in the <code>environment</code> block.</p>
+<table>
+  <thead><tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>ANTHROPIC_API_KEY</code></td><td>For AI only</td><td><code>""</code></td><td>Anthropic Claude API key — required for AI Copilot</td></tr>
+    <tr><td><code>OPENAI_API_KEY</code></td><td>No</td><td><code>""</code></td><td>Optional OpenAI key (not currently used)</td></tr>
+    <tr><td><code>ADMIN_EMAIL</code></td><td>Recommended</td><td><code>""</code></td><td>First-run admin email; blank = no seed</td></tr>
+    <tr><td><code>ADMIN_PASSWORD</code></td><td>Recommended</td><td><code>""</code></td><td>First-run admin password (min 8 chars)</td></tr>
+    <tr><td><code>ADMIN_NAME</code></td><td>No</td><td><code>Administrator</code></td><td>Display name for the seeded admin account</td></tr>
+    <tr><td><code>JWT_SECRET_KEY</code></td><td>Recommended</td><td>random UUID</td><td>HS256 signing key; set explicitly in prod so tokens survive restarts</td></tr>
+    <tr><td><code>INVESTMENT_EXCEL_SOURCE_PATH</code></td><td>No</td><td><code>/app/investment_data/Investment tracking.xlsx</code></td><td>Can also be set via Settings UI after login</td></tr>
+    <tr><td><code>INVESTMENT_EXCEL_PATH</code></td><td>No</td><td><code>/app/uploads/investment_tracking.xlsx</code></td><td>Working copy path inside the container</td></tr>
+  </tbody>
+</table>
+
+<h3>Docker Compose non-secret environment</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Value</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>APP_ENV</code></td><td><code>development</code></td><td>Controls behaviour flags; use <code>production</code> for prod deployments</td></tr>
+    <tr><td><code>DATABASE_URL</code></td><td><code>postgresql+asyncpg://postgres:postgres@postgres:5432/investment_db</code></td><td>SQLAlchemy async DSN</td></tr>
+    <tr><td><code>REDIS_URL</code></td><td><code>redis://redis:6379/0</code></td><td>Redis connection string (database 0)</td></tr>
+    <tr><td><code>CORS_ORIGINS</code></td><td><code>'["*"]'</code></td><td>JSON array; wildcard is safe because the proxy handles CORS at the browser boundary</td></tr>
+    <tr><td><code>LOG_LEVEL</code></td><td><code>INFO</code></td><td><code>DEBUG</code> / <code>INFO</code> / <code>WARNING</code> / <code>ERROR</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Frontend</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Value</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>BACKEND_URL</code></td><td><code>http://backend:8000</code></td><td>Internal Docker hostname; only read server-side by the proxy route</td></tr>
+    <tr><td><code>NODE_ENV</code></td><td><code>production</code></td><td>Enables Next.js production optimisations</td></tr>
+  </tbody>
+</table>
+
+<h2>5. Common commands</h2>
+<pre><code># Build all images and start all services (detached)
+docker compose up -d --build
+
+# Rebuild and restart a single service without touching others
+docker compose build backend && docker compose up -d backend
+
+# Tail logs from a specific container
+docker logs inv_backend -f
+docker logs inv_frontend -f
+
+# Access the PostgreSQL CLI inside the container
+docker exec -it inv_postgres psql -U postgres -d investment_db
+
+# Access the Redis CLI inside the container
+docker exec -it inv_redis redis-cli
+
+# Start with Adminer DB browser on port 8080
+docker compose --profile dev up -d
+
+# Stop all services (preserves named volumes and data)
+docker compose down
+
+# Stop all services and destroy all data volumes
+docker compose down -v</code></pre>
+
+<div class="callout warn"><code>docker compose down -v</code> permanently deletes the PostgreSQL and Redis data volumes. All user accounts, action plans, and weekly scans stored in the database will be lost. Only run this to fully reset the environment.</div>
+
+<h2>6. Volume mounts</h2>
+<table>
+  <thead><tr><th>Named volume / host path</th><th>Container path</th><th>Mode</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>postgres_data</code></td><td><code>/var/lib/postgresql/data</code></td><td>rw</td><td>PostgreSQL data files</td></tr>
+    <tr><td><code>redis_data</code></td><td><code>/data</code></td><td>rw</td><td>Redis AOF persistence file</td></tr>
+    <tr><td><code>uploads_data</code></td><td><code>/app/uploads</code></td><td>rw</td><td>Working Excel copy, <code>app_config.json</code>, <code>.cache_bust</code></td></tr>
+    <tr><td><code>./backend</code></td><td><code>/app</code></td><td>cached</td><td>Hot-reload in development; not mounted in a proper prod build</td></tr>
+    <tr><td><code>&lt;host Excel dir&gt;</code></td><td><code>/app/investment_data</code></td><td><strong>ro</strong></td><td>Source Excel file — never written by the application</td></tr>
+    <tr><td><code>&lt;host agent dir&gt;</code></td><td><code>/app/investment_agent</code></td><td><strong>ro</strong></td><td>AI knowledge base markdown files and analysis scripts</td></tr>
+    <tr><td><code>./docs</code></td><td><code>/app/docs</code></td><td><strong>ro</strong></td><td>Documentation markdown files served by the docs endpoint</td></tr>
+  </tbody>
+</table>
+
+<h2>7. Health checks</h2>
+<p>Docker Compose uses health checks to sequence service startup correctly. The backend will not start until both Postgres and Redis are healthy. The frontend will not start until the backend is healthy.</p>
+<table>
+  <thead><tr><th>Service</th><th>Health test</th><th>Interval</th><th>Start period</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>PostgreSQL</td><td><code>pg_isready -U postgres -d investment_db</code></td><td>10 s</td><td>—</td><td>Checks the database accepts connections</td></tr>
+    <tr><td>Redis</td><td><code>redis-cli ping</code></td><td>10 s</td><td>—</td><td>Returns PONG when Redis is ready</td></tr>
+    <tr><td>Backend</td><td><code>curl -f http://localhost:8000/api/v1/health/live</code></td><td>15 s</td><td>30 s</td><td>Returns <code>{"status":"ok"}</code> once Uvicorn is accepting connections</td></tr>
+    <tr><td>Frontend</td><td>none</td><td>—</td><td>—</td><td>Depends on backend <code>service_healthy</code> condition</td></tr>
+  </tbody>
+</table>
+<div class="callout tip">The 30-second <code>start_period</code> on the backend health check gives Uvicorn time to initialise all 4 workers and run the database startup hooks (schema creation, admin seed) before Docker marks it unhealthy.</div>
+</body>
+</html>

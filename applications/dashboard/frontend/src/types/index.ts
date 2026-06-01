@@ -201,6 +201,9 @@ export type WidgetType =
   | 'performance_chart'
   | 'watchlist'
   | 'news_feed'
+  | 'market_pulse'
+  | 'scan_heat_tile'
+  | 'pnl_waterfall'
 
 // ── API ───────────────────────────────────────────────────
 export interface ApiError {

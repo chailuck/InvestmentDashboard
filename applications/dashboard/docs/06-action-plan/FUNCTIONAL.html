@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Action Plan — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Action Plan — Functional Specification</h1>
+
+<h2>Overview</h2>
+<p>The Action Plan section lets traders prepare and save structured trading plans before executing them in their brokerage account. Two independent plan types serve different planning stages:</p>
+<table>
+  <thead><tr><th>Type</th><th>Purpose</th><th>Data source</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Purchase Action Plan</strong></td><td>Stocks not currently in the portfolio that the trader intends to buy</td><td>Free entry — user types each symbol</td></tr>
+    <tr><td><strong>Portfolio Action Plan</strong></td><td>Actions on currently open positions (adjust TP, set SL, plan order sizes)</td><td>Live portfolio data from the Excel file</td></tr>
+  </tbody>
+</table>
+
+<h2>1. Navigation</h2>
+<p>The <strong>Action Plan</strong> item in the main sidebar leads to the plan list page (<code>/action-plan</code>). This page renders two collapsible sections — Purchase Plans and Portfolio Plans — each with its own table, filter controls, and Create button.</p>
+
+<h2>2. Purchase action plan</h2>
+
+<h3>2.1 Plan list</h3>
+<p>The Purchase Plans section shows a paginated list of saved plans with the following controls:</p>
+<ul>
+  <li><strong>Create new plan</strong> button — opens a name-entry modal</li>
+  <li><strong>View selector</strong> — filter by time period: 3 months (default) · 6 months · 1 year · All</li>
+</ul>
+<table>
+  <thead><tr><th>Column</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>Created</td><td>Date-time the plan was first saved</td></tr>
+    <tr><td>Plan Name</td><td>Human-readable name (e.g. <code>2026-06-01</code>)</td></tr>
+    <tr><td>Symbols</td><td>Comma-separated list of stock tickers, truncated after 7</td></tr>
+    <tr><td>Actions</td><td>Edit (pencil icon) · Delete (trash icon, with confirmation) · Duplicate (copy icon)</td></tr>
+    <tr><td>Last Modified</td><td>Date-time of last save</td></tr>
+  </tbody>
+</table>
+<p><strong>Create / Duplicate flow:</strong> A modal pre-fills the name with today's date (falling back to <code>YYYY-MM-DD-01</code>, <code>-02</code>, etc. if names are already taken). The user may change the name before confirming. On confirm, the backend creates the plan header and the browser navigates directly to the plan editor.</p>
+
+<h3>2.2 Purchase plan editor</h3>
+<p><strong>URL:</strong> <code>/action-plan/purchase/[id]</code></p>
+<p>An editable spreadsheet-style table where each row represents one stock the trader plans to buy. Rows can be added with the <strong>+ Add Row</strong> button and reordered by drag.</p>
+<table>
+  <thead><tr><th>Column</th><th>Editable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>STOCK</td><td>Yes</td><td>On blur, automatically fetches the live price from Yahoo Finance and populates CURRENT PRICE</td></tr>
+    <tr><td>CURRENT PRICE</td><td>No</td><td>Auto-populated via the stock price API; shows a loading spinner while fetching</td></tr>
+    <tr><td>SIZE</td><td>Yes</td><td>Number of shares the trader plans to buy</td></tr>
+    <tr><td>BUY</td><td>Yes</td><td>Intended entry price</td></tr>
+    <tr><td>TP</td><td>Yes</td><td>Take-profit price</td></tr>
+    <tr><td>SL</td><td>Yes</td><td>Stop-loss price</td></tr>
+    <tr><td>RR</td><td>No</td><td>Calculated: <code>(TP − BUY) / (BUY − SL)</code>; display-only, never stored</td></tr>
+    <tr><td>STRATEGY</td><td>Yes</td><td>Dropdown with preset options plus free-text OTHERS input</td></tr>
+  </tbody>
+</table>
+
+<h4>Strategy options</h4>
+<ul>
+  <li>BREAK OUT</li>
+  <li>BUY ON DIP</li>
+  <li>แท่งเทียนกลับตัว (Candle Reversal)</li>
+  <li>NEWS</li>
+  <li>AJ PAO</li>
+  <li>OTHERS (reveals a free-text input field)</li>
+</ul>
+
+<h4>RR (risk/reward) indicator</h4>
+<p>The RR column shows a visual quality indicator for each row's risk/reward setup:</p>
+<ul>
+  <li><span class="badge green">RR ≥ 3</span> — green check mark: excellent risk/reward ratio</li>
+  <li><span class="badge yellow">1 ≤ RR &lt; 3</span> — amber warning: acceptable but not ideal</li>
+  <li><span class="badge red">RR &lt; 1</span> — red cross: poor risk/reward; reconsider the plan</li>
+  <li>Blank / invalid (e.g. BUY = SL) — no indicator shown</li>
+</ul>
+
+<h4>Toolbar actions</h4>
+<ul>
+  <li><strong>+ Add Row</strong> — appends a new blank row at the bottom</li>
+  <li><strong>Save</strong> — persists all rows to the database (full replace: delete all + bulk insert)</li>
+  <li><strong>Generate</strong> — opens a read-only modal with the plan in a copy-ready text format for sharing with a broker or tracking system</li>
+</ul>
+
+<h4>Generated text format</h4>
+<pre><code>STOCK,SIZE,BUY,TP,SL,STRATEGY
+BH,100,184,212,176.6,BUY ON DIP
+BTG,1000,20.7,24.5,19.4,แท่งเทียนกลับตัว
+CPALL,200,14.5,51.25,45,BREAK OUT</code></pre>
+
+<h2>3. Portfolio action plan</h2>
+
+<h3>3.1 Plan list</h3>
+<p>The layout and controls are identical to the Purchase Plan list section. The only difference is the plan type scoping — this section shows only <code>plan_type = 'portfolio'</code> plans.</p>
+
+<h3>3.2 Portfolio plan editor</h3>
+<p><strong>URL:</strong> <code>/action-plan/portfolio/[id]</code></p>
+<p>Unlike the Purchase editor which is populated manually, the Portfolio editor loads live position data from the portfolio tracker and merges it with any saved planning data. On page load:</p>
+<ol>
+  <li>Fetches the saved plan from the database (saved TP / SL / Order Size)</li>
+  <li>Fetches all currently active positions from the Portfolio Tracker API (live Current Price, Size, Entry Price from Excel)</li>
+  <li>Merges: position data populates the read-only columns; saved plan data overlays TP / SL / Order Size</li>
+</ol>
+<table>
+  <thead><tr><th>Column</th><th>Editable</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td>SYMBOL</td><td>No</td><td>Portfolio tracker (active positions)</td></tr>
+    <tr><td>CURRENT PRICE</td><td>No</td><td>Live price from Yahoo Finance via portfolio tracker</td></tr>
+    <tr><td>SIZE</td><td>No</td><td>Position size from Excel file</td></tr>
+    <tr><td>ENTRY PRICE</td><td>No</td><td>Entry price from Excel file</td></tr>
+    <tr><td>TP</td><td>Yes</td><td>User input, persisted to database</td></tr>
+    <tr><td>SL</td><td>Yes</td><td>User input, persisted to database</td></tr>
+    <tr><td>ORDER SIZE</td><td>Yes</td><td>Shares to buy/sell in the planned action; persisted</td></tr>
+  </tbody>
+</table>
+<p><strong>Refresh button:</strong> Triggers the same Excel copy-and-reload as the Portfolio page refresh, then reloads the active positions. Use this when the Excel file has been updated since the page was opened.</p>
+
+<h4>Generated text format</h4>
+<pre><code>PORTFOLIO ACTION PLAN
+STOCK,TP,SL,ORDER SIZE
+TRUE,15.2,13.3,400
+GULF,64.0,57.5,200
+STA,20.0,18.4,500</code></pre>
+
+<h2>4. Business rules</h2>
+<ol>
+  <li>Plans are <strong>user-scoped</strong> — each user sees only their own plans. A user cannot access another user's plans even with a direct URL.</li>
+  <li>Plan names must be unique within the same user + plan type combination. The suggest-name API handles this automatically by appending a suffix if today's name is already taken.</li>
+  <li>Deleting a plan is <strong>irreversible</strong>. A confirmation modal ("Are you sure you want to delete <em>plan name</em>?") is required before deletion.</li>
+  <li>Duplicating a plan creates an exact copy of all line items under a new name. Changes to the duplicate do not affect the original.</li>
+  <li>The Portfolio Plan editor always loads <strong>live position data</strong> on every page open. The saved TP/SL/order_size values overlay the live data. Positions that have been closed since the plan was last saved will no longer appear in the live list.</li>
+  <li>RR (risk/reward ratio) is <strong>display-only</strong> and is never stored in the database. It is recalculated client-side on every render from the current BUY, TP, and SL values.</li>
+</ol>
+</body>
+</html>

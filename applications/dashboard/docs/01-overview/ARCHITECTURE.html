@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System Architecture — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>System Architecture</h1>
+
+<h2>1. High-level diagram</h2>
+<p>The system is composed of four Docker containers communicating over a private bridge network (<code>dashboard-net</code>). The browser never communicates directly with the backend; all API traffic is routed through a Next.js server-side proxy.</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│  Browser (port 3000)                                            │
+│  React 18 · TypeScript · TanStack Query · Zustand · ECharts     │
+└───────────────────────┬─────────────────────────────────────────┘
+                        │ HTTP /api/proxy/...  (same-origin — no CORS)
+                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Next.js API Route Proxy   /api/proxy/[...path]/route.ts        │
+│  Runtime env: BACKEND_URL = http://backend:8000                 │
+│  - Forwards JWT Bearer header unchanged                         │
+│  - Buffers request body as ArrayBuffer before forwarding        │
+│  - Streams response body back (handles SSE for AI Copilot)      │
+│  - Strips hop-by-hop headers (host, connection, transfer-enc.)  │
+└───────────────────────┬─────────────────────────────────────────┘
+                        │ HTTP / SSE  (internal Docker bridge network)
+                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  FastAPI Backend  (port 8000)                                   │
+│  4 Uvicorn workers · Socket.IO mounted at root                  │
+│                                                                 │
+│  ┌──────────────┐  ┌───────────────┐  ┌─────────────────────┐  │
+│  │  PostgreSQL  │  │   Redis 7     │  │  Yahoo Finance API  │  │
+│  │  16-alpine   │  │  Token store  │  │  (yfinance / direct │  │
+│  │  port 5432   │  │  port 6379    │  │   quote endpoint)   │  │
+│  └──────────────┘  └───────────────┘  └─────────────────────┘  │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Excel file volume  /app/investment_data  (read-only)    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Anthropic API  (claude-sonnet-4-6)  — AI Copilot only   │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+              ↕ dashboard-net (Docker bridge driver)</code></pre>
+
+<h2>2. The Next.js proxy pattern</h2>
+<p>All browser API calls go through a Next.js server-side catch-all route at <code>/api/proxy/[...path]</code>. The proxy forwards the full request — including the JWT <code>Authorization</code> header — to <code>http://backend:8000</code> and streams the response back to the browser.</p>
+<p><strong>Why this architecture matters:</strong></p>
+<ul>
+  <li>Works behind any external tunnel (ngrok, Cloudflare Tunnel, Tailscale) without rebuilding the frontend — only <code>BACKEND_URL</code> needs to change</li>
+  <li>No CORS issues because the browser only sees the same-origin Next.js server</li>
+  <li><code>BACKEND_URL</code> is a runtime environment variable, not baked into the bundle at build time</li>
+  <li>SSE streaming for the AI Copilot passes through unchanged because <code>upstream.body</code> is a <code>ReadableStream</code></li>
+</ul>
+<p><strong>File:</strong> <code>frontend/src/app/api/proxy/[...path]/route.ts</code></p>
+<pre><code>const BACKEND = (process.env.BACKEND_URL ?? 'http://backend:8000').replace(/\/$/, '')
+
+async function proxy(req: NextRequest, { params }) {
+  const url = `${BACKEND}/${params.path.join('/')}${req.nextUrl.search}`
+  const hasBody = !['GET', 'HEAD'].includes(req.method)
+  const body = hasBody ? await req.arrayBuffer() : undefined
+
+  // Strip hop-by-hop headers that should not be forwarded
+  fwdHeaders.delete('content-length')   // let fetch recalculate for the upstream
+
+  const upstream = await fetch(url, {
+    method: req.method,
+    headers: fwdHeaders,
+    body,
+    redirect: 'manual',
+  })
+
+  return new NextResponse(upstream.body, {
+    status: upstream.status,
+    headers: resHeaders,
+  })
+}</code></pre>
+<div class="callout warn">Do not use <code>NEXT_PUBLIC_*</code> variables for API URLs. They are baked at build time into the client bundle and cannot be overridden at runtime. Always use <code>BACKEND_URL</code> which is only read server-side by the proxy route.</div>
+
+<h2>3. Authentication flow</h2>
+<pre><code>┌──────────┐   POST /api/proxy/api/v1/auth/login   ┌────────────────┐
+│ Browser  │ ──────────────────────────────────────► │  FastAPI       │
+│          │ ◄──────────────────────────────────────  │                │
+│          │   { accessToken, refreshToken, user }    │  JWT HS256     │
+│          │                                          │  signed tokens │
+│          │                                          │                │
+│          │   GET /api/proxy/api/v1/...              │                │
+│          │   Authorization: Bearer {accessToken}    │                │
+│          │ ──────────────────────────────────────► │                │
+│          │                                          │  verify_token()│
+└──────────┘                                          └────────────────┘
+
+On 401 response (access token expired):
+  1. Axios interceptor fires: POST /api/proxy/api/v1/auth/refresh
+  2. If success: update stored tokens, retry original request transparently
+  3. If failure: clearAuth() removes tokens from sessionStorage → redirect to /login</code></pre>
+<p>Tokens are stored in Zustand, persisted to <code>sessionStorage</code>. They are automatically cleared when the browser tab is closed, providing a natural session boundary without requiring explicit logout.</p>
+<ul>
+  <li>Access token lifetime: <strong>30 minutes</strong> (configurable via <code>ACCESS_TOKEN_EXPIRE_MINUTES</code>)</li>
+  <li>Refresh token lifetime: <strong>7 days</strong> (configurable via <code>REFRESH_TOKEN_EXPIRE_DAYS</code>)</li>
+</ul>
+
+<h2>4. Data flow — Portfolio</h2>
+<pre><code>Excel file (read-only Docker volume mount at /app/investment_data)
+  │
+  │  pandas.read_excel("Sheet1")
+  ▼
+portfolio_excel.py — _load_df()
+  │
+  │  In-memory cache per Uvicorn worker: { key → (timestamp, value) }
+  │  Cache invalidated when /app/uploads/.cache_bust mtime changes
+  │
+  ├── get_positions()           →  yfinance live prices for open positions
+  │                                (Yahoo Finance quote API, direct HTTP)
+  ├── get_daily_performance()   →  grouped by day / week / month, cumsum
+  ├── get_performance_by_date() →  table grouped per period bucket
+  ├── get_performance_by_stock()→  P&L aggregated per ticker
+  └── get_period_transactions() →  individual trades in a date window
+
+Frontend:
+  TanStack Query (60 s refetch interval)
+    → portfolioTrackerService
+    → /api/proxy/api/v1/portfolio-tracker/*
+    → FastAPI endpoint
+    → portfolio_excel functions above</code></pre>
+
+<h3>Cross-worker cache invalidation</h3>
+<p>FastAPI runs 4 Uvicorn worker processes. Each worker has its own in-memory <code>_CACHE</code> dictionary. When the Excel file is refreshed (copied from the source volume), a sentinel file <code>/app/uploads/.cache_bust</code> is written with the current timestamp. Every subsequent call to <code>_cached()</code> checks whether the sentinel file's mtime is newer than the cache entry — if so, the cache entry is evicted and the data is reloaded from the Excel file.</p>
+<p>This mechanism requires no inter-process communication and works reliably across all 4 workers with a single filesystem write.</p>
+
+<h2>5. AI Copilot data flow</h2>
+<pre><code>Browser → POST /api/proxy/api/v1/ai/copilot/stream
+           (Fetch API with ReadableStream reader — not Axios)
+  ↓
+Next.js proxy (streams response body unchanged)
+  ↓
+FastAPI StreamingResponse (media_type="text/event-stream")
+  ↓
+Anthropic SDK — claude-sonnet-4-6
+  ↓
+Tool use loop (up to 6 iterations per message):
+  ├── get_portfolio_positions  → portfolio_excel.get_positions()
+  ├── get_live_price           → Yahoo Finance quote API
+  ├── get_performance_summary  → portfolio_excel performance functions
+  ├── read_knowledge_doc       → /app/investment_agent/knowledge/*.md
+  └── run_analysis_script      → subprocess.run(python script.py)
+
+SSE event format per token:
+  data: {"type": "text",       "content": "word "}
+  data: {"type": "tool_start", "name": "get_portfolio_positions"}
+  data: {"type": "tool_end",   "name": "get_portfolio_positions"}
+  data: {"type": "error",      "content": "message"}
+  data: {"type": "done",       "session_id": "uuid"}</code></pre>
+
+<div class="callout">The Anthropic SDK call is synchronous. It is wrapped with <code>asyncio.to_thread()</code> to avoid blocking the async event loop while waiting for the API response.</div>
+
+<h2>6. Multi-worker architecture</h2>
+<p>The backend container starts 4 Uvicorn worker processes defined in <code>docker/Dockerfile.backend</code>:</p>
+<pre><code>CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]</code></pre>
+<p><strong>Implications of multi-worker deployment:</strong></p>
+<ul>
+  <li>In-memory state like the AI session store (<code>_SESSIONS</code> dict) is <em>not</em> shared between workers. SSE connections are sticky to one worker for the lifetime of the connection, so this works in practice but sessions do not persist across disconnects or restarts.</li>
+  <li>The <code>.cache_bust</code> sentinel file mechanism provides shared cache invalidation without requiring a shared cache layer.</li>
+  <li>The admin account seed uses <code>INSERT ... ON CONFLICT DO NOTHING</code>, making it safe to execute on all 4 workers simultaneously at startup.</li>
+  <li>Rate limiting via SlowAPI uses client IP as the key and is per-worker. Effective rate is <code>N × workers</code> if the load balancer distributes uniformly. For a local setup this is acceptable.</li>
+</ul>
+
+<h2>7. Frontend state management</h2>
+<table>
+  <thead><tr><th>State type</th><th>Tool</th><th>Storage</th><th>Examples</th></tr></thead>
+  <tbody>
+    <tr><td>Auth (user object, tokens)</td><td>Zustand + persist</td><td>sessionStorage</td><td>Cleared on tab close; tokens auto-refreshed on 401</td></tr>
+    <tr><td>Server data (positions, scans, plans)</td><td>TanStack Query</td><td>Memory (60 s stale)</td><td>Auto-polling every 60 s; invalidated after mutations</td></tr>
+    <tr><td>UI state (modals, filter values)</td><td>React <code>useState</code></td><td>Component memory</td><td>Modals, selected tabs, inline edit mode</td></tr>
+    <tr><td>Persistent user preferences</td><td>localStorage</td><td>localStorage</td><td><code>portfolio_criteria</code>, <code>portfolio_default_months</code></td></tr>
+  </tbody>
+</table>
+
+<h2>8. Docker network</h2>
+<p>All services connect to the <code>dashboard-net</code> Docker bridge network. Services communicate by hostname, not by IP address. Host ports are exposed only for development access (e.g., direct Postgres or Redis access).</p>
+<table>
+  <thead><tr><th>Container name</th><th>Internal hostname</th><th>Calls to</th><th>Exposed host port</th></tr></thead>
+  <tbody>
+    <tr><td><code>inv_frontend</code></td><td><code>frontend</code></td><td><code>http://backend:8000</code></td><td>3000</td></tr>
+    <tr><td><code>inv_backend</code></td><td><code>backend</code></td><td><code>postgres:5432</code>, <code>redis:6379</code></td><td>8000</td></tr>
+    <tr><td><code>inv_postgres</code></td><td><code>postgres</code></td><td>—</td><td>5432</td></tr>
+    <tr><td><code>inv_redis</code></td><td><code>redis</code></td><td>—</td><td>6379</td></tr>
+    <tr><td><code>inv_adminer</code></td><td><code>adminer</code></td><td><code>postgres:5432</code></td><td>8080 (dev profile only)</td></tr>
+  </tbody>
+</table>
+<div class="callout tip">To access PostgreSQL directly (e.g., for schema inspection), run: <code>docker exec -it inv_postgres psql -U postgres -d investment_db</code></div>
+</body>
+</html>

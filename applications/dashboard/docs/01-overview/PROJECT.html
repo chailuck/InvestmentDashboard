@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Overview — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>InvestPro — Project Overview</h1>
+<p><em>Last updated: 2026-05-30</em></p>
+
+<h2>1. What Is InvestPro?</h2>
+<p><strong>InvestPro</strong> is a full-stack, self-hosted investment dashboard designed for tracking a personal Thai SET (Stock Exchange of Thailand) portfolio. It provides real-time profit &amp; loss calculations, interactive charting, AI-assisted trade analysis, and structured trade planning — all running inside Docker containers on a local machine.</p>
+<p><strong>Primary users:</strong> Individual traders managing a Thai SET portfolio who want a private, fully-controlled dashboard without relying on brokerage web portals or third-party cloud services. All data remains local and under the user's control.</p>
+
+<div class="callout tip">The application requires no internet access for core portfolio features. An Anthropic API key is only needed for the AI Copilot chat feature.</div>
+
+<h2>2. Goals</h2>
+<table>
+  <thead><tr><th>Goal</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Portfolio visibility</strong></td><td>See all open positions, P&amp;L, win/loss metrics at a glance on the dashboard</td></tr>
+    <tr><td><strong>Performance analysis</strong></td><td>Daily, weekly, and monthly charts with drill-down to individual transactions by period or stock</td></tr>
+    <tr><td><strong>Trade planning</strong></td><td>Create and save structured purchase plans and portfolio action plans with risk/reward calculation</td></tr>
+    <tr><td><strong>AI assistance</strong></td><td>Chat with an AI agent that has full context of the portfolio, live prices, and a personal knowledge base</td></tr>
+    <tr><td><strong>Weekly scan</strong></td><td>Structured weekly review workflow with colour-coded evaluation, chart analysis, and direct integration with purchase plans</td></tr>
+    <tr><td><strong>Self-hosted</strong></td><td>No cloud dependency; all data stays local; works behind any tunnel (ngrok, Cloudflare Tunnel, etc.)</td></tr>
+  </tbody>
+</table>
+
+<h2>3. Non-Goals</h2>
+<ul>
+  <li>Multi-user portfolio isolation — there is one shared Excel file as the source of truth for all users</li>
+  <li>Real-time WebSocket price streaming from the exchange (prices are polled on demand from Yahoo Finance)</li>
+  <li>Order execution or brokerage API integration</li>
+  <li>Mobile native app (the web UI is responsive but not optimised for mobile trading)</li>
+  <li>Email delivery of password reset tokens (tokens are currently returned in the API response for development use)</li>
+</ul>
+
+<h2>4. Technology Stack</h2>
+
+<h3>Backend</h3>
+<table>
+  <thead><tr><th>Layer</th><th>Technology</th><th>Version</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>Runtime</td><td>Python</td><td>3.12</td><td>Language runtime</td></tr>
+    <tr><td>Web framework</td><td>FastAPI + Uvicorn</td><td>0.115 / 0.30</td><td>Async HTTP API server, 4 workers</td></tr>
+    <tr><td>ORM</td><td>SQLAlchemy (async)</td><td>2.0</td><td>Database models and queries</td></tr>
+    <tr><td>DB driver</td><td>asyncpg</td><td>0.29</td><td>Async PostgreSQL driver</td></tr>
+    <tr><td>Auth</td><td>python-jose + passlib + bcrypt</td><td>—</td><td>JWT signing and password hashing</td></tr>
+    <tr><td>Cache</td><td>redis[hiredis]</td><td>5.0</td><td>Token blacklist and password reset tokens</td></tr>
+    <tr><td>AI</td><td>anthropic SDK + LangChain</td><td>≥0.40</td><td>Claude integration for AI Copilot</td></tr>
+    <tr><td>Market data</td><td>yfinance</td><td>≥0.2.55</td><td>Live stock prices from Yahoo Finance</td></tr>
+    <tr><td>Data</td><td>pandas + openpyxl</td><td>2.2 / 3.1</td><td>Excel file parsing and data manipulation</td></tr>
+    <tr><td>Observability</td><td>structlog + prometheus-fastapi-instrumentator</td><td>—</td><td>Structured logging and Prometheus metrics</td></tr>
+  </tbody>
+</table>
+
+<h3>Frontend</h3>
+<table>
+  <thead><tr><th>Layer</th><th>Technology</th><th>Version</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>Framework</td><td>Next.js (App Router)</td><td>14.2</td><td>React server/client rendering</td></tr>
+    <tr><td>Language</td><td>TypeScript</td><td>5.x</td><td>Type-safe frontend development</td></tr>
+    <tr><td>Styling</td><td>Tailwind CSS</td><td>3.x</td><td>Utility-first CSS</td></tr>
+    <tr><td>Charts</td><td>Apache ECharts (echarts-for-react)</td><td>—</td><td>Candlestick, donut, bar, and line charts</td></tr>
+    <tr><td>State</td><td>Zustand</td><td>4.x</td><td>Auth state and UI state management</td></tr>
+    <tr><td>Server state</td><td>TanStack Query v5</td><td>5.x</td><td>Data fetching, caching, and auto-refresh</td></tr>
+    <tr><td>Animation</td><td>Framer Motion</td><td>11.x</td><td>Metric card entry and value-change animations</td></tr>
+    <tr><td>HTTP client</td><td>Axios</td><td>1.x</td><td>API calls with JWT interceptor and auto-refresh</td></tr>
+  </tbody>
+</table>
+
+<h3>Infrastructure</h3>
+<table>
+  <thead><tr><th>Service</th><th>Docker Image</th><th>Port</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>PostgreSQL</td><td><code>postgres:16-alpine</code></td><td>5432</td><td>Primary database</td></tr>
+    <tr><td>Redis</td><td><code>redis:7-alpine</code></td><td>6379</td><td>Token store; 256 MB max, allkeys-lru eviction</td></tr>
+    <tr><td>Backend API</td><td>custom Python 3.12-slim</td><td>8000</td><td>FastAPI + 4 Uvicorn workers</td></tr>
+    <tr><td>Frontend</td><td>custom Node 20-alpine</td><td>3000</td><td>Next.js standalone output</td></tr>
+    <tr><td>Adminer</td><td><code>adminer:latest</code></td><td>8080</td><td>Dev only; start with <code>--profile dev</code></td></tr>
+  </tbody>
+</table>
+
+<h2>5. Application Pages</h2>
+<table>
+  <thead><tr><th>URL</th><th>Page</th><th>Access</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>/login</code></td><td>Login</td><td>Public</td><td>Email + password authentication</td></tr>
+    <tr><td><code>/forgot-password</code></td><td>Forgot password</td><td>Public</td><td>Initiates password reset flow</td></tr>
+    <tr><td><code>/reset-password</code></td><td>Reset password</td><td>Public (token)</td><td>Sets new password using reset token</td></tr>
+    <tr><td><code>/dashboard</code></td><td>Overview dashboard</td><td>All users</td><td>P&amp;L summary, allocation chart, market indices</td></tr>
+    <tr><td><code>/portfolio</code></td><td>Portfolio tracker</td><td>All users</td><td>Full position table, performance charts</td></tr>
+    <tr><td><code>/action-plan</code></td><td>Action plan list</td><td>All users</td><td>Lists purchase and portfolio plans</td></tr>
+    <tr><td><code>/action-plan/purchase/:id</code></td><td>Purchase plan editor</td><td>All users</td><td>Editable table with RR calculation</td></tr>
+    <tr><td><code>/action-plan/portfolio/:id</code></td><td>Portfolio plan editor</td><td>All users</td><td>Live position overlay with TP/SL planning</td></tr>
+    <tr><td><code>/weekly-scan</code></td><td>Weekly scan list</td><td>All users</td><td>Named scan sessions with colour counts</td></tr>
+    <tr><td><code>/weekly-scan/:id</code></td><td>Scan detail table</td><td>All users</td><td>Inline editing, week prices, analytics</td></tr>
+    <tr><td><code>/weekly-scan/:id/evaluate</code></td><td>Evaluate view</td><td>All users</td><td>Full-screen candlestick chart + evaluation form</td></tr>
+    <tr><td><code>/weekly-scan/:id/dashboard</code></td><td>Scan dashboard</td><td>All users</td><td>Colour distribution and performance summary</td></tr>
+    <tr><td><code>/ai-copilot</code></td><td>AI chat copilot</td><td>All users</td><td>Streaming chat with portfolio context</td></tr>
+    <tr><td><code>/settings</code></td><td>My profile</td><td>All users</td><td>Name, password, app configuration</td></tr>
+    <tr><td><code>/settings/documents</code></td><td>Documentation</td><td>All users</td><td>In-app markdown documentation browser</td></tr>
+    <tr><td><code>/admin/users</code></td><td>User management</td><td>Admin only</td><td>Create, edit, delete users; assign roles</td></tr>
+  </tbody>
+</table>
+
+<h2>6. Quick Start</h2>
+
+<h3>Prerequisites</h3>
+<ul>
+  <li>Docker Desktop with Compose v2 (included in Docker Desktop 4.x and later)</li>
+  <li>The Excel file <code>Investment tracking.xlsx</code> accessible on the host machine</li>
+  <li>An Anthropic API key (only required for AI Copilot; all other features work without it)</li>
+</ul>
+
+<h3>Steps</h3>
+<pre><code># 1. Navigate to the application directory
+cd applications/dashboard
+
+# 2. Create the backend environment file from the example
+cp backend/.env.example backend/.env
+
+# 3. Edit backend/.env — set at minimum:
+#    ANTHROPIC_API_KEY=sk-ant-...
+#    ADMIN_EMAIL=admin@example.com
+#    ADMIN_PASSWORD=ChangeMe123!
+
+# 4. Update docker-compose.yml — change the host path for investment_data
+#    to point to the directory containing your Excel file:
+#    - /path/to/your/excel/dir:/app/investment_data:ro
+
+# 5. Build all images and start all services in detached mode
+docker compose up -d --build
+
+# 6. Open the application in a browser
+open http://localhost:3000
+# Log in with the admin credentials you set in step 3</code></pre>
+
+<div class="callout warn">On first startup the backend initialises the database schema and seeds the admin account. This takes 15–30 seconds. The frontend service waits for the backend health check to pass before starting, so the app will not be available until the backend is fully up.</div>
+
+<h3>Minimum backend/.env</h3>
+<pre><code># Required for AI Copilot — get this from console.anthropic.com
+ANTHROPIC_API_KEY=sk-ant-...
+
+# First-run admin account (seeded once on startup via INSERT ... ON CONFLICT DO NOTHING)
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=ChangeMe123!
+ADMIN_NAME=Admin
+
+# Excel source file path inside the container
+# The directory /app/investment_data is mapped from the host via docker-compose.yml
+INVESTMENT_EXCEL_SOURCE_PATH=/app/investment_data/Investment tracking.xlsx</code></pre>
+
+<div class="callout">After logging in, go to <strong>Settings → App Configuration</strong> to verify or update the Excel file path if needed. You can also use the Test button there to confirm the path is readable.</div>
+
+<h2>7. Repository Layout</h2>
+<pre><code>applications/dashboard/
+├── backend/                         # FastAPI Python backend
+│   ├── main.py                      # App factory, lifespan hooks, middleware setup
+│   ├── alembic/                     # Database migrations (alembic upgrade head)
+│   │   └── versions/                # Individual migration files
+│   ├── app/
+│   │   ├── api/v1/endpoints/        # Route handlers (one file per feature area)
+│   │   ├── auth/                    # JWT helpers, FastAPI dependencies
+│   │   ├── core/                    # Settings (pydantic-settings), structured logging
+│   │   ├── database/                # SQLAlchemy engine, Redis client
+│   │   ├── middleware/              # SecurityHeaders, RequestId middleware
+│   │   ├── models/                  # SQLAlchemy ORM models
+│   │   ├── schemas/                 # Pydantic request/response schemas
+│   │   ├── services/                # Business logic (Excel, market data, config)
+│   │   └── websocket/               # Socket.IO manager (future use)
+│   ├── requirements.txt
+│   └── .env                         # Secrets — gitignored; never commit this file
+├── frontend/                        # Next.js 14 app
+│   └── src/
+│       ├── app/                     # App Router pages and layouts
+│       ├── components/              # Shared React components
+│       ├── services/                # API service layer (wraps Axios calls)
+│       ├── store/                   # Zustand state stores (auth, etc.)
+│       └── types/                   # TypeScript type definitions
+├── docker/
+│   ├── Dockerfile.backend           # Multi-stage Python build
+│   └── Dockerfile.frontend          # Three-stage Next.js standalone build
+├── docs/                            # This documentation tree
+├── scripts/
+│   └── init_db.sql                  # PostgreSQL extensions (uuid-ossp, pg_trgm)
+└── docker-compose.yml               # Service definitions, volumes, networks</code></pre>
+
+<div class="callout tip">The <code>backend/.env</code> file is gitignored. Never commit API keys or passwords. The <code>.env.example</code> file shows the expected format without real values.</div>
+</body>
+</html>

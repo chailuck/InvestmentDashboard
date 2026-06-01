@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portfolio Tracker — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Portfolio Tracker — Functional Specification</h1>
+
+<h2>1. Overview</h2>
+<p>The portfolio page (<code>/portfolio</code>) is the primary tracking interface. It reads all trade data from the <code>Investment tracking.xlsx</code> Excel file and enriches open positions with live prices fetched from Yahoo Finance. The page provides comprehensive performance analytics with drill-down capability to individual transactions.</p>
+<p>The Excel file is the <strong>single source of truth</strong> for all portfolio data. The application never writes to it. When new trades are recorded in the Excel file, the user clicks Refresh to copy the file into the application's working storage and reload the data.</p>
+
+<h2>2. Excel file structure</h2>
+<p>The source file is an Excel workbook with a single sheet named <code>Sheet1</code>. Each row represents one trade entry (either open or closed). Column names must match exactly (including capitalisation).</p>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>Symbol</code></td><td>text</td><td>Thai SET ticker (e.g. GULF, PTT, KBANK)</td></tr>
+    <tr><td><code>Direction</code></td><td>text</td><td><code>Long</code> or <code>Short</code> (case-insensitive)</td></tr>
+    <tr><td><code>Entry Date</code></td><td>date</td><td>Trade entry date</td></tr>
+    <tr><td><code>Entry Price</code></td><td>number</td><td>Price paid per share at entry</td></tr>
+    <tr><td><code>Exit Date</code></td><td>date</td><td>Exit date — blank for open positions</td></tr>
+    <tr><td><code>Exit Price</code></td><td>number or formula</td><td>Exit price; blank or the string <code>"NOT SELL"</code> means position is still open</td></tr>
+    <tr><td><code>Position Size</code></td><td>number</td><td>Number of shares</td></tr>
+    <tr><td><code>SL</code></td><td>number</td><td>Stop-loss price (reference only — not enforced)</td></tr>
+    <tr><td><code>TP</code></td><td>number</td><td>Take-profit price (reference only)</td></tr>
+    <tr><td><code>Remarks</code></td><td>text</td><td>Optional free-text notes for the trade</td></tr>
+  </tbody>
+</table>
+<div class="callout warn">An open position is detected when <code>Exit Price</code> is NaN (blank cell) or the string <code>"NOT SELL"</code>. Any other non-numeric value in this column may cause the position to be treated as closed with an incorrect exit price. Ensure the cell is either blank or contains a numeric value for closed trades.</div>
+
+<h2>3. Filters</h2>
+<p>The filter bar at the top of the portfolio page controls which positions are shown in all sections. Filters are persisted in <code>localStorage</code> under the key <code>portfolio_criteria</code> so they survive page refresh.</p>
+<table>
+  <thead><tr><th>Filter</th><th>Default</th><th>Options</th></tr></thead>
+  <tbody>
+    <tr><td><strong>From date</strong></td><td>3 months ago</td><td>Any date; stored in localStorage</td></tr>
+    <tr><td><strong>To date</strong></td><td>Today</td><td>Any date; a "Today" quick-set button resets it to the current date</td></tr>
+    <tr><td><strong>Status</strong></td><td>Active</td><td>Active (open only) / All (open + closed) / Closed (closed only)</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Metric cards</h2>
+<p>Four summary metric cards update dynamically whenever the filter values change. They reflect the filtered dataset, not the entire portfolio.</p>
+<table>
+  <thead><tr><th>Card</th><th>Formula</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Total P&amp;L</strong></td><td>Sum of <code>netPnl</code> for all filtered positions</td></tr>
+    <tr><td><strong>Positions</strong></td><td>Count of filtered position rows</td></tr>
+    <tr><td><strong>Win Rate</strong></td><td>Percentage of positions where <code>netPnl &gt; 0</code></td></tr>
+    <tr><td><strong>Avg P&amp;L</strong></td><td><code>totalPnl ÷ positionCount</code></td></tr>
+  </tbody>
+</table>
+
+<h2>5. Positions table</h2>
+<p>The main table shows all positions matching the current filter criteria. For open positions, the Current Price is a live value from Yahoo Finance; for closed positions it shows the Exit Price from the Excel file.</p>
+<table>
+  <thead><tr><th>Column</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>Symbol</td><td>Thai SET ticker</td></tr>
+    <tr><td>Direction</td><td><code>↑ L</code> for Long, <code>↓ S</code> for Short</td></tr>
+    <tr><td>Entry Date</td><td>Date the position was opened</td></tr>
+    <tr><td>Entry Price</td><td>Price paid per share in THB</td></tr>
+    <tr><td>Current Price</td><td>Live Yahoo Finance price (open) or Exit Price (closed)</td></tr>
+    <tr><td>Size</td><td>Number of shares held</td></tr>
+    <tr><td>Net P&amp;L</td><td>THB profit or loss, coloured green/red; includes P&amp;L% in parentheses</td></tr>
+    <tr><td>SL</td><td>Stop-loss price from Excel</td></tr>
+    <tr><td>TP</td><td>Take-profit price from Excel</td></tr>
+    <tr><td>Status</td><td><span class="badge green">OPEN</span> or <span class="badge">CLOSED</span></td></tr>
+  </tbody>
+</table>
+<p>The footer row shows the total P&amp;L across all visible positions.</p>
+
+<h2>6. Performance history chart</h2>
+<p>A dual-axis ECharts chart showing portfolio performance over time. The period selector (Daily / Weekly / Monthly) controls the granularity of both the chart and the Performance by Date table below it.</p>
+<ul>
+  <li><strong>Left Y-axis:</strong> Cumulative P&amp;L as a green area line chart (total accumulated profit/loss from the start of the filter period)</li>
+  <li><strong>Right Y-axis:</strong> Period P&amp;L as bar chart (profit or loss in each individual period) — green bars for positive periods, red for negative</li>
+  <li><strong>X-axis:</strong> Dates grouped by the selected period</li>
+  <li><strong>Tooltip:</strong> Shows both cumulative P&amp;L and period P&amp;L for the hovered date</li>
+</ul>
+<p>The chart covers the date range defined by the From / To date filters.</p>
+
+<h2>7. Performance by date table</h2>
+<p>A collapsible table below the chart, grouped by the selected period (Daily / Weekly / Monthly). Each row represents one period bucket.</p>
+<table>
+  <thead><tr><th>Column</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>Period</td><td>Date or date range label for the bucket</td></tr>
+    <tr><td>Net P&amp;L</td><td>Total P&amp;L for this period</td></tr>
+    <tr><td>Accumulated P&amp;L</td><td>Running total from the start of the filter range</td></tr>
+    <tr><td>Wins</td><td>Count of profitable trades in this period</td></tr>
+    <tr><td>Losses</td><td>Count of losing trades</td></tr>
+    <tr><td>Total</td><td>Total trades in this period</td></tr>
+    <tr><td>Win Rate</td><td>Percentage of trades that were profitable</td></tr>
+  </tbody>
+</table>
+<p><strong>Drill-down:</strong> Clicking any row opens a <strong>Transaction Modal</strong> showing every individual trade that occurred in that period. The modal columns are: Symbol, Direction, Entry Date, Exit Date, Entry Price, Exit Price, Size, Net P&amp;L, P&amp;L%, Remarks.</p>
+
+<h2>8. Performance by stock</h2>
+<p>A separate section below the date table showing P&amp;L aggregated per stock symbol.</p>
+<ul>
+  <li><strong>Bar chart:</strong> Horizontal bars sorted by P&amp;L. Each bar is coloured green (profitable) or red (losing). Helps identify which stocks contributed most to overall performance.</li>
+  <li><strong>Collapsible table:</strong> One row per symbol with columns: Symbol, Total Investment (cost basis), Current Value, Net P&amp;L, P&amp;L%, Wins, Losses, Win Rate (with a mini horizontal progress bar). Useful for identifying the most and least reliable stocks in the trading history.</li>
+</ul>
+
+<h2>9. Refresh</h2>
+<p>The <strong>Refresh</strong> button (top-right corner, circular arrow icon) triggers a multi-step process to reload the portfolio data from the source Excel file. A progress modal shows each step as it completes:</p>
+<ol>
+  <li><strong>Reading source file</strong> — shows the configured source path and file size</li>
+  <li><strong>Copying to working location</strong> — copies the Excel to <code>/app/uploads/</code></li>
+  <li><strong>Clearing cache</strong> — writes the <code>.cache_bust</code> sentinel file, invalidating all 4 Uvicorn workers</li>
+  <li><strong>Reloading portfolio data</strong> — triggers TanStack Query refetch for all portfolio queries</li>
+</ol>
+<p>The source path and working path are configured in Settings → App Configuration. If the source file is not found, the refresh modal shows a 503 error with the configured path displayed for troubleshooting.</p>
+
+<h2>10. Raw data viewer</h2>
+<p>The <strong>Raw Data</strong> button (table icon, top-right) opens a full-screen modal showing every row from the Excel file exactly as it was read by pandas. This is useful for debugging data issues — for example, if a position shows an unexpected status or P&amp;L, the raw data view shows the exact values in each column before any processing.</p>
+<p>The raw data table preserves the original Excel column names and includes all rows (including closed positions outside the current filter range).</p>
+</body>
+</html>

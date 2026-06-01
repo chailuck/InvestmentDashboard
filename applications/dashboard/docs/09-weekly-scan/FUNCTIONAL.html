@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weekly Scan — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.cyan { background: #0e3a4a; color: #22d3ee }
+.purple { background: #2d1b4e; color: #a78bfa }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Weekly Scan — Functional Specification</h1>
+
+<h2>1. Overview</h2>
+<p>The Weekly Scan module (<code>/weekly-scan</code>) supports a disciplined, repeatable workflow for reviewing a watchlist of SET and global stocks once per week. The analyst creates a named scan (typically dated to the upcoming Saturday), works through each symbol to evaluate its chart setup using the built-in OHLCV candlestick chart, assigns a colour mark and trading strategy, and optionally promotes selected symbols directly to a purchase action plan.</p>
+<p>The module is <strong>personal</strong> — each user manages their own scans, symbol lists, and configuration independently. One user's scans are not visible to other users.</p>
+
+<h2>2. Core concepts</h2>
+
+<h3>2.1 Symbol lists</h3>
+<p>A user maintains one or more named <strong>symbol lists</strong> (e.g., "SET50", "Crypto DRs", "US Watchlist"). Each list is associated with a market context which determines how Yahoo Finance ticker symbols are constructed. When a scan is created, symbols are drawn from all lists and grouped by list name inside the scan.</p>
+<ul>
+  <li>Lists are ordered by <code>sort_order</code>; symbols within a list are stored in the user-defined order</li>
+  <li>New users who have no lists configured will have a "Default" list automatically seeded with SET50 constituent tickers plus two DR symbols (<code>BTCUSD-DR</code>, <code>GOLUSD-DR</code>) on first access</li>
+</ul>
+
+<h3>2.2 Scans</h3>
+<p>A <strong>scan</strong> is a dated snapshot of symbols from all active symbol lists. Its name follows the convention <code>WEEKLY_SCAN_DD_MM_YYYY</code> where the date is the target Saturday. The system auto-suggests the next Saturday's name if the user already has prior scans.</p>
+<p>Once created, a scan is a <strong>fixed snapshot</strong> — it does not automatically update when the underlying symbol lists change. The user must click <strong>Refresh</strong> to merge new symbols from current lists into an existing scan. Existing items with evaluation data are never overwritten by a refresh.</p>
+
+<h3>2.3 Colour mark system</h3>
+<p>Each item in a scan receives exactly one colour mark as the primary evaluation verdict. The marks form a priority queue from top trading candidates (CYAN) down to portfolio positions (PURPLE).</p>
+<table>
+  <thead><tr><th>Mark</th><th>Colour</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><span class="badge cyan">CYAN</span></td><td>Cyan</td><td>Strong buy candidate — top priority; will be promoted to purchase plan first</td></tr>
+    <tr><td><span class="badge green">GREEN</span></td><td>Green</td><td>Buy candidate — good setup</td></tr>
+    <tr><td><span class="badge yellow">YELLOW</span></td><td>Yellow</td><td>Watch / borderline — revisit next week</td></tr>
+    <tr><td><span class="badge red">RED</span></td><td>Red</td><td>Skip — no valid setup this week; automatically advances to next in Evaluate view</td></tr>
+    <tr><td><span class="badge purple">PURPLE</span></td><td>Purple</td><td>Already in portfolio — auto-assigned by the Mark Portfolio Symbols function</td></tr>
+    <tr><td><span class="badge">—</span></td><td>None</td><td>Not yet evaluated</td></tr>
+  </tbody>
+</table>
+
+<h3>2.4 Strategy presets</h3>
+<table>
+  <thead><tr><th>Strategy</th><th>Short code</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>BREAK OUT</td><td>BO</td><td>Price breaking above a key resistance level</td></tr>
+    <tr><td>BUY ON DIP</td><td>BOD</td><td>Pullback to support within an uptrend</td></tr>
+    <tr><td>แท่งเทียนกลับตัว</td><td>ททกต</td><td>Candle reversal pattern (e.g. hammer, engulfing)</td></tr>
+    <tr><td>ยยจท</td><td>ยยจท</td><td>Thai technical pattern — higher highs and higher lows</td></tr>
+    <tr><td>NEWS</td><td>NEWS</td><td>Trade driven by fundamental news or announcements</td></tr>
+    <tr><td>AJ PAO</td><td>PAO</td><td>Strategy from the AJ PAO trading methodology</td></tr>
+    <tr><td>OTHERS</td><td>OTH.</td><td>Free-text custom strategy entered by the user</td></tr>
+  </tbody>
+</table>
+
+<h3>2.5 Trade parameters</h3>
+<p>Each item can store optional trade parameters alongside the colour and strategy. These are editable inline in the table or in the evaluate view:</p>
+<ul>
+  <li><strong>Buy Price</strong> — intended entry price</li>
+  <li><strong>Size</strong> — number of shares</li>
+  <li><strong>TP</strong> — take-profit target price</li>
+  <li><strong>SL</strong> — stop-loss price</li>
+  <li><strong>Remark</strong> — free-text note (e.g., "Breakout from 3-month base", "Watch earnings date")</li>
+</ul>
+
+<h2>3. User workflows</h2>
+
+<h3>3.1 Managing symbol lists</h3>
+<ol>
+  <li>Navigate to Weekly Scan and click the <strong>Symbol Lists</strong> settings button</li>
+  <li>Create one or more named lists and assign a market context: SET, US, HK, CRYPTO, or OTHER</li>
+  <li>Enter the list of symbols (one per line, or comma-separated); the market context determines how tickers are passed to Yahoo Finance</li>
+  <li>Reorder lists by setting a sort order; the order affects the tab layout in the scan detail view</li>
+</ol>
+
+<h3>3.2 Creating a scan</h3>
+<ol>
+  <li>Navigate to <strong>Weekly Scan</strong> in the sidebar</li>
+  <li>Click <strong>New Scan</strong>. The suggested name is pre-filled (e.g., <code>WEEKLY_SCAN_07_06_2026</code>)</li>
+  <li>Confirm. The backend creates the scan and populates it with all symbols from all active symbol lists, preserving list grouping</li>
+  <li>The browser navigates to the new scan's detail page</li>
+</ol>
+
+<h3>3.3 Scan detail table</h3>
+<p>The scan detail page (<code>/weekly-scan/[id]</code>) shows all symbols in a table with inline-editable evaluation fields. Changes are saved immediately on blur or Enter via <code>PUT .../items/{symbol}</code>.</p>
+<table>
+  <thead><tr><th>Column</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>Symbol</td><td>Ticker; click to open the full Analytics modal with the OHLCV chart</td></tr>
+    <tr><td>List</td><td>Symbol list name; used for tab filtering at the top</td></tr>
+    <tr><td>Market</td><td>SET / US / HK / CRYPTO</td></tr>
+    <tr><td>Mon Open</td><td>Monday open price for the scan week (fetched concurrently from Yahoo Finance)</td></tr>
+    <tr><td>Fri Close</td><td>Friday close price for the scan week</td></tr>
+    <tr><td>Week %</td><td>(Fri − Mon) / Mon × 100; green if positive, red if negative</td></tr>
+    <tr><td>Color</td><td>Five coloured dot buttons; click to assign/clear colour mark</td></tr>
+    <tr><td>Strategy</td><td>Icon button grid for preset strategies; OTHERS reveals free-text input</td></tr>
+    <tr><td>Buy / Size / TP / SL</td><td>Inline numeric inputs; click to edit, blur or Enter to save</td></tr>
+    <tr><td>Remark</td><td>Inline free-text input</td></tr>
+    <tr><td>Actions</td><td>Add to purchase plan (cart icon) · Delete from scan (trash icon)</td></tr>
+  </tbody>
+</table>
+<p><strong>Filter controls above the table:</strong></p>
+<ul>
+  <li><strong>List tabs</strong> — one tab per symbol list; "All" shows every symbol</li>
+  <li><strong>Symbol filter</strong> — text search on ticker symbol</li>
+  <li><strong>Color filter</strong> — multi-select colour badge buttons</li>
+  <li><strong>Strategy filter</strong> — text search on strategy name</li>
+</ul>
+
+<h3>3.4 Evaluate view (full-screen chart)</h3>
+<p>Click <strong>Start Scan</strong> to enter the full-screen Evaluate view (<code>/weekly-scan/[id]/evaluate</code>). Choose a mode and optionally a specific list before starting.</p>
+<p><strong>Available modes:</strong></p>
+<ul>
+  <li><strong>All symbols</strong> — every symbol in the selected list</li>
+  <li><strong>Remaining only</strong> — symbols with no colour mark yet (unreviewed)</li>
+  <li><strong>CYAN / GREEN / YELLOW / etc.</strong> — symbols already marked with a specific colour</li>
+</ul>
+<p><strong>Layout:</strong></p>
+<ul>
+  <li><strong>Left panel:</strong> Scrollable symbol queue showing all symbols in the queue with their current marks</li>
+  <li><strong>Centre:</strong> EChartsChart component — OHLCV candlestick with volume, RSI, and Stochastic panels; interval switcher (1h / 4h / 1d / 1wk)</li>
+  <li><strong>Right panel:</strong> Evaluation form — colour picker, strategy selector, buy/size/TP/SL/remark inputs</li>
+  <li><strong>Top bar:</strong> Live price with day change % fetched from the analytics service</li>
+</ul>
+<p><strong>Navigation:</strong> Next and Prev buttons advance through the queue. Selecting RED automatically skips to Next. Save &amp; Close saves the current evaluation and returns to the scan table.</p>
+
+<h3>3.5 Scan dashboard</h3>
+<p>The Scan Dashboard (<code>/weekly-scan/[id]/dashboard</code>) provides a summary view of a completed scan — useful for planning what to do with the week's findings:</p>
+<ul>
+  <li><strong>Stat cards:</strong> Total symbols, evaluated count, CYAN+GREEN count (actionable), best/worst week performer</li>
+  <li><strong>Colour distribution donut chart:</strong> Shows the breakdown of marks (Pending shown as grey)</li>
+  <li><strong>Bar charts:</strong> Week % return grouped by colour mark and by strategy</li>
+  <li><strong>Filtered symbol tables:</strong> Symbols grouped by colour mark for quick reference</li>
+</ul>
+
+<h3>3.6 Adding symbols to a purchase plan</h3>
+<p>From the scan table, click the cart icon on any row to open the <strong>Add to Plan</strong> modal. The modal lists the five most recent purchase plans. Select a plan and confirm to append the symbol with all its evaluation data (buy price, size, TP, SL, strategy) as a new row in that purchase plan. The purchase plan editor then opens automatically so the user can review and save.</p>
+
+<h3>3.7 Mark Portfolio Symbols</h3>
+<p>The <strong>Mark Portfolio</strong> button in the scan toolbar cross-references all active portfolio positions against the scan's symbol list. Matching symbols are automatically marked as PURPLE. If the latest purchase plan contains a strategy for the same symbol, that strategy is also inherited — avoiding manual re-entry for known positions.</p>
+
+<h2>4. Week price calculation</h2>
+<p>Monday open and Friday close prices are fetched from Yahoo Finance using the date embedded in the scan name (<code>WEEKLY_SCAN_DD_MM_YYYY</code>). Ticker translation by market:</p>
+<table>
+  <thead><tr><th>Market</th><th>Suffix rule</th><th>Example</th></tr></thead>
+  <tbody>
+    <tr><td>SET</td><td><code>{SYMBOL}.BK</code></td><td>GULF → GULF.BK</td></tr>
+    <tr><td>US / OTHER</td><td>No suffix</td><td>AAPL → AAPL</td></tr>
+    <tr><td>HK</td><td>Zero-pad to 4 digits + <code>.HK</code></td><td>700 → 0700.HK</td></tr>
+    <tr><td>CRYPTO / DR symbols</td><td>No suffix</td><td>BTCUSD-DR → BTCUSD-DR</td></tr>
+  </tbody>
+</table>
+<p>If the scan week is in the future (Monday has not yet occurred), the most recent close is used as a proxy for Monday open. All symbols are fetched concurrently with a semaphore of 5 to avoid rate-limiting.</p>
+
+<h2>5. Edge cases and empty states</h2>
+<table>
+  <thead><tr><th>Condition</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td>No symbol lists configured</td><td>Scan is created with SET50 defaults (50 symbols + 2 DRs)</td></tr>
+    <tr><td>Scan name does not match <code>DD_MM_YYYY</code></td><td>Week price columns show <code>—</code> for all symbols; no error raised</td></tr>
+    <tr><td>Yahoo Finance returns no data for a symbol</td><td>Mon/Fri columns show <code>—</code> for that symbol; other symbols unaffected</td></tr>
+    <tr><td>Duplicate symbol added to scan</td><td>API returns 409 Conflict; UI prevents the add and shows an error toast</td></tr>
+    <tr><td>No purchase plans exist</td><td>Add to Plan modal shows "No purchase plans found. Create one from the Action Plan page."</td></tr>
+    <tr><td>Scan refreshed while user is evaluating</td><td>New symbols are appended; current evaluation data is not affected</td></tr>
+  </tbody>
+</table>
+</body>
+</html>

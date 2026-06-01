@@ -14,6 +14,9 @@ import { HoldingsTableWidget } from '@/components/dashboard/HoldingsTableWidget'
 import { AllocationChartWidget } from '@/components/dashboard/AllocationChartWidget'
 import { RiskMetricsWidget } from '@/components/dashboard/RiskMetricsWidget'
 import { AIInsightsWidget } from '@/components/dashboard/AIInsightsWidget'
+import { MarketPulseWidget } from '@/components/dashboard/MarketPulseWidget'
+import { ScanHeatTileWidget } from '@/components/dashboard/ScanHeatTileWidget'
+import { PnlWaterfallWidget } from '@/components/dashboard/PnlWaterfallWidget'
 import type { WidgetConfig, WidgetType } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -28,6 +31,9 @@ const WIDGET_MAP: Record<WidgetType, React.ComponentType<{ config: WidgetConfig 
   performance_chart:  PortfolioChartWidget,
   watchlist:          () => null,
   news_feed:          () => null,
+  market_pulse:       MarketPulseWidget,
+  scan_heat_tile:     ScanHeatTileWidget,
+  pnl_waterfall:      PnlWaterfallWidget,
 }
 
 function useContainerWidth(ref: React.RefObject<HTMLDivElement>) {

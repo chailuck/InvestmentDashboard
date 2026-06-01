@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Authentication — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Authentication — Functional Specification</h1>
+
+<h2>1. Overview</h2>
+<p>InvestPro uses JWT-based authentication with short-lived access tokens and long-lived refresh tokens. The access token is attached to every API request as an HTTP <code>Authorization: Bearer</code> header. All API endpoints require a valid token except for the auth endpoints themselves and the health check probes.</p>
+<p>Token refresh is fully automatic and transparent — the user stays logged in for up to 7 days without re-entering credentials. If the refresh token expires or is revoked, the user is silently redirected to the login page.</p>
+
+<h2>2. User roles (RBAC)</h2>
+<p>There are three roles with increasing levels of access. All roles can access the core portfolio, action plan, weekly scan, and AI features. Only the admin role can manage other users.</p>
+<table>
+  <thead><tr><th>Role</th><th>Description</th><th>Permissions</th></tr></thead>
+  <tbody>
+    <tr><td><span class="badge red">admin</span></td><td>Full access</td><td>All endpoints including user management; can create, edit, and delete other users; cannot delete themselves</td></tr>
+    <tr><td><span class="badge blue">analyst</span></td><td>Power user</td><td>All non-admin endpoints; can update their own profile and password</td></tr>
+    <tr><td><span class="badge yellow">viewer</span></td><td>Read-only</td><td>All non-admin endpoints; can update their own profile and password; default role for new users</td></tr>
+  </tbody>
+</table>
+<div class="callout">All roles have equal access to all application features (portfolio, scans, action plans, AI). Role-based restrictions only apply to the admin <code>/admin/users</code> page and the underlying user management API endpoints.</div>
+
+<h2>3. Login</h2>
+<p><strong>Page:</strong> <code>/login</code></p>
+<ol>
+  <li>User enters their email address and password, then clicks <strong>Sign In</strong>.</li>
+  <li>Frontend sends <code>POST /api/v1/auth/login</code> with <code>{ "email": "...", "password": "..." }</code>.</li>
+  <li>Backend validates credentials against the hashed password in the database.</li>
+  <li>On success: the response contains <code>accessToken</code>, <code>refreshToken</code>, and the user profile object. These are stored in the Zustand auth store (persisted to <code>sessionStorage</code>).</li>
+  <li>Browser navigates to <code>/dashboard</code>.</li>
+  <li>On failure: the error message "Invalid credentials. Please try again." is displayed below the form.</li>
+</ol>
+<p><strong>Token lifetimes:</strong></p>
+<ul>
+  <li>Access token: <strong>30 minutes</strong> — configurable via <code>ACCESS_TOKEN_EXPIRE_MINUTES</code> in <code>backend/.env</code></li>
+  <li>Refresh token: <strong>7 days</strong> — configurable via <code>REFRESH_TOKEN_EXPIRE_DAYS</code> in <code>backend/.env</code></li>
+</ul>
+
+<h2>4. Silent token refresh</h2>
+<p>When any API call returns a <strong>401 Unauthorized</strong> response, the Axios interceptor in <code>frontend/src/services/api.ts</code> automatically handles the refresh:</p>
+<ol>
+  <li>The interceptor catches the 401 response and checks that it hasn't already retried this request (using the <code>_retry</code> flag).</li>
+  <li>It sends <code>POST /api/v1/auth/refresh</code> with the stored <code>refreshToken</code> in the request body.</li>
+  <li>On success: the response returns new <code>accessToken</code> and <code>refreshToken</code>. These are stored and the original request is retried with the new access token.</li>
+  <li>On failure (refresh token expired or revoked): <code>clearAuth()</code> is called to remove all stored tokens, and the browser redirects to <code>/login</code>.</li>
+</ol>
+<p>The entire refresh-and-retry cycle is invisible to the user. They see no interruption or error message.</p>
+
+<h2>5. Logout</h2>
+<ol>
+  <li>User clicks the <strong>Logout</strong> button at the bottom of the sidebar.</li>
+  <li>Frontend calls <code>POST /api/v1/auth/logout</code> with the current <code>Authorization: Bearer</code> header.</li>
+  <li>Backend extracts the token's JTI (JWT ID) and stores it in Redis with a TTL equal to the token's remaining lifetime. Any subsequent request using this token will be rejected with 401 even before it expires naturally.</li>
+  <li>Frontend calls <code>clearAuth()</code> which removes all tokens and user data from Zustand and <code>sessionStorage</code>.</li>
+  <li>Browser redirects to <code>/login</code>.</li>
+</ol>
+<div class="callout tip">Tokens also expire naturally when the browser tab is closed because they are stored in <code>sessionStorage</code>, which is cleared by the browser on tab close.</div>
+
+<h2>6. Forgot password</h2>
+<p><strong>Page:</strong> <code>/forgot-password</code></p>
+<ol>
+  <li>User enters their email address and clicks <strong>Send Reset Link</strong>.</li>
+  <li>Frontend calls <code>POST /api/v1/auth/forgot-password</code> with <code>{ "email": "..." }</code>.</li>
+  <li>Backend generates a UUID reset token and stores it in Redis with a 1-hour TTL, keyed to the user's UUID.</li>
+  <li>The API response includes <code>{ "reset_token": "uuid" }</code> directly in the response body (development mode). This token must be copied from the browser's developer tools Network tab and appended to the reset URL.</li>
+</ol>
+<div class="callout warn">Email delivery of password reset links is not yet implemented. The reset token is returned in the API response body as a development convenience. In production, the token should be emailed to the user and the <code>reset_token</code> field removed from the response.</div>
+
+<h2>7. Password reset</h2>
+<p><strong>Page:</strong> <code>/reset-password?token=&lt;token&gt;</code></p>
+<ol>
+  <li>The URL must include the <code>?token=</code> query parameter obtained from the forgot-password API response.</li>
+  <li>User enters a new password (minimum 8 characters) in the password and confirm-password fields.</li>
+  <li>Frontend calls <code>POST /api/v1/auth/reset-password</code> with <code>{ "token": "...", "new_password": "..." }</code>.</li>
+  <li>Backend looks up the token in Redis. If found, it retrieves the associated user UUID, hashes the new password, and updates the database.</li>
+  <li>On success: Redis deletes the token (preventing reuse) and the browser navigates to <code>/login</code> with a success message.</li>
+  <li>On failure (token not found or expired): an error message is shown on the page. The user must restart the forgot-password flow.</li>
+</ol>
+
+<h2>8. First-run admin seeding</h2>
+<p>When the backend container starts for the first time, if <code>ADMIN_EMAIL</code> and <code>ADMIN_PASSWORD</code> are set in the environment, a default admin account is automatically created:</p>
+<pre><code>INSERT INTO users (id, email, name, hashed_password, role, is_active)
+VALUES (uuid_generate_v4(), :email, :name, :bcrypt_hash, 'admin', true)
+ON CONFLICT (email) DO NOTHING;</code></pre>
+<p>The <code>ON CONFLICT DO NOTHING</code> clause makes this operation idempotent — it is safe to run on every startup (and on all 4 Uvicorn workers simultaneously). If an account with the given email already exists, the statement does nothing and no error is raised.</p>
+<div class="callout tip">After first login, change the admin password via Settings → Change Password. The initial password set in <code>.env</code> is retained in that file and should be replaced with a strong password.</div>
+
+<h2>9. Protected routes (frontend)</h2>
+<p>The dashboard layout component (<code>frontend/src/app/(dashboard)/layout.tsx</code>) checks for auth state on every mount. If no valid auth state is found in the Zustand store, it immediately redirects to <code>/login</code>. This provides a first-line client-side guard.</p>
+<p>The backend provides a second, authoritative layer of enforcement on every request via the <code>get_current_user</code> FastAPI dependency. Even if someone bypasses the client-side redirect, every API call will be rejected with 401 if the token is missing, invalid, or expired.</p>
+<p>Role-based visibility in the sidebar hides the admin-only items from non-admin users:</p>
+<pre><code>// Sidebar.tsx — filter admin-only items based on current user role
+SETTINGS_SUB.filter(item => !item.adminOnly || user?.role === 'admin')</code></pre>
+<p>This is a UI convenience only. The backend enforces role requirements independently via the <code>require_admin</code> dependency on all admin endpoints.</p>
+</body>
+</html>

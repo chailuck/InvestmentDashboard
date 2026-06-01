@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings &amp; Admin — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Settings &amp; Admin — Functional Specification</h1>
+
+<h2>1. Settings — My Profile (<code>/settings</code>)</h2>
+<p>The Settings page is available to all authenticated users. It is divided into three sections: Profile, Change Password, and App Configuration.</p>
+
+<h3>1.1 Profile section</h3>
+<table>
+  <thead><tr><th>Field</th><th>Editable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Name</strong></td><td>Yes</td><td>Saved via <code>PUT /api/v1/users/me</code>; displayed in the sidebar and admin user table</td></tr>
+    <tr><td><strong>Email</strong></td><td>No</td><td>Read-only; shown for reference. Contact an admin to change email.</td></tr>
+    <tr><td><strong>Role</strong></td><td>No</td><td>Read-only badge (<span class="badge red">Admin</span> / <span class="badge blue">Analyst</span> / <span class="badge yellow">Viewer</span>); assigned by admin only</td></tr>
+  </tbody>
+</table>
+
+<h3>1.2 Change password</h3>
+<p>Three input fields: Current Password, New Password (minimum 8 characters), and Confirm New Password. Saved via <code>PUT /api/v1/users/me/password</code>. The backend verifies the current password before accepting the change. If the current password is incorrect, a 400 error is returned and displayed below the form.</p>
+
+<h3>1.3 App configuration (all users)</h3>
+<p>Controls the file paths used by the portfolio tracker. These settings are stored in <code>/app/uploads/app_config.json</code> inside the container and take precedence over environment variable defaults.</p>
+<table>
+  <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Source File Path</strong></td><td><code>/app/investment_data/Investment tracking.xlsx</code></td><td>Full container path to the read-only Excel source file. This is mapped from the host via the Docker volume mount.</td></tr>
+    <tr><td><strong>Working Copy Path</strong></td><td><code>/app/uploads/investment_tracking.xlsx</code></td><td>Full container path where the writable working copy is stored. This path must be inside a writable volume.</td></tr>
+  </tbody>
+</table>
+<ul>
+  <li><strong>Test button</strong> — verifies the source path is readable within the container; shows the file size on success, or an error message if the path does not exist or is not readable</li>
+  <li>Changes take effect immediately for all subsequent portfolio reads (no restart required)</li>
+</ul>
+<div class="callout warn">Paths entered here are <strong>container-internal paths</strong>. The host directory is mapped via the Docker volume mount in <code>docker-compose.yml</code>. If you need to change the host-side directory, update the volume mount and restart the container — do not change the source path here unless you have updated the volume mount first.</div>
+
+<h2>2. Admin — User Management (<code>/admin/users</code>)</h2>
+<p>Visible in the sidebar only for users with the <code>admin</code> role. All user management API endpoints are protected by <code>require_admin</code> on the backend — even if someone navigates directly to the URL, all API calls will return 403.</p>
+
+<h3>2.1 User list</h3>
+<table>
+  <thead><tr><th>Column</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>Name</td><td>User's display name</td></tr>
+    <tr><td>Email</td><td>Login email address</td></tr>
+    <tr><td>Role</td><td>Role badge: Admin / Analyst / Viewer</td></tr>
+    <tr><td>Status</td><td>Active (green check) or Disabled (grey)</td></tr>
+    <tr><td>Last Login</td><td>Date and time of last successful login; blank if never logged in</td></tr>
+    <tr><td>Actions</td><td>Edit pencil · Set Password key · Delete trash (with confirmation)</td></tr>
+  </tbody>
+</table>
+
+<h3>2.2 Create user</h3>
+<p>The <strong>+ Create User</strong> button at the top opens a modal with fields for Name, Email, Role (dropdown: admin / analyst / viewer), Password, and Confirm Password. The new user is created as active immediately. They can log in as soon as the admin saves the form.</p>
+
+<h3>2.3 Edit user</h3>
+<p>The Edit modal allows the admin to change the user's display name, role, and active status. Deactivating a user prevents login without deleting their data (action plans, weekly scans, etc.).</p>
+
+<h3>2.4 Set password</h3>
+<p>Allows the admin to force-set a user's password without knowing the current password. Useful for account recovery when a user has forgotten their password and the forgot-password email workflow is unavailable.</p>
+
+<h3>2.5 Self-protection rules</h3>
+<p>To prevent admins from accidentally locking themselves out:</p>
+<ul>
+  <li>An admin cannot change their own role (the role field is disabled in the Edit modal for the current user)</li>
+  <li>An admin cannot deactivate their own account (the active toggle is disabled)</li>
+  <li>An admin cannot delete themselves (the Delete button is hidden for the current user row)</li>
+  <li>These restrictions are enforced both in the UI and on the backend (the delete endpoint returns 400 if <code>user_id == current_user.id</code>)</li>
+</ul>
+
+<h2>3. Documents (<code>/settings/documents</code>)</h2>
+<p>An in-app documentation browser accessible to all authenticated users. The documentation content is read from the <code>./docs</code> directory, which is mounted read-only into the backend container.</p>
+
+<h3>3.1 Tree navigation</h3>
+<p>A left sidebar shows the documentation tree loaded from <code>GET /api/v1/docs-content/manifest</code>. The manifest is a JSON file (<code>docs/manifest.json</code>) describing the tree structure of sections and pages. Groups expand and collapse. Clicking a leaf node loads that document. The first leaf is auto-selected on page load.</p>
+
+<h3>3.2 Content view</h3>
+<p>The selected document is rendered as formatted Markdown using <code>react-markdown</code> with the <code>remark-gfm</code> plugin (for tables, strikethrough, and task lists). Code blocks get syntax highlighting. The rendered content matches the styling of the rest of the application.</p>
+
+<h3>3.3 Export options</h3>
+<p>Four export buttons provide different ways to save the documentation for offline access or sharing:</p>
+<table>
+  <thead><tr><th>Button</th><th>Output</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>Export MD</td><td><code>.md</code> file</td><td>Downloads the current page's raw Markdown source</td></tr>
+    <tr><td>Export HTML</td><td><code>.html</code> file</td><td>Downloads the current page as a self-contained HTML file with inline styles</td></tr>
+    <tr><td>Export All (MD)</td><td>Single <code>.md</code> file</td><td>Fetches every document in the manifest, concatenates with section headers, downloads as one file</td></tr>
+    <tr><td>Export All (HTML)</td><td>Single <code>.html</code> file</td><td>Same but wrapped in a styled HTML template with CDN-rendered Markdown</td></tr>
+  </tbody>
+</table>
+<div class="callout tip">The HTML export files use CDN resources (<code>marked.js</code> and <code>github-markdown-css</code>) so they render correctly when opened in any browser without a web server — useful for sharing documentation with people who don't have access to the application.</div>
+</body>
+</html>

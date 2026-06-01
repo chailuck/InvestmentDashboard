@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>API Design</h1>
+
+<h2>1. Conventions</h2>
+<ul>
+  <li><strong>Base path:</strong> <code>/api/v1/</code></li>
+  <li><strong>Format:</strong> JSON only (<code>Content-Type: application/json</code>)</li>
+  <li><strong>Auth:</strong> <code>Authorization: Bearer &lt;accessToken&gt;</code> on all endpoints except auth and health</li>
+  <li><strong>Error format:</strong> <code>{ "detail": "human-readable message" }</code> — matches FastAPI's default error model</li>
+  <li><strong>Partial updates:</strong> PUT endpoints that accept optional fields use Pydantic <code>exclude_unset=True</code> so only provided fields are written</li>
+</ul>
+
+<h3>HTTP status codes</h3>
+<table>
+  <thead><tr><th>Code</th><th>Meaning</th><th>Common cause</th></tr></thead>
+  <tbody>
+    <tr><td><code>200</code></td><td>OK</td><td>GET, PUT, POST list/detail operations</td></tr>
+    <tr><td><code>201</code></td><td>Created</td><td>POST that creates a new resource</td></tr>
+    <tr><td><code>204</code></td><td>No content</td><td>DELETE operations</td></tr>
+    <tr><td><code>400</code></td><td>Bad request</td><td>Business logic validation (e.g. delete yourself)</td></tr>
+    <tr><td><code>401</code></td><td>Unauthorized</td><td>Missing or invalid Bearer token; blacklisted token</td></tr>
+    <tr><td><code>403</code></td><td>Forbidden</td><td>Insufficient role (e.g. non-admin hitting admin endpoint)</td></tr>
+    <tr><td><code>404</code></td><td>Not found</td><td>Resource UUID does not exist</td></tr>
+    <tr><td><code>409</code></td><td>Conflict</td><td>Duplicate symbol in a scan</td></tr>
+    <tr><td><code>422</code></td><td>Unprocessable entity</td><td>Pydantic validation failure (wrong field type, missing required field)</td></tr>
+    <tr><td><code>500</code></td><td>Internal server error</td><td>Unhandled exception; check backend logs</td></tr>
+    <tr><td><code>503</code></td><td>Service unavailable</td><td>Excel source file not found or unreadable</td></tr>
+  </tbody>
+</table>
+
+<h2>2. All endpoints</h2>
+
+<h3>Health</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/health/live</code></td><td>None</td><td>Liveness probe — returns <code>{"status":"ok"}</code> when Uvicorn is up</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/health/ready</code></td><td>None</td><td>Readiness probe — checks DB and Redis connectivity</td></tr>
+  </tbody>
+</table>
+
+<h3>Authentication</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>POST</td><td><code>/api/v1/auth/login</code></td><td>None</td><td>Email + password login; returns accessToken, refreshToken, user</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/auth/refresh</code></td><td>None</td><td>Rotate access token using a valid refresh token</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/auth/logout</code></td><td>Bearer</td><td>Blacklists the current access token JTI in Redis</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/auth/forgot-password</code></td><td>None</td><td>Generates reset token (dev: returns in response body)</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/auth/reset-password</code></td><td>None</td><td>Set new password using the reset token</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/auth/me</code></td><td>Bearer</td><td>Returns the current user's profile object</td></tr>
+  </tbody>
+</table>
+
+<h3>Users (Admin)</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/users</code></td><td>Admin</td><td>List all users</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/users</code></td><td>Admin</td><td>Create a new user with role and password</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/users/{id}</code></td><td>Admin</td><td>Get a user by UUID</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/users/{id}</code></td><td>Admin</td><td>Update name, role, or is_active</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/users/{id}</code></td><td>Admin</td><td>Hard delete (blocked if target is self)</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/users/{id}/password</code></td><td>Admin</td><td>Force-set a user's password without requiring the old one</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/users/me</code></td><td>Bearer</td><td>Update own display name</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/users/me/password</code></td><td>Bearer</td><td>Change own password (requires current password verification)</td></tr>
+  </tbody>
+</table>
+
+<h3>Portfolio tracker</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>POST</td><td><code>/api/v1/portfolio-tracker/refresh</code></td><td>Copy source Excel to working copy, write .cache_bust</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-tracker/raw-data</code></td><td>All raw rows from the Excel file as-is</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-tracker/positions</code></td><td>Filtered positions with live P&amp;L — params: <code>status</code>, <code>from_date</code>, <code>to_date</code></td></tr>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-tracker/performance</code></td><td>Daily/weekly/monthly P&amp;L chart data — param: <code>period</code></td></tr>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-tracker/performance/by-date</code></td><td>Grouped P&amp;L table by period bucket</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-tracker/performance/transactions</code></td><td>Individual trades for a specific period (drill-down)</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-tracker/performance/by-stock</code></td><td>P&amp;L aggregated per ticker symbol</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-tracker/market/set-indices</code></td><td>Thai SET market indices (SET, SET50, SET100, MAI, sSET)</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-tracker/market/global-indices</code></td><td>Global indices (S&amp;P500, NASDAQ, DOW, BTC, Gold)</td></tr>
+  </tbody>
+</table>
+
+<h3>Action plans</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/action-plans/suggest-name</code></td><td>Returns a unique plan name for today (YYYY-MM-DD with suffix)</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/action-plans/stock-price</code></td><td>Live price for a symbol via yfinance — param: <code>symbol</code></td></tr>
+    <tr><td>GET</td><td><code>/api/v1/action-plans</code></td><td>List plans — params: <code>plan_type</code>, <code>months</code></td></tr>
+    <tr><td>POST</td><td><code>/api/v1/action-plans</code></td><td>Create an empty plan header</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/action-plans/{id}</code></td><td>Fetch plan header and all items</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/action-plans/{id}</code></td><td>Replace name and all items (delete-all + bulk insert)</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/action-plans/{id}</code></td><td>Hard delete plan and all items</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/action-plans/{id}/duplicate</code></td><td>Copy plan with a new name — param: <code>new_name</code></td></tr>
+  </tbody>
+</table>
+
+<h3>AI Copilot</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>POST</td><td><code>/api/v1/ai/copilot/stream</code></td><td>SSE streaming chat — body: <code>{message, session_id}</code></td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/ai/copilot/session/{id}</code></td><td>Clear conversation history for a session</td></tr>
+  </tbody>
+</table>
+
+<h3>App configuration</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/app-config</code></td><td>Get current Excel path configuration</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/app-config</code></td><td>Save Excel paths to app_config.json</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/app-config/test-path</code></td><td>Test if a container path exists and is readable</td></tr>
+  </tbody>
+</table>
+
+<h3>Weekly scan</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/weekly-scan/symbol-lists</code></td><td>List all symbol lists for the current user</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/weekly-scan/symbol-lists</code></td><td>Create a new named symbol list</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/weekly-scan/symbol-lists/{list_id}</code></td><td>Update name, market, symbols, or sort_order</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/weekly-scan/symbol-lists/{list_id}</code></td><td>Delete a symbol list</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/weekly-scan/config</code></td><td>Get legacy single-list config (auto-seeds SET50 defaults)</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/weekly-scan/config</code></td><td>Replace legacy symbol list</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/weekly-scan/suggest-name</code></td><td>Suggested scan name for next/last Saturday</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/weekly-scan/scans</code></td><td>List all scans (newest first) with colour counts</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/weekly-scan/scans</code></td><td>Create scan and populate from current symbol lists</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/weekly-scan/scans/{scan_id}</code></td><td>Fetch scan header + all items + colour counts</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/weekly-scan/scans/{scan_id}</code></td><td>Hard-delete scan and all items</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/weekly-scan/scans/{scan_id}/refresh</code></td><td>Merge current symbol lists into existing scan (upsert)</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/weekly-scan/scans/{scan_id}/items</code></td><td>Add a single symbol to a scan (409 if duplicate)</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/weekly-scan/scans/{scan_id}/items/{symbol}</code></td><td>Upsert evaluation fields for one symbol (partial update)</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/weekly-scan/scans/{scan_id}/items/{symbol}</code></td><td>Remove a symbol from a scan</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/weekly-scan/scans/{scan_id}/week-prices</code></td><td>Monday open + Friday close for all symbols in the scan</td></tr>
+  </tbody>
+</table>
+
+<h3>Documentation</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/docs-content/manifest</code></td><td>Documentation tree manifest (JSON)</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/docs-content/file?path=</code></td><td>Serve a markdown file by relative path</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/docs-content/{name}</code></td><td>Legacy named document endpoint</td></tr>
+  </tbody>
+</table>
+
+<h2>3. Request / response examples</h2>
+
+<h3>Login</h3>
+<pre><code>POST /api/v1/auth/login
+Content-Type: application/json
+
+{ "email": "admin@example.com", "password": "ChangeMe123!" }</code></pre>
+<pre><code>{
+  "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+  "refreshToken": "eyJhbGciOiJIUzI1NiJ9...",
+  "user": {
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "email": "admin@example.com",
+    "name": "Admin",
+    "role": "admin"
+  }
+}</code></pre>
+
+<h3>Get portfolio positions</h3>
+<pre><code>GET /api/v1/portfolio-tracker/positions?status=active&from_date=2026-01-01&to_date=2026-05-30
+Authorization: Bearer eyJ...</code></pre>
+<pre><code>{
+  "positions": [
+    {
+      "id": 1,
+      "symbol": "GULF",
+      "direction": "Long",
+      "entryDate": "2026-02-10",
+      "entryPrice": 57.5,
+      "currentPrice": 64.0,
+      "positionSize": 200,
+      "netPnl": 1300.0,
+      "pnlPct": 11.30,
+      "sl": 52.0,
+      "tp": 72.0,
+      "status": "active"
+    }
+  ],
+  "total": 1,
+  "totalNetPnl": 1300.0
+}</code></pre>
+
+<h3>Create a weekly scan</h3>
+<pre><code>POST /api/v1/weekly-scan/scans
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{ "name": "WEEKLY_SCAN_07_06_2026" }</code></pre>
+<pre><code>{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "name": "WEEKLY_SCAN_07_06_2026",
+  "created_at": "2026-06-01T08:00:00+07:00"
+}</code></pre>
+
+<h3>Get a scan with items</h3>
+<pre><code>GET /api/v1/weekly-scan/scans/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Authorization: Bearer eyJ...</code></pre>
+<pre><code>{
+  "id": "a1b2c3d4-...",
+  "name": "WEEKLY_SCAN_07_06_2026",
+  "created_at": "2026-06-01T08:00:00+07:00",
+  "updated_at": "2026-06-01T09:15:00+07:00",
+  "color_counts": {
+    "CYAN": 3, "GREEN": 8, "YELLOW": 5,
+    "RED": 12, "PURPLE": 4, "NONE": 18
+  },
+  "items": [
+    {
+      "id": "item-uuid",
+      "symbol": "GULF",
+      "sort_order": 0,
+      "list_name": "SET50",
+      "market": "SET",
+      "color_mark": "GREEN",
+      "strategy": "BREAK OUT",
+      "buy_price": 64.0,
+      "size": 200,
+      "tp": 72.0,
+      "sl": 60.0,
+      "remark": "Breakout from 3-month consolidation",
+      "updated_at": "2026-06-01T09:15:00+07:00"
+    }
+  ]
+}</code></pre>
+
+<h3>Update a scan item (partial update)</h3>
+<pre><code>PUT /api/v1/weekly-scan/scans/a1b2c3d4-.../items/GULF
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "color_mark": "CYAN",
+  "strategy": "BREAK OUT",
+  "buy_price": 64.5,
+  "tp": 75.0,
+  "sl": 60.0
+}</code></pre>
+<p>Only provided fields are updated. Fields not included in the request body are left unchanged (Pydantic <code>exclude_unset=True</code>).</p>
+
+<h3>Get week prices for a scan</h3>
+<pre><code>GET /api/v1/weekly-scan/scans/a1b2c3d4-.../week-prices
+Authorization: Bearer eyJ...</code></pre>
+<pre><code>{
+  "mon_date": "2026-06-02",
+  "fri_date": "2026-06-06",
+  "prices": {
+    "GULF":   { "mon": 63.50, "fri": 65.25 },
+    "KBANK":  { "mon": 145.00, "fri": 143.50 },
+    "ADVANC": { "mon": null, "fri": null }
+  }
+}</code></pre>
+<p>A <code>null</code> value means Yahoo Finance returned no data for that symbol and date — no error is raised.</p>
+
+<h2>4. CORS configuration</h2>
+<p>Since all browser requests go through the Next.js proxy (same-origin), the backend uses wildcard CORS. Wildcard with <code>allow_credentials=True</code> is rejected by browsers, so the implementation uses <code>allow_origin_regex</code> instead:</p>
+<pre><code>wildcard = settings.cors_origins == ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=r".*" if wildcard else None,
+    allow_credentials=not wildcard,    # False when wildcard, True for explicit origins
+    allow_methods=["*"],
+    allow_headers=["*"],
+)</code></pre>
+
+<h2>5. Middleware stack</h2>
+<p>Applied in reverse registration order (last registered runs first on the request path):</p>
+<ol>
+  <li><strong>CORSMiddleware</strong> — outermost; handles preflight OPTIONS requests before any auth processing</li>
+  <li><strong>SlowAPIMiddleware</strong> — rate limiting; default <code>200/minute</code> per IP; auth endpoints use <code>5/minute</code></li>
+  <li><strong>RequestIdMiddleware</strong> — injects <code>X-Request-ID</code> UUID (propagates incoming header if present)</li>
+  <li><strong>SecurityHeadersMiddleware</strong> — innermost; adds security response headers</li>
+</ol>
+
+<h3>Security response headers</h3>
+<table>
+  <thead><tr><th>Header</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td><code>X-Content-Type-Options</code></td><td><code>nosniff</code></td></tr>
+    <tr><td><code>X-Frame-Options</code></td><td><code>DENY</code></td></tr>
+    <tr><td><code>X-XSS-Protection</code></td><td><code>1; mode=block</code></td></tr>
+    <tr><td><code>Referrer-Policy</code></td><td><code>strict-origin-when-cross-origin</code></td></tr>
+    <tr><td><code>Permissions-Policy</code></td><td><code>camera=(), microphone=(), geolocation=()</code></td></tr>
+    <tr><td><code>Content-Security-Policy</code></td><td><code>default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'</code></td></tr>
+    <tr><td><code>Strict-Transport-Security</code></td><td><code>max-age=31536000; includeSubDomains</code></td></tr>
+  </tbody>
+</table>
+<div class="callout">The CSP is maximally restrictive because the backend serves only JSON. Both <code>frame-ancestors 'none'</code> (CSP) and <code>X-Frame-Options: DENY</code> are set for compatibility with browsers that support only one of them.</div>
+
+<h2>6. Metrics</h2>
+<p>Prometheus metrics are exposed at <code>/metrics</code> when <code>METRICS_ENABLED=true</code> is set in the environment. Instrumented by <code>prometheus-fastapi-instrumentator</code>:</p>
+<ul>
+  <li>Request count by method, path, and status code</li>
+  <li>Request duration histogram (p50, p95, p99)</li>
+  <li>In-flight request count</li>
+  <li>Health endpoints (<code>/api/v1/health/*</code>) are excluded from metrics to avoid noise</li>
+</ul>
+</body>
+</html>

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings &amp; Admin — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Settings &amp; Admin — Technical Design</h1>
+
+<h2>1. App configuration</h2>
+
+<h3>Storage</h3>
+<p>Configuration is persisted to <code>/app/uploads/app_config.json</code> inside the backend container. This path is in the <code>uploads_data</code> named Docker volume, which is persistent across container restarts.</p>
+<pre><code>{
+  "excel_source_path": "/app/investment_data/Investment tracking.xlsx",
+  "excel_working_path": "/app/uploads/investment_tracking.xlsx"
+}</code></pre>
+<p><strong>File:</strong> <code>backend/app/services/app_config_service.py</code></p>
+<pre><code>CONFIG_PATH = Path("/app/uploads/app_config.json")
+
+def get_app_config() -> dict:
+    if CONFIG_PATH.exists():
+        return json.loads(CONFIG_PATH.read_text())
+    return {}   # fallback: use environment variable defaults
+
+def save_app_config(data: dict) -> None:
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(json.dumps(data, indent=2))</code></pre>
+
+<h3>Endpoints</h3>
+<p><strong>File:</strong> <code>backend/app/api/v1/endpoints/app_config.py</code></p>
+<pre><code>@router.get("/app-config")
+async def get_config(_: UserId) -> dict:
+    cfg = get_app_config()
+    # Merges stored config with environment variable defaults
+    return {
+        "excel_source_path": cfg.get("excel_source_path", settings.investment_excel_source_path),
+        "excel_working_path": cfg.get("excel_working_path", settings.investment_excel_path),
+    }
+
+@router.put("/app-config")
+async def save_config(body: AppConfigUpdate, _: UserId) -> dict:
+    cfg = get_app_config()
+    if body.excel_source_path is not None:
+        cfg["excel_source_path"] = body.excel_source_path
+    if body.excel_working_path is not None:
+        cfg["excel_working_path"] = body.excel_working_path
+    save_app_config(cfg)
+    return {"status": "ok"}
+
+@router.post("/app-config/test-path")
+async def test_path(body: TestPathRequest, _: UserId) -> dict:
+    p = Path(body.path)
+    return {
+        "exists": p.exists(),
+        "readable": p.is_file() and os.access(p, os.R_OK),
+        "size_kb": round(p.stat().st_size / 1024, 1) if p.exists() else None,
+    }</code></pre>
+<div class="callout">App configuration is accessible to <strong>all authenticated users</strong>, not just admins. This was a deliberate change from an earlier version where it was admin-gated, to allow any user to configure their own Excel source path if they have multiple data sources.</div>
+
+<h2>2. User management</h2>
+<p><strong>File:</strong> <code>backend/app/api/v1/endpoints/users.py</code></p>
+<p>All user management endpoints are protected by the <code>require_admin</code> FastAPI dependency.</p>
+<pre><code># List all users
+GET  /api/v1/users                  → paginated list with last_login_at
+
+# Create user
+POST /api/v1/users                  → validates unique email; hashes password; returns 201
+
+# Get / update / delete single user
+GET    /api/v1/users/{id}
+PUT    /api/v1/users/{id}           → update name, role, is_active
+DELETE /api/v1/users/{id}           → hard delete (blocks self-delete)
+
+# Password management
+PUT  /api/v1/users/{id}/password    → admin force-set (no current password required)
+PUT  /api/v1/users/me               → update own name (any authenticated user)
+PUT  /api/v1/users/me/password      → change own password (requires current password)</code></pre>
+
+<h3>Self-protection at the backend level</h3>
+<pre><code>@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: uuid.UUID,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    if user_id == current_user.id:
+        raise HTTPException(400, "Cannot delete your own account")
+    # Proceed with deletion
+    ...</code></pre>
+<p>The same guard applies to role changes and deactivation — backend-level protection is independent of the UI guards and cannot be bypassed via direct API calls.</p>
+
+<h2>3. Documentation system</h2>
+
+<h3>Backend</h3>
+<p><strong>File:</strong> <code>backend/app/api/v1/endpoints/docs_content.py</code></p>
+<p>Serves markdown files from <code>/app/docs/</code> (mounted read-only from <code>./docs</code> on the host). Path traversal is blocked by resolving the target path and verifying it starts with the docs directory.</p>
+<pre><code>DOCS_DIR = Path("/app/docs")
+
+@router.get("/manifest")
+async def get_manifest(_: UserId) -> dict:
+    manifest_path = DOCS_DIR / "manifest.json"
+    if manifest_path.exists():
+        return json.loads(manifest_path.read_text())
+    return _DEFAULT_MANIFEST    # fallback if manifest.json is missing
+
+@router.get("/file")
+async def get_file(_: UserId, path: str = Query(...)) -> dict:
+    target = (DOCS_DIR / path).resolve()
+    # Block path traversal (e.g. ../../etc/passwd)
+    if not str(target).startswith(str(DOCS_DIR.resolve())):
+        raise HTTPException(403, "Access denied")
+    if not target.exists():
+        raise HTTPException(404, "File not found")
+    return {"path": path, "content": target.read_text(encoding="utf-8")}</code></pre>
+
+<h3>Frontend</h3>
+<p><strong>File:</strong> <code>frontend/src/app/(dashboard)/settings/documents/page.tsx</code></p>
+<pre><code>// Tree navigation components
+function TreeNode({ node, depth, onSelect, selected }) {
+  if (node.type === 'file') {
+    return &lt;button onClick={() =&gt; onSelect(node.path)}&gt;{node.label}&lt;/button&gt;
+  }
+  // Group node — collapsible accordion
+  return (
+    &lt;div&gt;
+      &lt;button onClick={toggle}&gt;{node.label}&lt;/button&gt;
+      {isOpen &amp;&amp; node.children.map(child =&gt; &lt;TreeNode key={child.path} node={child} /&gt;)}
+    &lt;/div&gt;
+  )
+}
+
+// Content is rendered with react-markdown + remark-gfm
+&lt;ReactMarkdown
+  remarkPlugins={[remarkGfm]}
+  components={{
+    code({ className, children }) {
+      // Syntax highlighting for code blocks
+      const language = /language-(\w+)/.exec(className || '')?.[1]
+      return &lt;SyntaxHighlighter language={language}&gt;{children}&lt;/SyntaxHighlighter&gt;
+    }
+  }}
+&gt;
+  {content}
+&lt;/ReactMarkdown&gt;</code></pre>
+
+<h3>Export logic</h3>
+<pre><code>// Single page MD download
+function exportCurrentMd(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'text/markdown' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${filename}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// All pages combined MD download
+async function exportAllMd(manifest: ManifestNode[], fetchFn: Function) {
+  const leaves = collectLeaves(manifest)    // flatten tree to leaf nodes
+  const sections = await Promise.all(
+    leaves.map(leaf =&gt; fetchFn(leaf.path).then(r =&gt; ({ label: leaf.label, content: r.content })))
+  )
+  const combined = sections
+    .map(s =&gt; `# ${s.label}\n\n${s.content}`)
+    .join('\n\n---\n\n')
+  downloadBlob(combined, 'InvestPro-Documentation.md', 'text/markdown')
+}
+
+// HTML wrapper template for standalone HTML export
+function wrapHtml(title: string, body: string): string {
+  return `&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt;
+&lt;head&gt;
+  &lt;meta charset="UTF-8"&gt;
+  &lt;title&gt;${title} — InvestPro Docs&lt;/title&gt;
+  &lt;link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-dark.min.css"&gt;
+  &lt;style&gt;
+    body { background: #0d1117; padding: 2rem }
+    .markdown-body {
+      max-width: 900px; margin: 0 auto;
+      background: #161b22; padding: 2rem; border-radius: 8px
+    }
+  &lt;/style&gt;
+&lt;/head&gt;
+&lt;body class="markdown-body"&gt;${body}&lt;/body&gt;
+&lt;/html&gt;`
+}</code></pre>
+</body>
+</html>

@@ -3,10 +3,13 @@ import { persist } from 'zustand/middleware'
 import type { WidgetConfig } from '@/types'
 
 const DEFAULT_WIDGETS: WidgetConfig[] = [
-  { id: 'portfolio-summary', type: 'portfolio_summary', title: 'Portfolio Summary', x: 0, y: 0, w: 12, h: 3, minW: 6, minH: 2 },
-  { id: 'portfolio-chart',   type: 'portfolio_chart',   title: 'Performance',       x: 0, y: 3, w: 8,  h: 5, minW: 4, minH: 3 },
-  { id: 'allocation',        type: 'allocation_chart',  title: 'Allocation',        x: 8, y: 3, w: 4,  h: 5, minW: 3, minH: 3 },
-  { id: 'holdings',          type: 'holdings_table',    title: 'Holdings',          x: 0, y: 8, w: 12, h: 6, minW: 4, minH: 4 },
+  { id: 'portfolio-summary', type: 'portfolio_summary', title: 'Portfolio Summary', x: 0, y: 0,  w: 12, h: 3, minW: 6, minH: 2 },
+  { id: 'portfolio-chart',   type: 'portfolio_chart',   title: 'Performance',       x: 0, y: 3,  w: 8,  h: 5, minW: 4, minH: 3 },
+  { id: 'allocation',        type: 'allocation_chart',  title: 'Allocation',        x: 8, y: 3,  w: 4,  h: 5, minW: 3, minH: 3 },
+  { id: 'holdings',          type: 'holdings_table',    title: 'Holdings',          x: 0, y: 8,  w: 12, h: 6, minW: 4, minH: 4 },
+  { id: 'market-pulse',      type: 'market_pulse',      title: 'Market Pulse',      x: 0, y: 14, w: 12, h: 2, minW: 6, minH: 2 },
+  { id: 'scan-heat-tile',    type: 'scan_heat_tile',    title: 'Scan Heat Tile',    x: 0, y: 16, w: 6,  h: 5, minW: 4, minH: 3 },
+  { id: 'pnl-waterfall',     type: 'pnl_waterfall',     title: 'P&L by Ticker',     x: 6, y: 16, w: 6,  h: 5, minW: 4, minH: 3 },
 ]
 
 interface DashboardState {
@@ -43,6 +46,6 @@ export const useDashboardStore = create<DashboardState>()(
 
       resetLayout: () => set({ widgets: DEFAULT_WIDGETS }),
     }),
-    { name: 'dashboard-layout-v3' }
+    { name: 'dashboard-layout-v4' }
   )
 )

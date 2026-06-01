@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weekly Scan — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Weekly Scan — Technical Design</h1>
+
+<h2>1. Files</h2>
+
+<h3>Backend</h3>
+<pre><code>backend/app/models/weekly_scan.py              — ORM models (4 classes)
+backend/app/api/v1/endpoints/weekly_scan.py    — FastAPI router (~608 lines)</code></pre>
+
+<h3>Frontend</h3>
+<pre><code>frontend/src/app/(dashboard)/weekly-scan/page.tsx                — scan index / list page
+frontend/src/app/(dashboard)/weekly-scan/[id]/page.tsx           — scan detail / table (~882 lines)
+frontend/src/app/(dashboard)/weekly-scan/[id]/evaluate/page.tsx  — evaluate / chart view (~523 lines)
+frontend/src/app/(dashboard)/weekly-scan/[id]/dashboard/page.tsx — scan summary dashboard (~460 lines)
+frontend/src/services/weeklyScan.ts                              — API service layer</code></pre>
+
+<h2>2. Database schema</h2>
+<p>Four tables — see the full DDL in the Database Schema documentation. Relationships:</p>
+<pre><code>users (1)
+  ├─── user_scan_configs (1)     [user_id → users.id  CASCADE]  — legacy
+  ├─── user_symbol_lists (N)     [user_id → users.id  CASCADE]
+  └─── weekly_scans (N)          [user_id → users.id  CASCADE]
+         └─── weekly_scan_items (N)  [scan_id → weekly_scans.id  CASCADE]</code></pre>
+
+<h2>3. Alembic migrations</h2>
+<p>The Weekly Scan module introduced Alembic to the project. All four weekly scan tables are created in the initial Alembic migration. The <code>env.py</code> uses the async engine pattern for SQLAlchemy 2.0:</p>
+<pre><code># backend/alembic/env.py
+from app.models import *    # imports all models to register them with Base.metadata
+target_metadata = Base.metadata
+
+# Run with:
+alembic upgrade head</code></pre>
+<p><code>create_all()</code> at startup is still present for development convenience (new tables created without a migration will be added automatically), but Alembic is the canonical migration path for production.</p>
+
+<h2>4. Backend API endpoints</h2>
+<p><strong>Router prefix:</strong> <code>/api/v1/weekly-scan</code> — all endpoints require Bearer token.</p>
+
+<h3>Scan creation logic</h3>
+<p>When <code>POST /scans</code> is called, the backend first checks for named symbol lists. If none exist, it falls back to the legacy <code>UserScanConfig</code> or the built-in SET50 defaults.</p>
+<pre><code># Priority 1: named symbol lists (current model)
+lists = await db.execute(
+    select(UserSymbolList)
+    .where(UserSymbolList.user_id == uid)
+    .order_by(UserSymbolList.sort_order)
+)
+if symbol_lists := lists.scalars().all():
+    for sl in symbol_lists:
+        for i, sym in enumerate(sl.symbols):
+            db.add(WeeklyScanItem(
+                scan_id=scan.id, symbol=sym,
+                list_name=sl.name, market=sl.market, sort_order=i
+            ))
+else:
+    # Priority 2: legacy UserScanConfig or SET50_DEFAULT
+    config = await db.scalar(select(UserScanConfig).where(UserScanConfig.user_id == uid))
+    symbols = config.symbols if config else SET50_DEFAULT
+    for i, sym in enumerate(symbols):
+        db.add(WeeklyScanItem(scan_id=scan.id, symbol=sym, sort_order=i))</code></pre>
+
+<h3>Partial item update</h3>
+<p>The <code>PUT .../items/{symbol}</code> endpoint uses Pydantic's <code>model_dump(exclude_unset=True)</code> to write only the fields that were explicitly included in the request body. This allows a single colour change without affecting buy price, TP, SL, etc.</p>
+<pre><code>@router.put("/scans/{scan_id}/items/{symbol}")
+async def update_item(scan_id, symbol, body: ItemEval, _: UserId, db):
+    item = await _get_item_or_404(scan_id, symbol, db)
+    for field, val in body.model_dump(exclude_unset=True).items():
+        setattr(item, field, val)
+    # Explicitly bump scan updated_at — SQLAlchemy onupdate does not
+    # fire when only child rows change
+    await db.execute(
+        text("UPDATE weekly_scans SET updated_at = now() WHERE id = :id"),
+        {"id": scan_id}
+    )
+    await db.commit()
+    return item</code></pre>
+
+<h2>5. Week prices — concurrency model</h2>
+<p>Week prices are fetched for all symbols in a scan concurrently using <code>asyncio.gather</code> with a semaphore to cap concurrent Yahoo Finance connections at 5.</p>
+<pre><code>@router.get("/scans/{scan_id}/week-prices")
+async def get_week_prices(scan_id: uuid.UUID, _: UserId, db: AsyncSession):
+    scan = await _get_scan_or_404(scan_id, db)
+    monday, friday = _parse_week_dates(scan.name)   # from WEEKLY_SCAN_DD_MM_YYYY
+    symbols = [item.symbol for item in scan.items]
+    sym_market = {item.symbol: item.market for item in scan.items}
+
+    loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(5)    # max 5 concurrent Yahoo Finance requests
+
+    async def _fetch(sym: str) -&gt; tuple[str, dict]:
+        async with sem:
+            result = await loop.run_in_executor(
+                None,
+                _fetch_sym_prices,      # synchronous yfinance call
+                sym, monday, friday, sym_market.get(sym, 'SET')
+            )
+        return sym, result
+
+    pairs = await asyncio.gather(*[_fetch(s) for s in symbols])
+    return {"mon_date": str(monday), "fri_date": str(friday), "prices": dict(pairs)}</code></pre>
+
+<h3>Ticker symbol translation</h3>
+<pre><code>def _sym_to_ticker(symbol: str, market: str = 'SET') -&gt; str:
+    sym = symbol.strip().upper()
+    # DR symbols and crypto (e.g. BTCUSD-DR, GC=F) — use as-is
+    if market == 'CRYPTO' or sym.endswith('-DR') or '=' in sym:
+        return sym
+    # HK: zero-pad symbol to 4 digits + .HK suffix
+    if market == 'HK':
+        return f"{sym.zfill(4)}.HK"
+    # US and OTHER: bare symbol, no suffix
+    if market in ('US', 'OTHER'):
+        return sym
+    # SET default: append .BK
+    return f"{sym}.BK"</code></pre>
+
+<h2>6. Frontend — scan detail page state</h2>
+<p>The scan detail page manages a rich set of local state alongside the TanStack Query server state.</p>
+<table>
+  <thead><tr><th>State variable</th><th>Type</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>activeListTab</code></td><td><code>string | null</code></td><td>Selected symbol list tab; auto-defaults to first tab on load</td></tr>
+    <tr><td><code>filterSymbol</code></td><td><code>string</code></td><td>Symbol text search filter</td></tr>
+    <tr><td><code>filterColors</code></td><td><code>Set&lt;string&gt;</code></td><td>Active colour filter (multi-select)</td></tr>
+    <tr><td><code>filterStrategy</code></td><td><code>string</code></td><td>Strategy text search filter</td></tr>
+    <tr><td><code>addToPlan</code></td><td><code>WeeklyScanItem | null</code></td><td>Controls Add-to-Plan modal; null = closed</td></tr>
+    <tr><td><code>deleteSymbol</code></td><td><code>string | null</code></td><td>Controls delete-confirm modal</td></tr>
+    <tr><td><code>analyticsSymbol</code></td><td><code>{symbol, market} | null</code></td><td>Controls Analytics modal with ECharts chart</td></tr>
+  </tbody>
+</table>
+
+<h3>Data fetching strategy</h3>
+<pre><code>// Scan data — stale after 30 s
+const { data: scan } = useQuery({
+  queryKey: ['weekly-scan', id],
+  queryFn: () =&gt; weeklyScanService.getScan(id),
+  staleTime: 30_000,
+})
+
+// Week prices — stale after 5 min; only fetches after scan data loads
+const { data: weekPrices } = useQuery({
+  queryKey: ['weekly-scan-prices', id],
+  queryFn: () =&gt; weeklyScanService.getWeekPrices(id),
+  staleTime: 5 * 60_000,
+  enabled: !!scan,    // prevents fetch before scan is loaded
+})</code></pre>
+
+<h3>Inline editing micro-components</h3>
+<p>Three micro-components handle inline editing across all table cells:</p>
+<ul>
+  <li><strong><code>NumCell</code></strong> — click to enter edit mode with <code>&lt;input type="number"&gt;</code>; blur or Enter commits; Escape cancels; empty string saves as <code>null</code></li>
+  <li><strong><code>TextCell</code></strong> — same pattern for free-text fields (remark, strategy free-text)</li>
+  <li><strong><code>ColorPicker</code></strong> — five coloured dot buttons; clicking an active dot deselects; clicking inactive activates</li>
+</ul>
+<p>Each change calls <code>updateField(symbol, {field: value})</code> which issues <code>PUT .../items/{symbol}</code> and then invalidates the <code>['weekly-scan', id]</code> query to refresh the table.</p>
+
+<h3>Portfolio auto-mark implementation</h3>
+<pre><code>const markPortfolioSymbols = async () =&gt; {
+  // Fetch live positions
+  const positions = await portfolioTrackerService.getPositions({ status: 'active' })
+  const activeSymbols = new Set(positions.map(p =&gt; p.symbol.toUpperCase()))
+
+  // Build strategy lookup from latest purchase plan (optional)
+  const allPlans = await actionPlanService.list('purchase', null)
+  let strategyMap: Record&lt;string, string&gt; = {}
+  if (allPlans.length &gt; 0) {
+    const latest = await actionPlanService.get(allPlans[0].id)
+    for (const item of latest.purchase_items ?? []) {
+      if (item.strategy) strategyMap[item.stock.toUpperCase()] = item.strategy
+    }
+  }
+
+  // Mark matching scan items as PURPLE in parallel
+  const toMark = scan.items.filter(i =&gt; activeSymbols.has(i.symbol.toUpperCase()))
+  await Promise.all(toMark.map(item =&gt;
+    weeklyScanService.upsertItem(id, item.symbol, {
+      color_mark: 'PURPLE',
+      strategy: strategyMap[item.symbol.toUpperCase()] ?? item.strategy ?? undefined,
+    })
+  ))
+  await queryClient.invalidateQueries({ queryKey: ['weekly-scan', id] })
+}</code></pre>
+
+<h2>7. Evaluate view — queue building</h2>
+<pre><code>function buildQueue(scan: WeeklyScan, mode: string, list: string | null): WeeklyScanItem[] {
+  let items = [...scan.items].sort((a, b) =&gt; a.symbol.localeCompare(b.symbol))
+
+  // Filter by list tab if not "All"
+  if (list) items = items.filter(i =&gt; i.list_name === list)
+
+  // Filter by mode
+  if (mode === 'remaining') return items.filter(i =&gt; !i.color_mark)
+  if (mode.startsWith('color_')) {
+    const color = mode.slice(6) as ColorMark
+    return items.filter(i =&gt; i.color_mark === color)
+  }
+  return items   // 'all' mode
+}</code></pre>
+<p>Mode and list are passed as URL search parameters (<code>?mode=remaining&amp;list=SET50</code>), allowing direct URL linking into a specific evaluation queue.</p>
+
+<h2>8. EChartsChart component — full technical specification</h2>
+<p><strong>File:</strong> <code>frontend/src/components/analytics/EChartsChart.tsx</code></p>
+<p>Replaced the previous chart library with a full-featured ECharts candlestick chart. Used in both the weekly scan evaluate view and the Analytics modal on the portfolio/dashboard pages.</p>
+
+<h3>Chart panels</h3>
+<table>
+  <thead><tr><th>Panel</th><th>Grid</th><th>Height</th><th>Content</th></tr></thead>
+  <tbody>
+    <tr><td>Price + VRVP</td><td>grid[0]</td><td>~60%</td><td>Candlestick OHLC bars + VRVP horizontal bar overlay</td></tr>
+    <tr><td>Volume</td><td>grid[1]</td><td>~15%</td><td>Volume bars — green for up-candles, red for down-candles</td></tr>
+    <tr><td>RSI(14)</td><td>grid[2]</td><td>~12%</td><td>RSI line + 70/30 overbought/oversold reference lines</td></tr>
+    <tr><td>Stochastic(14,3)</td><td>grid[3]</td><td>~13%</td><td>%K and %D lines + 80/20 reference lines</td></tr>
+  </tbody>
+</table>
+
+<h3>DataZoom implementation</h3>
+<p>The start position of the zoom window is computed so the visible area covers exactly the last N calendar days, regardless of how many candles are in the data (varies by interval and trading days):</p>
+<pre><code>function zoomStartForRange(dates: string[], days: number): number {
+  if (!dates.length || days &gt;= 912) return 0
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - days)
+  const cutoffStr = cutoff.toISOString().slice(0, 10)
+  const idx = dates.findIndex(d =&gt; d.slice(0, 10) &gt;= cutoffStr)
+  if (idx &lt;= 0) return 0
+  return (idx / dates.length) * 100   // percentage of the total x-axis
+}</code></pre>
+
+<h3>VRVP (Volume at Price)</h3>
+<p>Horizontal bar overlay on the price panel showing volume distribution across price levels. Bars are normalised to a maximum of 15% of the chart width:</p>
+<pre><code>// Build VRVP histogram
+const priceMin = Math.min(...lows)
+const priceMax = Math.max(...highs)
+const bucketSize = (priceMax - priceMin) / NUM_VRVP_BUCKETS    // e.g. 50 buckets
+const volumeByBucket = new Array(NUM_VRVP_BUCKETS).fill(0)
+
+for (let i = 0; i &lt; closes.length; i++) {
+  const bucket = Math.floor((closes[i] - priceMin) / bucketSize)
+  volumeByBucket[Math.min(bucket, NUM_VRVP_BUCKETS - 1)] += volumes[i]
+}
+
+const maxVol = Math.max(...volumeByBucket)
+const vrvpSeries = volumeByBucket.map((vol, i) =&gt; ({
+  value: [vol / maxVol * 15,    // width as % of chart (max 15%)
+          priceMin + i * bucketSize,
+          priceMin + (i + 1) * bucketSize],
+}))</code></pre>
+
+<h3>Custom tooltip</h3>
+<p>A single cross-hair tooltip shows OHLCV values for the candlestick, volume, RSI, and Stochastic %K/%D at the current cursor position. All four panels share the same <code>axisPointer</code> for synchronised highlighting.</p>
+
+<h2>9. Rate limiting</h2>
+<pre><code># backend/app/core/rate_limit.py
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["200/minute"],
+)</code></pre>
+<p>The <code>limiter</code> singleton is attached to <code>app.state.limiter</code> in <code>main.py</code>. <code>SlowAPIMiddleware</code> is registered as a middleware. Auth endpoints use a tighter limit via the decorator:</p>
+<pre><code>@router.post("/auth/login")
+@limiter.limit("5/minute")
+async def login(request: Request, body: LoginRequest, ...):
+    # The `request: Request` parameter is required by SlowAPI for rate limiting
+    ...</code></pre>
+
+<h2>10. Security middleware</h2>
+<p>The current <code>SecurityHeadersMiddleware</code> sets seven security headers on every response. The backend's maximally-restrictive CSP (<code>default-src 'none'</code>) is appropriate because the API serves only JSON — no HTML, scripts, or external resources.</p>
+<table>
+  <thead><tr><th>Header</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td><code>X-Content-Type-Options</code></td><td><code>nosniff</code></td></tr>
+    <tr><td><code>X-Frame-Options</code></td><td><code>DENY</code></td></tr>
+    <tr><td><code>X-XSS-Protection</code></td><td><code>1; mode=block</code></td></tr>
+    <tr><td><code>Referrer-Policy</code></td><td><code>strict-origin-when-cross-origin</code></td></tr>
+    <tr><td><code>Permissions-Policy</code></td><td><code>camera=(), microphone=(), geolocation=()</code></td></tr>
+    <tr><td><code>Content-Security-Policy</code></td><td><code>default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'</code></td></tr>
+    <tr><td><code>Strict-Transport-Security</code></td><td><code>max-age=31536000; includeSubDomains</code></td></tr>
+  </tbody>
+</table>
+
+<h2>11. Model registration</h2>
+<p>All weekly scan models must be imported in <code>backend/main.py</code> before <code>Base.metadata.create_all</code>:</p>
+<pre><code>from app.models.weekly_scan import (       # noqa: F401
+    UserScanConfig, UserSymbolList, WeeklyScan, WeeklyScanItem
+)</code></pre>
+<div class="callout warn">Forgetting to import a model here will result in the corresponding table not being created by <code>create_all()</code>, and Alembic migrations will also fail to detect the table. Always add new model classes to this import block.</div>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Dashboard — Functional Specification</h1>
+
+<h2>1. Overview</h2>
+<p>The dashboard (<code>/dashboard</code>) is the landing page after login. It presents a high-level, at-a-glance summary of the portfolio status and market conditions. No user interaction is required — the page loads and auto-refreshes all data every 60 seconds.</p>
+<p>The dashboard is designed to answer three questions at a glance: How is the portfolio performing right now? What is the capital allocation? What is happening in the broader market?</p>
+
+<h2>2. Widgets</h2>
+
+<h3>2.1 Portfolio summary metrics</h3>
+<p>Four animated metric cards displayed in a responsive grid (2×2 on mobile, 1×4 on desktop). Each card shows a headline value with a sub-label for additional context. Values animate with a slide-up transition when data refreshes, making changes visually apparent.</p>
+<table>
+  <thead><tr><th>Card</th><th>Value</th><th>Sub-label</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Open P&amp;L</strong></td><td>Sum of <code>netPnl</code> across all active positions, compacted in THB (e.g. <code>+12.5K ฿</code> or <code>+1.20M ฿</code>)</td><td>Percentage return over total cost basis</td></tr>
+    <tr><td><strong>Open Positions</strong></td><td>Count of currently active positions</td><td>Win/loss breakdown (e.g. <code>5W / 2L</code>)</td></tr>
+    <tr><td><strong>Win Rate</strong></td><td>Percentage of positions with <code>netPnl &gt; 0</code></td><td>Total trade count</td></tr>
+    <tr><td><strong>Avg P&amp;L / Trade</strong></td><td>Total P&amp;L divided by position count</td><td>In THB, compacted</td></tr>
+  </tbody>
+</table>
+<p><strong>Data source:</strong> <code>GET /api/v1/portfolio-tracker/positions?status=active</code></p>
+
+<h3>2.2 Portfolio allocation chart</h3>
+<p>A donut chart showing the percentage of total portfolio value allocated to each open stock position. Each slice represents one stock, sized proportionally to its current market value (<code>currentPrice × positionSize</code>).</p>
+<ul>
+  <li>Labels show the stock ticker symbol</li>
+  <li>Tooltip shows both the percentage and the absolute THB value on hover</li>
+  <li>Stocks with very small allocations (&lt;1%) are shown without labels to avoid clutter</li>
+  <li>If only one position is open, the donut shows a single full ring</li>
+</ul>
+<p><strong>Data source:</strong> <code>GET /api/v1/portfolio-tracker/positions?status=active</code></p>
+
+<h3>2.3 Performance chart (mini)</h3>
+<p>A compact ECharts line chart showing cumulative P&amp;L over the last 3 months with daily grouping. This is the same data used by the full performance chart on the Portfolio page, presented in a smaller format for the dashboard overview.</p>
+<ul>
+  <li>Y-axis shows cumulative P&amp;L in THB</li>
+  <li>Green area fill below the line when P&amp;L is positive</li>
+  <li>No interactive controls — it is a read-only summary view</li>
+</ul>
+
+<h3>2.4 Holdings table</h3>
+<p>A compact sortable table of open positions sorted by Net P&amp;L (descending). Shows the top positions at a glance without requiring navigation to the full Portfolio page.</p>
+<table>
+  <thead><tr><th>Column</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>Symbol</td><td>Thai SET ticker</td></tr>
+    <tr><td>Direction</td><td><code>↑ L</code> for Long, <code>↓ S</code> for Short</td></tr>
+    <tr><td>P&amp;L</td><td>Net P&amp;L in THB, coloured green (gain) or red (loss)</td></tr>
+    <tr><td>P&amp;L %</td><td>Percentage return on the position</td></tr>
+  </tbody>
+</table>
+
+<h3>2.5 Market index bar</h3>
+<p>A horizontally scrollable strip across the top of the dashboard showing live market data. Updated on page load and every 60 seconds. Each index shows its name, current price, and daily change — coloured green for gains and red for losses.</p>
+<p><strong>Thai SET indices:</strong> SET, SET50, SET100, MAI, sSET — fetched from <code>GET /api/v1/portfolio-tracker/market/set-indices</code></p>
+<p><strong>Global indices:</strong> S&amp;P 500, NASDAQ, DOW, BTC-USD, Gold (GC=F) — fetched from <code>GET /api/v1/portfolio-tracker/market/global-indices</code></p>
+<p>Both endpoints call Yahoo Finance's quote API directly. If Yahoo Finance is temporarily unavailable, the index bar will show the last cached values or a loading state.</p>
+
+<h3>2.6 AI Insights widget</h3>
+<p>A small widget providing a shortcut to the AI Copilot chat. Displays a "Start chatting" prompt with suggested questions (e.g., "Summarise my portfolio", "What is my biggest winner?"). Clicking opens the <code>/ai-copilot</code> page.</p>
+
+<h2>3. Data refresh</h2>
+<p>All dashboard queries are managed by TanStack Query with consistent refresh settings:</p>
+<ul>
+  <li><code>staleTime: 60_000</code> — data is considered fresh for 60 seconds after fetching; no refetch during this window</li>
+  <li><code>refetchInterval: 60_000</code> — auto-polls every 60 seconds when the tab is in focus</li>
+  <li>Refetch on window focus is enabled by default — switching back to the browser tab will trigger a refresh if data is stale</li>
+</ul>
+<p>The market index strip and the portfolio summary widgets both refresh independently on their own 60-second cycles.</p>
+
+<h2>4. Empty state</h2>
+<p>If no portfolio data is available — for example, when the Excel source file has not been configured or the configured path does not exist — all portfolio widgets display a placeholder message:</p>
+<blockquote>"No portfolio data available. Go to Settings → App Configuration to set the Excel source file path."</blockquote>
+<p>The market index bar continues to show live data even when portfolio data is unavailable, since it fetches independently from Yahoo Finance and does not depend on the Excel file.</p>
+
+<h2>5. Chart library — ECharts</h2>
+<p>All charts on the dashboard use the <code>echarts-for-react</code> wrapper around Apache ECharts 5. Charts are rendered via the <code>ReactECharts</code> component with <code>animation: false</code> for snappier rendering during data refresh cycles.</p>
+<p>The dark theme is applied through ECharts options rather than a theme file:</p>
+<ul>
+  <li><code>backgroundColor: '#0d1117'</code> — matches the page background</li>
+  <li><code>textStyle.color: '#64748b'</code> — axis labels and tooltips use the muted grey</li>
+  <li>Positive values: <code>#3fb950</code> (green), Negative values: <code>#f85149</code> (red)</li>
+</ul>
+<p>The shared <code>EChartsChart</code> component (<code>frontend/src/components/analytics/EChartsChart.tsx</code>) provides the full candlestick / OHLCV chart used in the Analytics modal and Weekly Scan evaluate view. See the Weekly Scan technical documentation for the complete chart feature set including VRVP, RSI, and Stochastic panels.</p>
+</body>
+</html>

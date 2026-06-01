@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InvestmentDashboard — Application Guide</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0 }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.6; display: flex; min-height: 100vh }
+  nav { width: 220px; min-width: 220px; background: #161b22; border-right: 1px solid #30363d; padding: 1rem 0; position: sticky; top: 0; height: 100vh; overflow-y: auto }
+  nav h2 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #58a6ff; padding: .5rem 1rem .25rem; margin-top: .75rem }
+  nav a { display: block; padding: .3rem 1rem; font-size: 12px; color: #8b949e; text-decoration: none; border-left: 2px solid transparent; transition: all .15s }
+  nav a:hover, nav a.active { color: #e2e8f0; background: #21262d; border-left-color: #58a6ff }
+  main { flex: 1; padding: 2rem 2.5rem; min-width: 0; overflow-x: auto }
+  h1 { font-size: 1.8rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .75rem; margin-bottom: 1.5rem; margin-top: 2rem }
+  h1:first-child { margin-top: 0 }
+  h2 { font-size: 1.2rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .75rem; padding-bottom: .4rem; border-bottom: 1px solid #21262d }
+  h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.5rem 0 .5rem }
+  h4 { font-size: .9rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .4rem; text-transform: uppercase; letter-spacing: .05em }
+  p { color: #c9d1d9; margin-bottom: .75rem }
+  ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .75rem }
+  li { margin-bottom: .25rem }
+  code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .15em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .85em }
+  pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .75rem 0 }
+  pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .82em; line-height: 1.5 }
+  table { width: 100%; border-collapse: collapse; margin: .75rem 0; font-size: 13px }
+  th { background: #161b22; color: #8b949e; font-weight: 600; padding: .5rem .75rem; text-align: left; border: 1px solid #30363d }
+  td { padding: .45rem .75rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+  tr:nth-child(even) td { background: #0d1117 }
+  .badge { display: inline-block; padding: .15em .55em; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: .03em }
+  .badge-blue { background: #1f3d6b; color: #58a6ff }
+  .badge-green { background: #1a3a2a; color: #3fb950 }
+  .badge-yellow { background: #3a2e0a; color: #d29922 }
+  .badge-red { background: #3a0f0f; color: #f85149 }
+  .badge-purple { background: #2a1a3a; color: #bc8cff }
+  .badge-cyan { background: #0a2a2a; color: #39d0d0 }
+  .badge-grey { background: #21262d; color: #8b949e }
+  .callout { border-left: 3px solid #58a6ff; background: #1f3d6b22; padding: .6rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; color: #c9d1d9; font-size: 13px }
+  .callout.warn { border-color: #d29922; background: #3a2e0a22 }
+  .callout.tip { border-color: #3fb950; background: #1a3a2a22 }
+  section { margin-bottom: 3rem }
+  .tree { font-family: 'Cascadia Code','Fira Code',monospace; font-size: .82em; color: #e2e8f0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; line-height: 1.7; overflow-x: auto; margin: .75rem 0 }
+  .tree .dir { color: #58a6ff }
+  .tree .comment { color: #8b949e }
+  .method-get { background: #1a3a2a; color: #3fb950; padding: .1em .45em; border-radius: 3px; font-size: 11px; font-weight: 700; font-family: monospace }
+  .method-post { background: #1f3d6b; color: #58a6ff; padding: .1em .45em; border-radius: 3px; font-size: 11px; font-weight: 700; font-family: monospace }
+  .method-put { background: #3a2e0a; color: #d29922; padding: .1em .45em; border-radius: 3px; font-size: 11px; font-weight: 700; font-family: monospace }
+  .method-delete { background: #3a0f0f; color: #f85149; padding: .1em .45em; border-radius: 3px; font-size: 11px; font-weight: 700; font-family: monospace }
+  .method-patch { background: #2a1a3a; color: #bc8cff; padding: .1em .45em; border-radius: 3px; font-size: 11px; font-weight: 700; font-family: monospace }
+</style>
+</head>
+<body>
+<nav>
+  <h2>InvestmentDashboard</h2>
+  <a href="#overview">Project Overview</a>
+  <a href="#setup">Prerequisites &amp; Setup</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#database">Database Schema</a>
+  <a href="#api">API Reference</a>
+  <a href="#frontend">Frontend Architecture</a>
+  <h2>Feature Modules</h2>
+  <a href="#dashboard">Interactive Dashboard</a>
+  <a href="#portfolio">Portfolio Tracker</a>
+  <a href="#weekly-scan">Weekly Scan</a>
+  <a href="#action-plan">Action Plan</a>
+  <a href="#analytics">Analytics</a>
+  <a href="#ai">AI Copilot</a>
+  <a href="#settings">Settings &amp; Admin</a>
+  <h2>Operations</h2>
+  <a href="#docker">Docker &amp; Deployment</a>
+  <a href="#decisions">Design Decisions</a>
+</nav>
+<main>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="overview">
+  <h1>Project Overview</h1>
+
+  <h2>Purpose</h2>
+  <p>
+    InvestmentDashboard (internally called <strong>InvestPro</strong>) is a full-stack, self-hosted
+    investment dashboard for tracking a personal Thai SET (Stock Exchange of Thailand) portfolio.
+    It provides real-time P&amp;L, advanced charting, AI-assisted analysis, structured trade
+    planning, and a weekly scan discipline tool — all running inside Docker containers on a local
+    machine with no cloud dependency.
+  </p>
+  <p>
+    All data stays local. The system works behind any external tunnel (Cloudflare, ngrok) without
+    rebuilding the frontend.
+  </p>
+
+  <h2>Key personas</h2>
+  <ul>
+    <li><strong>Solo investor</strong> — reviews the portfolio once a week, tracks open and closed positions read from a local Excel file, and wants to see cumulative P&amp;L at a glance.</li>
+    <li><strong>Weekly scanner</strong> — systematically evaluates every symbol on a watchlist each weekend, assigns colour marks, and promotes promising setups to an action plan.</li>
+    <li><strong>Active planner</strong> — maintains purchase watchlists and portfolio-level action plans with specific entry targets, take-profits, and stop-losses.</li>
+  </ul>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>Multi-user portfolio isolation (one shared Excel source of truth)</li>
+    <li>Real-time WebSocket price streaming from the exchange</li>
+    <li>Order execution or brokerage integration</li>
+    <li>Mobile native app</li>
+  </ul>
+
+  <h2>Technology stack</h2>
+  <h3>Backend</h3>
+  <table>
+    <tr><th>Component</th><th>Technology</th><th>Version</th><th>Purpose</th></tr>
+    <tr><td>Runtime</td><td>Python</td><td>3.12</td><td>Application language</td></tr>
+    <tr><td>Web framework</td><td>FastAPI + Uvicorn</td><td>0.115 / 0.30</td><td>Async HTTP API, 4 workers</td></tr>
+    <tr><td>ORM</td><td>SQLAlchemy (async)</td><td>2.0</td><td>Database access layer</td></tr>
+    <tr><td>DB driver</td><td>asyncpg</td><td>0.29</td><td>Async PostgreSQL driver</td></tr>
+    <tr><td>Migrations</td><td>Alembic</td><td>—</td><td>Schema version control</td></tr>
+    <tr><td>Auth</td><td>python-jose + passlib + bcrypt</td><td>—</td><td>JWT signing, password hashing</td></tr>
+    <tr><td>Cache</td><td>redis[hiredis]</td><td>5.0</td><td>Token blacklist, password resets</td></tr>
+    <tr><td>AI</td><td>anthropic SDK + LangChain</td><td>&ge;0.40</td><td>Claude claude-sonnet-4-6 chat + tool use</td></tr>
+    <tr><td>Market data</td><td>yfinance</td><td>&ge;0.2.55</td><td>Live prices, OHLCV history</td></tr>
+    <tr><td>Data</td><td>pandas + openpyxl</td><td>2.2 / 3.1</td><td>Excel parsing and analytics</td></tr>
+    <tr><td>Observability</td><td>structlog + prometheus-fastapi-instrumentator</td><td>—</td><td>Structured logs, Prometheus metrics</td></tr>
+  </table>
+
+  <h3>Frontend</h3>
+  <table>
+    <tr><th>Component</th><th>Technology</th><th>Version</th><th>Purpose</th></tr>
+    <tr><td>Framework</td><td>Next.js (App Router)</td><td>14.2</td><td>React 18 SSR + client pages</td></tr>
+    <tr><td>Language</td><td>TypeScript</td><td>5.x</td><td>Type-safe application code</td></tr>
+    <tr><td>Styling</td><td>Tailwind CSS</td><td>3.x</td><td>Utility-first dark theme</td></tr>
+    <tr><td>Charts</td><td>Apache ECharts (echarts-for-react)</td><td>—</td><td>Candlestick, line, bar, donut charts</td></tr>
+    <tr><td>State</td><td>Zustand</td><td>4.x</td><td>Auth + global UI state</td></tr>
+    <tr><td>Server state</td><td>TanStack Query v5</td><td>5.x</td><td>Data fetching, caching, refetch intervals</td></tr>
+    <tr><td>Animation</td><td>Framer Motion</td><td>11.x</td><td>Metric card transitions, page motion</td></tr>
+    <tr><td>HTTP client</td><td>Axios</td><td>1.x</td><td>API calls with JWT interceptor</td></tr>
+    <tr><td>Dashboard layout</td><td>react-grid-layout</td><td>—</td><td>Drag-and-drop widget grid</td></tr>
+  </table>
+
+  <h3>Infrastructure</h3>
+  <table>
+    <tr><th>Service</th><th>Image</th><th>Port</th><th>Purpose</th></tr>
+    <tr><td>PostgreSQL</td><td>postgres:16-alpine</td><td>5432</td><td>Primary relational database</td></tr>
+    <tr><td>Redis</td><td>redis:7-alpine</td><td>6379</td><td>Token blacklist + password reset tokens</td></tr>
+    <tr><td>Backend API</td><td>custom Python 3.12-slim</td><td>8000</td><td>FastAPI application</td></tr>
+    <tr><td>Frontend</td><td>custom Node 20-alpine</td><td>3000</td><td>Next.js production server</td></tr>
+    <tr><td>Adminer</td><td>adminer:latest</td><td>8080</td><td>DB admin UI (dev profile only)</td></tr>
+  </table>
+
+  <h2>Repository structure</h2>
+  <div class="tree">
+<span class="dir">applications/dashboard/</span>
+├── <span class="dir">backend/</span>                    <span class="comment"># FastAPI Python backend</span>
+│   ├── main.py                 <span class="comment"># App factory + lifespan (model registration, DB init)</span>
+│   ├── <span class="dir">app/</span>
+│   │   ├── <span class="dir">api/v1/endpoints/</span>   <span class="comment"># Route handlers (one file per domain)</span>
+│   │   ├── <span class="dir">auth/</span>               <span class="comment"># JWT creation + Bearer dependency</span>
+│   │   ├── <span class="dir">core/</span>               <span class="comment"># Settings (pydantic-settings) + structlog</span>
+│   │   ├── <span class="dir">database/</span>           <span class="comment"># SQLAlchemy engine + session + CacheClient (Redis)</span>
+│   │   ├── <span class="dir">middleware/</span>         <span class="comment"># SecurityHeadersMiddleware, RequestIdMiddleware</span>
+│   │   ├── <span class="dir">models/</span>             <span class="comment"># ORM models (user, action_plan, weekly_scan, …)</span>
+│   │   ├── <span class="dir">schemas/</span>            <span class="comment"># Pydantic request/response schemas</span>
+│   │   ├── <span class="dir">services/</span>           <span class="comment"># Business logic (portfolio_excel, yfinance, AI)</span>
+│   │   └── <span class="dir">websocket/</span>          <span class="comment"># Socket.IO manager (reserved)</span>
+│   ├── <span class="dir">alembic/</span>                <span class="comment"># Migration env + versions/</span>
+│   ├── requirements.txt
+│   └── .env                    <span class="comment"># (gitignored) secrets: ANTHROPIC_API_KEY, ADMIN_*, JWT_SECRET_KEY</span>
+├── <span class="dir">frontend/</span>                   <span class="comment"># Next.js 14 App Router application</span>
+│   └── <span class="dir">src/</span>
+│       ├── <span class="dir">app/</span>                <span class="comment"># App Router pages + layouts</span>
+│       │   ├── <span class="dir">(dashboard)/</span>    <span class="comment"># Authenticated route group (Sidebar + TopBar layout)</span>
+│       │   ├── <span class="dir">api/proxy/</span>      <span class="comment"># [...path]/route.ts — backend proxy</span>
+│       │   └── <span class="dir">(auth)/</span>         <span class="comment"># login, register, forgot-password, reset-password</span>
+│       ├── <span class="dir">components/</span>         <span class="comment"># Shared UI components (dashboard widgets, charts, modals)</span>
+│       ├── <span class="dir">services/</span>           <span class="comment"># Axios API service layer</span>
+│       ├── <span class="dir">store/</span>              <span class="comment"># Zustand stores (auth, dashboard, notifications)</span>
+│       └── <span class="dir">types/</span>              <span class="comment"># TypeScript type definitions</span>
+├── <span class="dir">docker/</span>
+│   ├── Dockerfile.backend       <span class="comment"># Multi-stage Python build</span>
+│   └── Dockerfile.frontend      <span class="comment"># Three-stage Node build (standalone output)</span>
+├── <span class="dir">docs/</span>                       <span class="comment"># This documentation tree</span>
+├── <span class="dir">scripts/</span>
+│   └── init_db.sql             <span class="comment"># Creates uuid-ossp + pg_trgm extensions</span>
+└── docker-compose.yml
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="setup">
+  <h1>Prerequisites &amp; Local Setup</h1>
+
+  <h2>Required tools</h2>
+  <table>
+    <tr><th>Tool</th><th>Minimum version</th><th>Notes</th></tr>
+    <tr><td>Docker Desktop</td><td>4.x (Compose v2)</td><td>Run <code>docker compose version</code> to verify Compose v2</td></tr>
+    <tr><td>Node.js</td><td>20 LTS</td><td>Only needed for local frontend development; not required for Docker-only workflow</td></tr>
+    <tr><td>Python</td><td>3.12</td><td>Only needed for running backend locally outside Docker</td></tr>
+    <tr><td>git</td><td>any recent</td><td>—</td></tr>
+  </table>
+
+  <h2>First-time setup</h2>
+  <pre><code># 1. Navigate to the project directory
+cd applications/dashboard
+
+# 2. Create the backend secrets file
+cp backend/.env.example backend/.env
+
+# 3. Edit backend/.env — required fields:
+#    ANTHROPIC_API_KEY=sk-ant-...         (for AI Copilot)
+#    ADMIN_EMAIL=admin@example.com        (first-run admin account)
+#    ADMIN_PASSWORD=ChangeMe123!
+#    ADMIN_NAME=Admin
+#    JWT_SECRET_KEY=&lt;generate a random 32-char string&gt;
+
+# 4. Edit docker-compose.yml — update the host volume path for the Excel file:
+#    volumes:
+#      - /path/to/your/investmentPlan:/app/investment_data:ro
+
+# 5. Build and start all services
+docker compose up -d --build
+
+# 6. Open the app
+#    App:          http://localhost:3000
+#    Backend API:  http://localhost:8000
+#    API docs:     http://localhost:8000/docs
+#    Adminer DB:   docker compose --profile dev up -d  →  http://localhost:8080</code></pre>
+
+  <div class="callout tip">The admin account is seeded automatically on first startup using <code>ADMIN_EMAIL</code> / <code>ADMIN_PASSWORD</code> from <code>backend/.env</code>. The seed uses <code>ON CONFLICT DO NOTHING</code>, so it is safe to restart containers.</div>
+
+  <h2>Environment variables</h2>
+  <h3>Backend secrets (<code>backend/.env</code>)</h3>
+  <table>
+    <tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr>
+    <tr><td><code>ANTHROPIC_API_KEY</code></td><td><span class="badge badge-yellow">For AI</span></td><td><code>""</code></td><td>Anthropic Claude API key. AI Copilot is disabled without this.</td></tr>
+    <tr><td><code>ADMIN_EMAIL</code></td><td><span class="badge badge-yellow">Recommended</span></td><td><code>""</code></td><td>First-run admin email. Blank = no seed user created.</td></tr>
+    <tr><td><code>ADMIN_PASSWORD</code></td><td><span class="badge badge-yellow">Recommended</span></td><td><code>""</code></td><td>First-run admin password (bcrypt-hashed before storage).</td></tr>
+    <tr><td><code>ADMIN_NAME</code></td><td>No</td><td><code>Administrator</code></td><td>Display name for the seeded admin account.</td></tr>
+    <tr><td><code>JWT_SECRET_KEY</code></td><td><span class="badge badge-yellow">Recommended</span></td><td>random</td><td>HS256 signing secret. Set explicitly in production so tokens survive restarts.</td></tr>
+    <tr><td><code>INVESTMENT_EXCEL_SOURCE_PATH</code></td><td>No</td><td><code>/app/investment_data/Investment tracking.xlsx</code></td><td>Source Excel path inside the container. Can be overridden via Settings UI after login.</td></tr>
+    <tr><td><code>INVESTMENT_EXCEL_PATH</code></td><td>No</td><td><code>/app/uploads/investment_tracking.xlsx</code></td><td>Working (copied) Excel path that the backend reads and caches.</td></tr>
+    <tr><td><code>OPENAI_API_KEY</code></td><td>No</td><td><code>""</code></td><td>Optional OpenAI key for future model support.</td></tr>
+  </table>
+
+  <h3>Docker Compose non-secret environment</h3>
+  <table>
+    <tr><th>Variable</th><th>Service</th><th>Value</th><th>Description</th></tr>
+    <tr><td><code>APP_ENV</code></td><td>backend</td><td><code>development</code></td><td>Controls logging verbosity and dev behaviours.</td></tr>
+    <tr><td><code>DATABASE_URL</code></td><td>backend</td><td><code>postgresql+asyncpg://postgres:postgres@postgres:5432/investment_db</code></td><td>Async PostgreSQL DSN.</td></tr>
+    <tr><td><code>REDIS_URL</code></td><td>backend</td><td><code>redis://redis:6379/0</code></td><td>Redis DSN (database 0).</td></tr>
+    <tr><td><code>CORS_ORIGINS</code></td><td>backend</td><td><code>["*"]</code></td><td>JSON array. Wildcard is safe because all browser requests go through the Next.js proxy.</td></tr>
+    <tr><td><code>LOG_LEVEL</code></td><td>backend</td><td><code>INFO</code></td><td><code>DEBUG</code> / <code>INFO</code> / <code>WARNING</code>.</td></tr>
+    <tr><td><code>BACKEND_URL</code></td><td>frontend</td><td><code>http://backend:8000</code></td><td>Internal Docker hostname used by the Next.js proxy route. Runtime-only; not baked into the build.</td></tr>
+    <tr><td><code>NODE_ENV</code></td><td>frontend</td><td><code>production</code></td><td>Controls Next.js optimisations.</td></tr>
+  </table>
+
+  <div class="callout warn">Never use <code>NEXT_PUBLIC_*</code> variables for the backend API URL. These are baked into the JavaScript bundle at build time and will break behind any tunnel. Always use <code>BACKEND_URL</code> which is resolved server-side by the proxy route.</div>
+
+  <h2>Admin password reset</h2>
+  <p>If you lose the admin password and cannot log in, reset it via Adminer:</p>
+  <ol>
+    <li>Start Adminer: <code>docker compose --profile dev up -d</code></li>
+    <li>Open <code>http://localhost:8080</code></li>
+    <li>Connect: System = PostgreSQL, Server = <code>postgres</code>, User = <code>postgres</code>, Password = <code>postgres</code>, Database = <code>investment_db</code></li>
+    <li>Navigate to the <code>users</code> table, find your admin row, and update the <code>hashed_password</code> column with a bcrypt hash generated for your new password.</li>
+  </ol>
+  <div class="callout">Generate a bcrypt hash: <code>python -c "from passlib.context import CryptContext; print(CryptContext(schemes=['bcrypt']).hash('YourNewPassword'))"</code></div>
+
+  <h2>Running Alembic migrations</h2>
+  <pre><code># Apply all pending migrations (run inside the backend container)
+docker exec -it inv_backend alembic upgrade head
+
+# Auto-generate a new migration after changing ORM models
+docker exec -it inv_backend alembic revision --autogenerate -m "add new table"
+
+# Check current migration state
+docker exec -it inv_backend alembic current</code></pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="architecture">
+  <h1>Architecture</h1>
+
+  <h2>System context</h2>
+  <pre><code>┌─────────────────────────────────────────────────────────┐
+│  Browser (Next.js 14 — port 3000)                       │
+│  React 18 · TypeScript · TanStack Query · Zustand       │
+└─────────────┬───────────────────────────────────────────┘
+              │ HTTP /api/proxy/...  (same-origin, no CORS)
+              ▼
+┌─────────────────────────────────────────────────────────┐
+│  Next.js API Route Proxy  /api/proxy/[...path]          │
+│  Runtime: process.env.BACKEND_URL (http://backend:8000) │
+└─────────────┬───────────────────────────────────────────┘
+              │ HTTP / SSE  (internal Docker bridge network)
+              ▼
+┌─────────────────────────────────────────────────────────┐
+│  FastAPI Backend  (port 8000)                           │
+│  4 Uvicorn workers · Socket.IO mounted at root          │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │  PostgreSQL │  │   Redis 7    │  │  yfinance /   │  │
+│  │  16-alpine  │  │  Token store │  │  Anthropic    │  │
+│  └─────────────┘  └──────────────┘  └───────────────┘  │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │  Excel file volume  /app/investment_data  (ro)  │    │
+│  └─────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+          ↕ dashboard-net (Docker bridge)</code></pre>
+
+  <h2>The proxy pattern</h2>
+  <p>
+    All browser API calls go through a Next.js server-side catch-all route at
+    <code>/api/proxy/[...path]</code> (<code>frontend/src/app/api/proxy/[...path]/route.ts</code>).
+    The proxy:
+  </p>
+  <ul>
+    <li>Reads <code>BACKEND_URL</code> at runtime (not baked into the bundle)</li>
+    <li>Forwards the request including the <code>Authorization: Bearer</code> header to <code>http://backend:8000/...</code></li>
+    <li>Buffers the request body as <code>ArrayBuffer</code> before forwarding (fixes streaming body issues)</li>
+    <li>Streams the response body back — supports SSE for the AI Copilot</li>
+    <li>Strips hop-by-hop headers (<code>host</code>, <code>connection</code>, <code>transfer-encoding</code>)</li>
+  </ul>
+  <div class="callout tip">Because the browser only ever talks to the same-origin Next.js server, this setup works correctly behind any Cloudflare Tunnel, ngrok, or other reverse proxy without rebuilding the frontend image. Just change <code>BACKEND_URL</code> at container start time.</div>
+
+  <h2>Authentication flow</h2>
+  <pre><code>Browser  →  POST /api/proxy/api/v1/auth/login  →  FastAPI
+         ←  { accessToken, refreshToken, user }  ←
+
+Browser  →  GET /api/proxy/api/v1/...
+            Authorization: Bearer &lt;accessToken&gt;  →  FastAPI (verifies JWT)
+
+On 401:
+  Axios interceptor  →  POST /api/proxy/api/v1/auth/refresh
+  If success  →  retry original request with new token
+  If failure  →  clearAuth()  →  redirect to /login</code></pre>
+  <p>Token storage: Zustand store persisted to <code>sessionStorage</code> (cleared on tab close). The refresh token is short-lived and rotated on each use.</p>
+
+  <h2>Portfolio data flow</h2>
+  <pre><code>Excel file (read-only volume mount)
+  │  pandas read_excel (openpyxl engine)
+  ▼
+portfolio_excel.py._load_df()
+  │  in-memory cache: { df, mtime }
+  │  invalidated when .cache_bust file mtime changes (cross-worker)
+  │
+  ├── get_positions()          →  yfinance live prices for open positions
+  ├── get_daily_performance()  →  grouped by day/week/month, cumsum
+  ├── get_performance_by_date()
+  ├── get_performance_by_stock()
+  └── get_period_transactions()
+
+Frontend:
+  TanStack Query (staleTime: 60s, refetchInterval: 60s)
+    → portfolioTrackerService
+    → /api/proxy/api/v1/portfolio-tracker/...
+    → FastAPI → above</code></pre>
+  <p>
+    The backend runs 4 Uvicorn workers, each with its own in-memory cache. When the user clicks
+    <strong>Refresh</strong>, the backend copies the source Excel to the uploads volume and writes
+    a <code>.cache_bust</code> timestamp file. Every subsequent <code>_cached()</code> call checks
+    that file's mtime — if newer than the cache, all workers clear and reload independently.
+  </p>
+
+  <h2>AI Copilot data flow</h2>
+  <pre><code>Browser  →  POST /api/proxy/api/v1/ai/copilot/stream
+  ↓ Next.js proxy (streams SSE response)
+  ↓ FastAPI StreamingResponse (text/event-stream)
+  ↓ Anthropic API (claude-sonnet-4-6)
+  ↓ Tool use loop (up to 6 iterations):
+      get_portfolio_positions → portfolio_excel.get_positions()
+      get_live_price          → yfinance
+      get_performance_summary → portfolio_excel
+      read_knowledge_doc      → /app/investment_agent/knowledge/*.md
+      run_analysis_script     → subprocess python *.py
+
+SSE events: { type: 'text'|'tool_start'|'tool_end'|'error'|'done', content/name }</code></pre>
+
+  <h2>Domain boundaries</h2>
+  <table>
+    <tr><th>Domain</th><th>Router prefix</th><th>Description</th></tr>
+    <tr><td>Auth</td><td><code>/api/v1/auth</code></td><td>Login, token refresh, logout, password reset, profile</td></tr>
+    <tr><td>Portfolio Tracker</td><td><code>/api/v1/portfolio-tracker</code></td><td>Excel-based positions with live P&amp;L; market indices</td></tr>
+    <tr><td>Portfolio DB</td><td><code>/api/v1/portfolio-db</code></td><td>Database-backed position CRUD (alternative to Excel)</td></tr>
+    <tr><td>Weekly Scan</td><td><code>/api/v1/weekly-scan</code></td><td>Symbol lists, scans, per-symbol evaluation, week prices</td></tr>
+    <tr><td>Action Plan</td><td><code>/api/v1/action-plans</code></td><td>Purchase and portfolio planning documents</td></tr>
+    <tr><td>Analytics</td><td><code>/api/v1/analytics</code></td><td>Symbol search, OHLCV chart data, analysis logs, Fibonacci charts</td></tr>
+    <tr><td>AI Copilot</td><td><code>/api/v1/ai</code></td><td>Streaming chat with portfolio-aware tool use</td></tr>
+    <tr><td>Settings</td><td><code>/api/v1/app-config</code>, <code>/api/v1/users</code></td><td>App config key-values; user management (admin only)</td></tr>
+    <tr><td>Documentation</td><td><code>/api/v1/docs-content</code></td><td>Serves markdown docs tree to the built-in document viewer</td></tr>
+    <tr><td>Health</td><td><code>/api/v1/health</code></td><td>Liveness and readiness probes</td></tr>
+  </table>
+
+  <h2>Frontend state management</h2>
+  <table>
+    <tr><th>State type</th><th>Tool</th><th>Storage</th></tr>
+    <tr><td>Auth (user object, tokens)</td><td>Zustand — <code>store/auth.ts</code></td><td>sessionStorage (cleared on tab close)</td></tr>
+    <tr><td>Server data (positions, plans, scans)</td><td>TanStack Query</td><td>Memory with 60 s stale time and auto-refetch</td></tr>
+    <tr><td>Dashboard layout</td><td>Zustand — <code>store/dashboard.ts</code></td><td>localStorage key <code>dashboard-layout-v4</code></td></tr>
+    <tr><td>Notifications / toasts</td><td>Zustand — <code>store/notifications.ts</code></td><td>Component memory only</td></tr>
+    <tr><td>Portfolio filter preferences</td><td>localStorage</td><td>Keys: <code>portfolio_criteria</code>, <code>portfolio_default_months</code></td></tr>
+    <tr><td>Modal/filter UI state</td><td>React useState</td><td>Component memory</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="database">
+  <h1>Database Schema</h1>
+
+  <p>
+    PostgreSQL 16. Schema managed by Alembic (<code>alembic upgrade head</code>).
+    SQLAlchemy <code>Base.metadata.create_all</code> is also called at startup as a
+    development convenience, but Alembic is the canonical migration path.
+    Migration files live in <code>backend/alembic/versions/</code>.
+  </p>
+
+  <h2>PostgreSQL extensions</h2>
+  <pre><code>CREATE EXTENSION IF NOT EXISTS "uuid-ossp";  -- uuid_generate_v4()
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";    -- trigram indexes (future full-text search)</code></pre>
+
+  <h2>Table: <code>users</code></h2>
+  <p>All authenticated users. Roles control access to admin endpoints.</p>
+  <pre><code>CREATE TABLE users (
+    id               UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email            VARCHAR(255) NOT NULL UNIQUE,
+    name             VARCHAR(255) NOT NULL,
+    hashed_password  VARCHAR(255) NOT NULL,        -- bcrypt via passlib
+    role             user_role    NOT NULL DEFAULT 'viewer',
+                                                   -- ENUM: 'admin' | 'analyst' | 'viewer'
+    is_active        BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ  DEFAULT NOW(),
+    last_login_at    TIMESTAMPTZ
+);
+CREATE INDEX ON users (email);</code></pre>
+  <table>
+    <tr><th>Column</th><th>Notes</th></tr>
+    <tr><td><code>id</code></td><td>UUID PK, auto-generated</td></tr>
+    <tr><td><code>email</code></td><td>Unique; used as the login identifier</td></tr>
+    <tr><td><code>hashed_password</code></td><td>bcrypt hash (passlib CryptContext)</td></tr>
+    <tr><td><code>role</code></td><td>PostgreSQL ENUM <code>user_role</code>: <code>admin</code> / <code>analyst</code> / <code>viewer</code></td></tr>
+    <tr><td><code>is_active</code></td><td>Soft-disable without deleting the account</td></tr>
+    <tr><td><code>last_login_at</code></td><td>Updated on every successful login</td></tr>
+  </table>
+
+  <h2>Table: <code>action_plans</code></h2>
+  <p>Header record for both Purchase and Portfolio action plans.</p>
+  <pre><code>CREATE TABLE action_plans (
+    id          UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name        VARCHAR(200) NOT NULL,
+    plan_type   VARCHAR(20)  NOT NULL,     -- 'purchase' | 'portfolio'
+    notes       TEXT,
+    set_analysis TEXT,
+    ai_recommend TEXT,
+    created_by  UUID         REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX ON action_plans (created_by, plan_type);</code></pre>
+
+  <h2>Table: <code>purchase_plan_items</code></h2>
+  <p>One row per stock in a Purchase Action Plan (watchlist with entry targets).</p>
+  <pre><code>CREATE TABLE purchase_plan_items (
+    id            UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    plan_id       UUID         NOT NULL REFERENCES action_plans(id) ON DELETE CASCADE,
+    sort_order    INTEGER      NOT NULL DEFAULT 0,
+    stock         VARCHAR(20)  NOT NULL DEFAULT '',
+    current_price NUMERIC(14,4),
+    size          INTEGER,
+    buy_price     NUMERIC(14,4),
+    tp            NUMERIC(14,4),
+    sl            NUMERIC(14,4),
+    strategy      VARCHAR(200),
+    reason        TEXT,
+    triggered     BOOLEAN      NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX ON purchase_plan_items (plan_id);</code></pre>
+
+  <h2>Table: <code>portfolio_plan_items</code></h2>
+  <p>One row per open position in a Portfolio Action Plan (active position sizing).</p>
+  <pre><code>CREATE TABLE portfolio_plan_items (
+    id            UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    plan_id       UUID         NOT NULL REFERENCES action_plans(id) ON DELETE CASCADE,
+    sort_order    INTEGER      NOT NULL DEFAULT 0,
+    symbol        VARCHAR(20)  NOT NULL DEFAULT '',
+    current_price NUMERIC(14,4),
+    size          INTEGER,
+    entry_price   NUMERIC(14,4),
+    tp            NUMERIC(14,4),
+    sl            NUMERIC(14,4),
+    order_size    INTEGER,
+    created_at    TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX ON portfolio_plan_items (plan_id);</code></pre>
+
+  <h2>Table: <code>portfolio_db_positions</code></h2>
+  <p>Database-backed position tracking (alternative to the Excel-based tracker).</p>
+  <pre><code>CREATE TABLE portfolio_db_positions (
+    id            UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id       UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    symbol        VARCHAR(20)  NOT NULL,
+    direction     VARCHAR(10)  NOT NULL DEFAULT 'Long',
+    entry_date    DATE,
+    exit_date     DATE,
+    entry_price   NUMERIC(14,4),
+    exit_price    NUMERIC(14,4),
+    position_size INTEGER,
+    net_pnl       NUMERIC(14,4),
+    pnl_pct       NUMERIC(8,4),
+    sl            NUMERIC(14,4),
+    tp            NUMERIC(14,4),
+    status        VARCHAR(10)  NOT NULL DEFAULT 'active',  -- 'active' | 'closed'
+    remarks       TEXT,
+    created_at    TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX ON portfolio_db_positions (user_id, status);</code></pre>
+
+  <h2>Table: <code>user_scan_configs</code></h2>
+  <p>Legacy per-user single watchlist. Superseded by <code>user_symbol_lists</code> but retained for migration compatibility.</p>
+  <pre><code>CREATE TABLE user_scan_configs (
+    id          UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID         NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    symbols     JSONB        NOT NULL DEFAULT '[]',  -- array of uppercase tickers
+    updated_at  TIMESTAMPTZ  DEFAULT NOW()
+);</code></pre>
+  <div class="callout">Symbols are auto-seeded to the SET50 constituents plus two DR symbols (<code>BTCUSD-DR</code>, <code>GOLUSD-DR</code>) on first access if the user has no symbol lists.</div>
+
+  <h2>Table: <code>user_symbol_lists</code></h2>
+  <p>Named, ordered watchlists. Multiple lists per user; each has a market context.</p>
+  <pre><code>CREATE TABLE user_symbol_lists (
+    id          UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name        VARCHAR(100) NOT NULL,
+    market      VARCHAR(20)  NOT NULL DEFAULT 'SET',  -- SET | US | HK | CRYPTO | OTHER
+    symbols     JSONB        NOT NULL DEFAULT '[]',
+    sort_order  INTEGER      NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX ON user_symbol_lists (user_id);</code></pre>
+  <p>The <code>market</code> value drives the Yahoo Finance ticker suffix logic: <code>SET</code> appends <code>.BK</code>, <code>HK</code> zero-pads to 4 digits and appends <code>.HK</code>, other markets use no suffix.</p>
+
+  <h2>Table: <code>weekly_scans</code></h2>
+  <p>Header record for a dated weekly scan session.</p>
+  <pre><code>CREATE TABLE weekly_scans (
+    id          UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name        VARCHAR(100) NOT NULL,   -- convention: WEEKLY_SCAN_DD_MM_YYYY
+    created_at  TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX ON weekly_scans (user_id);</code></pre>
+  <p>The name convention <code>WEEKLY_SCAN_DD_MM_YYYY</code> — the embedded date is parsed server-side to derive the Monday open / Friday close window for week price fetching.</p>
+
+  <h2>Table: <code>weekly_scan_items</code></h2>
+  <p>One row per symbol within a scan. All evaluation fields are nullable until the analyst fills them in.</p>
+  <pre><code>CREATE TABLE weekly_scan_items (
+    id          UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    scan_id     UUID         NOT NULL REFERENCES weekly_scans(id) ON DELETE CASCADE,
+    symbol      VARCHAR(30)  NOT NULL,
+    sort_order  INTEGER      NOT NULL DEFAULT 0,
+    list_name   VARCHAR(100),
+    market      VARCHAR(20)  NOT NULL DEFAULT 'SET',
+    color_mark  VARCHAR(10),              -- CYAN | GREEN | YELLOW | RED | PURPLE
+    strategy    VARCHAR(200),
+    buy_price   NUMERIC(14, 4),
+    size        INTEGER,
+    tp          NUMERIC(14, 4),
+    sl          NUMERIC(14, 4),
+    remark      TEXT,
+    updated_at  TIMESTAMPTZ  DEFAULT NOW(),
+    CONSTRAINT uq_scan_item UNIQUE (scan_id, symbol)
+);
+CREATE INDEX ON weekly_scan_items (scan_id);</code></pre>
+
+  <h2>Table: <code>symbol_notes</code></h2>
+  <p>Personal notes per symbol per user. Used in the Evaluate view to store persistent observations across scan sessions.</p>
+  <pre><code>CREATE TABLE symbol_notes (
+    id          UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    symbol      VARCHAR(30)  NOT NULL,
+    note        TEXT,
+    updated_at  TIMESTAMPTZ  DEFAULT NOW(),
+    CONSTRAINT uq_user_symbol UNIQUE (user_id, symbol)
+);</code></pre>
+
+  <h2>Entity relationships</h2>
+  <pre><code>users (1)
+  ├─── action_plans (N)              [created_by → users.id  ON DELETE SET NULL]
+  │      ├─── purchase_plan_items (N)  [plan_id → action_plans.id  CASCADE]
+  │      └─── portfolio_plan_items (N) [plan_id → action_plans.id  CASCADE]
+  ├─── portfolio_db_positions (N)    [user_id → users.id  CASCADE]
+  ├─── user_scan_configs (1)         [user_id → users.id  CASCADE] (legacy)
+  ├─── user_symbol_lists (N)         [user_id → users.id  CASCADE]
+  ├─── weekly_scans (N)              [user_id → users.id  CASCADE]
+  │      └─── weekly_scan_items (N)  [scan_id → weekly_scans.id  CASCADE]
+  └─── symbol_notes (N)              [user_id → users.id  CASCADE]</code></pre>
+
+  <h2>Redis (non-relational)</h2>
+  <p>Redis is used for ephemeral data only. All keys have TTLs set by the application.</p>
+  <table>
+    <tr><th>Key pattern</th><th>TTL</th><th>Purpose</th></tr>
+    <tr><td><code>blacklist:&lt;token_jti&gt;</code></td><td>Remaining token lifetime</td><td>Logout / token blacklist — prevents reuse of a valid token after logout</td></tr>
+    <tr><td><code>pwd_reset:&lt;token&gt;</code></td><td>3600 s (1 h)</td><td>Password reset token storage</td></tr>
+  </table>
+  <p>The Redis client is a custom <code>CacheClient</code> wrapper at <code>backend/app/database/redis.py</code>.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="api">
+  <h1>API Reference</h1>
+
+  <p>All endpoints are under <code>/api/v1/</code>. All responses are JSON. Auth-required endpoints expect <code>Authorization: Bearer &lt;accessToken&gt;</code>.</p>
+
+  <h2>Status codes</h2>
+  <table>
+    <tr><th>Code</th><th>Meaning</th></tr>
+    <tr><td>200</td><td>Success (GET, PUT, POST returning a list or detail)</td></tr>
+    <tr><td>201</td><td>Created (POST that creates a new resource)</td></tr>
+    <tr><td>204</td><td>No content (DELETE)</td></tr>
+    <tr><td>400</td><td>Bad request (validation error)</td></tr>
+    <tr><td>401</td><td>Unauthorized (missing or invalid token)</td></tr>
+    <tr><td>403</td><td>Forbidden (insufficient role)</td></tr>
+    <tr><td>404</td><td>Not found</td></tr>
+    <tr><td>409</td><td>Conflict (e.g. duplicate symbol in scan)</td></tr>
+    <tr><td>422</td><td>Unprocessable entity (Pydantic validation failure)</td></tr>
+    <tr><td>500</td><td>Internal server error</td></tr>
+    <tr><td>503</td><td>Service unavailable (e.g. Excel file not configured)</td></tr>
+  </table>
+  <p>Error body: <code>{ "detail": "human-readable message" }</code> — FastAPI default format.</p>
+
+  <h2>Health</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/health/live</code></td><td>None</td><td>Liveness probe. Returns <code>{"status":"ok"}</code>.</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/health/ready</code></td><td>None</td><td>Readiness probe — checks DB + Redis connectivity.</td></tr>
+  </table>
+
+  <h2>Authentication</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Auth</th><th>Request body</th><th>Response</th></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/auth/login</code></td><td>None</td><td><code>{"email","password"}</code></td><td><code>{"accessToken","refreshToken","user"}</code></td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/auth/refresh</code></td><td>None</td><td><code>{"refreshToken"}</code></td><td>New <code>accessToken</code></td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/auth/logout</code></td><td>Bearer</td><td>—</td><td>204. Blacklists current token in Redis.</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/auth/forgot-password</code></td><td>None</td><td><code>{"email"}</code></td><td>Dev mode: returns token in response. Prod: email delivery.</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/auth/reset-password</code></td><td>None</td><td><code>{"token","new_password"}</code></td><td>200 on success.</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/auth/me</code></td><td>Bearer</td><td>—</td><td>Current user profile object.</td></tr>
+  </table>
+
+  <h3>Login example</h3>
+  <pre><code>POST /api/v1/auth/login
+Content-Type: application/json
+
+{ "email": "admin@example.com", "password": "ChangeMe123!" }
+
+Response:
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+  "refreshToken": "eyJhbGciOiJIUzI1NiJ9...",
+  "user": { "id": "uuid", "email": "admin@example.com", "name": "Admin", "role": "admin" }
+}</code></pre>
+
+  <h2>Users (admin only)</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/users</code></td><td>List all users</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/users</code></td><td>Create a user (admin sets role)</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/users/{id}</code></td><td>Get user by ID</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/users/{id}</code></td><td>Update user name, role, or is_active</td></tr>
+    <tr><td><span class="method-delete">DELETE</span></td><td><code>/api/v1/users/{id}</code></td><td>Hard-delete user</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/users/{id}/password</code></td><td>Force-set another user's password</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/users/me</code></td><td>Update own display name</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/users/me/password</code></td><td>Change own password (requires current password)</td></tr>
+  </table>
+
+  <h2>Portfolio Tracker</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/portfolio-tracker/refresh</code></td><td>Copy source Excel to working location and bust cache on all workers</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/portfolio-tracker/raw-data</code></td><td>All raw rows from Excel as-is</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/portfolio-tracker/positions</code></td><td>Filtered positions with live P&amp;L. Query params: <code>status</code>, <code>from_date</code>, <code>to_date</code></td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/portfolio-tracker/performance</code></td><td>Cumulative P&amp;L chart data. Query param: <code>period</code> (daily/weekly/monthly)</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/portfolio-tracker/performance/by-date</code></td><td>P&amp;L grouped by date period with win/loss counts</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/portfolio-tracker/performance/transactions</code></td><td>Individual transactions for a date range</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/portfolio-tracker/performance/by-stock</code></td><td>P&amp;L aggregated per stock symbol</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/portfolio-tracker/market/set-indices</code></td><td>SET, SET50, SET100, MAI, sSET live values from Yahoo Finance</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/portfolio-tracker/market/global-indices</code></td><td>S&amp;P500, NASDAQ, DOW, BTC-USD, Gold</td></tr>
+  </table>
+
+  <h3>Positions example</h3>
+  <pre><code>GET /api/v1/portfolio-tracker/positions?status=active&from_date=2026-01-01&to_date=2026-05-30
+Authorization: Bearer eyJ...
+
+Response:
+{
+  "positions": [
+    {
+      "symbol": "GULF", "direction": "Long", "entryDate": "2026-02-10",
+      "entryPrice": 57.5, "currentPrice": 64.0, "positionSize": 200,
+      "netPnl": 1300.0, "pnlPct": 11.30, "sl": 52.0, "tp": 72.0, "status": "active"
+    }
+  ],
+  "total": 1,
+  "totalNetPnl": 1300.0
+}</code></pre>
+
+  <h2>Portfolio DB (database-backed positions)</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/portfolio-db/positions</code></td><td>List all positions for current user</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/portfolio-db/positions</code></td><td>Create a new position</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/portfolio-db/positions/{id}</code></td><td>Update a position</td></tr>
+    <tr><td><span class="method-delete">DELETE</span></td><td><code>/api/v1/portfolio-db/positions/{id}</code></td><td>Delete a position</td></tr>
+  </table>
+
+  <h2>Action Plans</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/action-plans/suggest-name</code></td><td>Returns a unique name for today's plan (e.g. <code>PLAN_01_06_2026</code>)</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/action-plans/stock-price</code></td><td>Fetch live price for a symbol. Query param: <code>symbol</code></td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/action-plans</code></td><td>List plans with optional filters: <code>plan_type</code>, <code>month</code></td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/action-plans</code></td><td>Create an empty plan. Body: <code>{"name","plan_type"}</code></td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/action-plans/{id}</code></td><td>Fetch plan header + all items</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/action-plans/{id}</code></td><td>Replace plan name, notes, set_analysis, ai_recommend, and all items</td></tr>
+    <tr><td><span class="method-delete">DELETE</span></td><td><code>/api/v1/action-plans/{id}</code></td><td>Hard delete plan and all items</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/action-plans/{id}/duplicate</code></td><td>Copy a plan with all its items</td></tr>
+  </table>
+
+  <h2>Weekly Scan</h2>
+  <h3>Symbol lists</h3>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/weekly-scan/symbol-lists</code></td><td>List all symbol lists for the current user, ordered by <code>sort_order</code></td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/weekly-scan/symbol-lists</code></td><td>Create a new named list. Body: <code>{"name","market","symbols":[]}</code></td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/weekly-scan/symbol-lists/{id}</code></td><td>Update name, market, symbols array, or sort_order</td></tr>
+    <tr><td><span class="method-delete">DELETE</span></td><td><code>/api/v1/weekly-scan/symbol-lists/{id}</code></td><td>Delete a symbol list</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/weekly-scan/config</code></td><td>Get legacy single-list config (auto-seeds SET50 defaults on first access)</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/weekly-scan/config</code></td><td>Replace legacy symbol list</td></tr>
+  </table>
+  <h3>Scans</h3>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/weekly-scan/suggest-name</code></td><td>Suggest next scan name (next or last Saturday convention)</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/weekly-scan/scans</code></td><td>List all scans newest-first with colour counts per scan</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/weekly-scan/scans</code></td><td>Create scan and populate from all active symbol lists. Body: <code>{"name"}</code></td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/weekly-scan/scans/{id}</code></td><td>Fetch scan header + all items + colour counts</td></tr>
+    <tr><td><span class="method-delete">DELETE</span></td><td><code>/api/v1/weekly-scan/scans/{id}</code></td><td>Hard-delete scan and all items</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/weekly-scan/scans/{id}/refresh</code></td><td>Merge current symbol lists into existing scan (new symbols added; existing items preserved)</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/weekly-scan/scans/{id}/items</code></td><td>Add a single symbol. Returns 409 if already present.</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/weekly-scan/scans/{id}/items/{symbol}</code></td><td>Upsert evaluation fields. Partial update — only provided fields are changed.</td></tr>
+    <tr><td><span class="method-delete">DELETE</span></td><td><code>/api/v1/weekly-scan/scans/{id}/items/{symbol}</code></td><td>Remove a symbol from a scan</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/weekly-scan/scans/{id}/week-prices</code></td><td>Monday open + Friday close for all symbols; derived from scan name date</td></tr>
+  </table>
+  <h3>Symbol notes</h3>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/weekly-scan/symbol-notes/{symbol}</code></td><td>Get the personal note for a symbol (returns empty string if none)</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/weekly-scan/symbol-notes/{symbol}</code></td><td>Upsert personal note. Body: <code>{"note":"..."}</code></td></tr>
+  </table>
+
+  <h3>Week prices example</h3>
+  <pre><code>GET /api/v1/weekly-scan/scans/a1b2c3d4-.../week-prices
+
+Response:
+{
+  "mon_date": "2026-06-02",
+  "fri_date": "2026-06-06",
+  "prices": {
+    "GULF":  { "mon": 63.50, "fri": 65.25 },
+    "KBANK": { "mon": 145.00, "fri": 143.50 },
+    "ADVANC": { "mon": null, "fri": null }
+  }
+}</code></pre>
+
+  <h2>Analytics</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/analytics/search</code></td><td>Look up price + name from Yahoo Finance. Query params: <code>symbol</code>, <code>market</code></td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/analytics/{symbol}/chart</code></td><td>OHLCV candle data. Params: <code>interval</code> (1d/1wk/1mo), <code>market</code></td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/analytics/{symbol}/analysis-log</code></td><td>Pre-generated analysis HTML/Markdown from the knowledge base volume</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/analytics/{symbol}/fibo-chart</code></td><td>Fibonacci chart image if available in knowledge base</td></tr>
+  </table>
+
+  <h2>AI Copilot</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/ai/copilot/stream</code></td><td>SSE streaming chat. Requires <code>ANTHROPIC_API_KEY</code>. Response: <code>text/event-stream</code></td></tr>
+    <tr><td><span class="method-delete">DELETE</span></td><td><code>/api/v1/ai/copilot/session/{id}</code></td><td>Clear session conversation history</td></tr>
+  </table>
+
+  <h2>App configuration</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/app-config</code></td><td>Get all config key-value pairs</td></tr>
+    <tr><td><span class="method-put">PUT</span></td><td><code>/api/v1/app-config</code></td><td>Save config values (e.g. Excel source path)</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/app-config/test-path</code></td><td>Test whether a file path exists inside the container</td></tr>
+  </table>
+
+  <h2>Middleware stack</h2>
+  <p>Applied outer-to-inner (last middleware runs first on request):</p>
+  <ol>
+    <li><code>SecurityHeadersMiddleware</code> — injects hardened response headers</li>
+    <li><code>RequestIdMiddleware</code> — injects <code>X-Request-ID</code> UUID into every request/response</li>
+    <li><code>CORSMiddleware</code> — outermost for preflight handling</li>
+    <li><code>SlowAPIMiddleware</code> — rate limiting: 200/min per IP globally; 5/min on auth endpoints</li>
+  </ol>
+  <p>Prometheus metrics exposed at <code>/metrics</code> when <code>METRICS_ENABLED=true</code>.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="frontend">
+  <h1>Frontend Architecture</h1>
+
+  <h2>App Router structure</h2>
+  <p>The Next.js 14 App Router uses route groups to separate authenticated and public pages. The <code>(dashboard)</code> group wraps all protected pages in a shared layout with <code>Sidebar</code> and <code>TopBar</code> components.</p>
+
+  <h2>Route map</h2>
+  <table>
+    <tr><th>Path</th><th>Page file</th><th>Description</th></tr>
+    <tr><td><code>/</code></td><td>redirect</td><td>Redirects to <code>/dashboard</code></td></tr>
+    <tr><td><code>/login</code></td><td><code>(auth)/login/page.tsx</code></td><td>Login form with JWT auth</td></tr>
+    <tr><td><code>/register</code></td><td><code>(auth)/register/page.tsx</code></td><td>Self-registration (if enabled)</td></tr>
+    <tr><td><code>/forgot-password</code></td><td><code>(auth)/forgot-password/page.tsx</code></td><td>Request password reset email</td></tr>
+    <tr><td><code>/reset-password</code></td><td><code>(auth)/reset-password/page.tsx</code></td><td>Set new password via token</td></tr>
+    <tr><td><code>/dashboard</code></td><td><code>(dashboard)/dashboard/page.tsx</code></td><td>Interactive drag-and-drop widget grid</td></tr>
+    <tr><td><code>/portfolio</code></td><td><code>(dashboard)/portfolio/page.tsx</code></td><td>Position table + performance charts (Excel-backed)</td></tr>
+    <tr><td><code>/analytics</code></td><td><code>(dashboard)/analytics/page.tsx</code></td><td>ECharts candlestick viewer, symbol search</td></tr>
+    <tr><td><code>/action-plan</code></td><td><code>(dashboard)/action-plan/page.tsx</code></td><td>Purchase + portfolio plan list</td></tr>
+    <tr><td><code>/action-plan/purchase/[id]</code></td><td><code>(dashboard)/action-plan/purchase/[id]/page.tsx</code></td><td>Purchase plan editor with inline item editing</td></tr>
+    <tr><td><code>/action-plan/portfolio/[id]</code></td><td><code>(dashboard)/action-plan/portfolio/[id]/page.tsx</code></td><td>Portfolio plan editor with inline item editing</td></tr>
+    <tr><td><code>/weekly-scan</code></td><td><code>(dashboard)/weekly-scan/page.tsx</code></td><td>Scan list index (new + existing scans)</td></tr>
+    <tr><td><code>/weekly-scan/[id]</code></td><td><code>(dashboard)/weekly-scan/[id]/page.tsx</code></td><td>Scan table with inline editing, filters, week prices</td></tr>
+    <tr><td><code>/weekly-scan/[id]/evaluate</code></td><td><code>(dashboard)/weekly-scan/[id]/evaluate/page.tsx</code></td><td>Full-screen sequential evaluation view with chart</td></tr>
+    <tr><td><code>/weekly-scan/[id]/dashboard</code></td><td><code>(dashboard)/weekly-scan/[id]/dashboard/page.tsx</code></td><td>Scan dashboard (Overview + Review tabs)</td></tr>
+    <tr><td><code>/ai-copilot</code></td><td><code>(dashboard)/ai-copilot/page.tsx</code></td><td>Streaming chat interface powered by Anthropic</td></tr>
+    <tr><td><code>/settings</code></td><td><code>(dashboard)/settings/page.tsx</code></td><td>Profile settings, password change</td></tr>
+    <tr><td><code>/settings/documents</code></td><td><code>(dashboard)/settings/documents/page.tsx</code></td><td>Built-in documentation viewer (this guide)</td></tr>
+    <tr><td><code>/settings/portfolio-db</code></td><td><code>(dashboard)/settings/portfolio-db/page.tsx</code></td><td>Database-backed position management (CRUD)</td></tr>
+  </table>
+
+  <h2>State management</h2>
+  <h3>Zustand stores</h3>
+  <table>
+    <tr><th>Store file</th><th>State held</th><th>Persistence</th></tr>
+    <tr><td><code>store/auth.ts</code></td><td>User object, accessToken, refreshToken, <code>isAuthenticated</code></td><td>sessionStorage — cleared on tab close</td></tr>
+    <tr><td><code>store/dashboard.ts</code></td><td>Widget layout array, edit mode flag, active widget IDs</td><td>localStorage key <code>dashboard-layout-v4</code></td></tr>
+    <tr><td><code>store/notifications.ts</code></td><td>Toast queue (type, message, duration)</td><td>Memory only</td></tr>
+  </table>
+
+  <h3>TanStack Query</h3>
+  <p>All server data goes through TanStack Query v5. Default configuration:</p>
+  <ul>
+    <li><code>staleTime: 60_000</code> — data considered fresh for 60 seconds</li>
+    <li><code>refetchInterval: 60_000</code> — auto-polls every 60 seconds for live data pages</li>
+    <li>Mutations invalidate the relevant query key on success</li>
+  </ul>
+
+  <h2>API client</h2>
+  <p>An Axios instance in <code>services/api.ts</code> handles all HTTP calls. Request interceptor attaches <code>Authorization: Bearer &lt;token&gt;</code> from Zustand. Response interceptor catches 401 responses and attempts a token refresh before retrying the original request once. On refresh failure, it calls <code>clearAuth()</code> and redirects to <code>/login</code>.</p>
+  <p>All frontend API calls go to <code>/api/proxy/...</code> (relative URL), never directly to <code>localhost:8000</code>.</p>
+
+  <h2>Key service files</h2>
+  <table>
+    <tr><th>Service file</th><th>Domain</th><th>Key methods</th></tr>
+    <tr><td><code>services/portfolioTrackerService.ts</code></td><td>Portfolio Tracker</td><td><code>getPositions</code>, <code>getPerformance</code>, <code>refreshData</code>, <code>getSetIndices</code></td></tr>
+    <tr><td><code>services/portfolioDbService.ts</code></td><td>Portfolio DB</td><td><code>getPositions</code>, <code>createPosition</code>, <code>updatePosition</code>, <code>deletePosition</code></td></tr>
+    <tr><td><code>services/actionPlanService.ts</code></td><td>Action Plans</td><td><code>getPlans</code>, <code>createPlan</code>, <code>updatePlan</code>, <code>deletePlan</code>, <code>getStockPrice</code></td></tr>
+    <tr><td><code>services/weeklyScanService.ts</code></td><td>Weekly Scan</td><td><code>getScans</code>, <code>createScan</code>, <code>getScan</code>, <code>updateItem</code>, <code>getWeekPrices</code>, <code>getSymbolLists</code></td></tr>
+    <tr><td><code>services/analyticsService.ts</code></td><td>Analytics</td><td><code>search</code>, <code>getChartData</code>, <code>getAnalysisLog</code></td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="dashboard">
+  <h1>Interactive Dashboard</h1>
+
+  <h2>Overview</h2>
+  <p>
+    The dashboard (<code>/dashboard</code>) is the landing page after login. It shows a high-level
+    summary of portfolio health and market conditions in a fully customisable widget grid.
+  </p>
+
+  <h2>Grid layout</h2>
+  <p>
+    The layout is powered by <code>react-grid-layout</code> using a 12-column grid. In
+    <strong>Edit Mode</strong>, widgets become draggable and resizable. Layout changes are saved
+    automatically to localStorage under the key <code>dashboard-layout-v4</code>.
+  </p>
+  <div class="callout tip">To reset the layout to the default, clear the <code>dashboard-layout-v4</code> key from localStorage and reload the page.</div>
+
+  <h2>Widget registry</h2>
+  <table>
+    <tr><th>Widget ID</th><th>Component file</th><th>Description</th></tr>
+    <tr><td><code>portfolio_summary</code></td><td><code>components/dashboard/PortfolioSummaryWidget.tsx</code></td><td>Four metric cards: Open P&amp;L, Open Positions (W/L), Win Rate, Avg P&amp;L per trade. Framer Motion animate-on-update.</td></tr>
+    <tr><td><code>portfolio_chart</code></td><td><code>components/dashboard/PortfolioChartWidget.tsx</code></td><td>Compact ECharts cumulative P&amp;L line chart, last 3 months.</td></tr>
+    <tr><td><code>holdings_table</code></td><td><code>components/dashboard/HoldingsTableWidget.tsx</code></td><td>Top open positions sorted by P&amp;L. Columns: Symbol, Direction, P&amp;L, P&amp;L %.</td></tr>
+    <tr><td><code>allocation_chart</code></td><td><code>components/dashboard/AllocationChartWidget.tsx</code></td><td>ECharts donut — % of portfolio value per stock (currentPrice × size).</td></tr>
+    <tr><td><code>risk_metrics</code></td><td><code>components/dashboard/RiskMetricsWidget.tsx</code></td><td>Win rate, max drawdown, Sharpe-like metrics.</td></tr>
+    <tr><td><code>ai_insights</code></td><td><code>components/dashboard/AiInsightsWidget.tsx</code></td><td>Shortcut to AI Copilot with "Start chatting" prompt.</td></tr>
+    <tr><td><code>market_pulse</code></td><td><code>components/dashboard/MarketPulseWidget.tsx</code></td><td>Live SET + global indices strip with animated pulse dots. 60 s auto-refresh.</td></tr>
+    <tr><td><code>scan_heat_tile</code></td><td><code>components/dashboard/ScanHeatTileWidget.tsx</code></td><td>Intersects the latest weekly scan colour marks with active portfolio positions; coloured tiles per symbol.</td></tr>
+    <tr><td><code>pnl_waterfall</code></td><td><code>components/dashboard/PnlWaterfallWidget.tsx</code></td><td>Horizontal ECharts bar sorted by P&amp;L descending. 1M / 3M / All toggle. Green bars = positive, red = negative.</td></tr>
+  </table>
+
+  <h2>Data sources</h2>
+  <ul>
+    <li>All widget data is fetched from <code>GET /api/v1/portfolio-tracker/positions?status=active</code></li>
+    <li>Market Pulse uses <code>/api/v1/portfolio-tracker/market/set-indices</code> and <code>/api/v1/portfolio-tracker/market/global-indices</code></li>
+    <li>TanStack Query with <code>staleTime: 60_000</code> and <code>refetchInterval: 60_000</code> across all widgets</li>
+  </ul>
+
+  <h2>Empty state</h2>
+  <p>If the Excel file is not configured or not found, widgets display a placeholder directing the user to <strong>Settings → App Configuration</strong> to set the source file path.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="portfolio">
+  <h1>Portfolio Tracker</h1>
+
+  <h2>Overview</h2>
+  <p>
+    The portfolio page (<code>/portfolio</code>) is the primary tracking interface. It reads trade
+    data from an Excel file (<code>Investment tracking.xlsx</code>) and enriches open positions with
+    live prices from Yahoo Finance via <code>yfinance</code>.
+  </p>
+
+  <h2>Excel file structure</h2>
+  <p>Source of truth: a single sheet named <code>Sheet1</code>. Each row is one closed or open trade.</p>
+  <table>
+    <tr><th>Column name (exact)</th><th>Type</th><th>Description</th></tr>
+    <tr><td>Symbol</td><td>text</td><td>Thai SET ticker (e.g. GULF, PTT)</td></tr>
+    <tr><td>Direction</td><td>text</td><td><code>Long</code> or <code>Short</code></td></tr>
+    <tr><td>Entry Date</td><td>date</td><td>Trade entry date</td></tr>
+    <tr><td>Entry Price</td><td>number</td><td>Price paid per share</td></tr>
+    <tr><td>Exit Date</td><td>date</td><td>Exit date (blank = still open)</td></tr>
+    <tr><td>Exit Price</td><td>number/formula</td><td>Exit price; blank or <code>"NOT SELL"</code> = open position</td></tr>
+    <tr><td>Position Size</td><td>number</td><td>Number of shares</td></tr>
+    <tr><td>SL</td><td>number</td><td>Stop-loss price</td></tr>
+    <tr><td>TP</td><td>number</td><td>Take-profit price</td></tr>
+    <tr><td>Remarks</td><td>text</td><td>Optional notes</td></tr>
+  </table>
+  <div class="callout">An <strong>open position</strong> is detected when <code>Exit Price</code> is NaN, blank, or the string <code>"NOT SELL"</code>.</div>
+
+  <h2>Filters</h2>
+  <ul>
+    <li><strong>From date</strong> — default: 3 months ago</li>
+    <li><strong>To date</strong> — default: today (quick-set "Today" button)</li>
+    <li><strong>Status</strong> — Active / All / Closed</li>
+  </ul>
+  <p>Filters persist in localStorage key <code>portfolio_criteria</code> across page refreshes.</p>
+
+  <h2>Metric cards</h2>
+  <p>Four cards update with each filter change: Total P&amp;L · Positions · Win Rate · Avg P&amp;L.</p>
+
+  <h2>Positions table</h2>
+  <p>Columns: Symbol · Direction (<code>↑ L</code> / <code>↓ S</code>) · Entry Date · Entry Price · Current Price · Size · Net P&amp;L (+ %) · SL · TP · Status badge. Footer row shows total P&amp;L.</p>
+
+  <h2>Performance history chart</h2>
+  <p>A dual-axis ECharts chart: left axis = cumulative P&amp;L line (green area fill), right axis = period P&amp;L bars. Period selector (Daily / Weekly / Monthly) applies to both the chart and the Performance by Date table below it.</p>
+
+  <h2>Performance by date table</h2>
+  <p>Collapsible, grouped by the selected period. Columns: Period · Net P&amp;L · Accumulated P&amp;L · Wins · Losses · Total · Win Rate. Clicking any row opens a <strong>Transaction Modal</strong> with individual trades for that period.</p>
+
+  <h2>Performance by stock</h2>
+  <ul>
+    <li>Horizontal ECharts bar chart, colour-coded green/red per stock</li>
+    <li>Collapsible table: Symbol · Investment · Current Value · Net P&amp;L · P&amp;L% · Wins · Losses · Win Rate (with mini progress bar)</li>
+  </ul>
+
+  <h2>Refresh flow</h2>
+  <p>The <strong>Refresh</strong> button (<code>↺</code>) triggers <code>POST /api/v1/portfolio-tracker/refresh</code>. The backend:</p>
+  <ol>
+    <li>Reads the source file at <code>INVESTMENT_EXCEL_SOURCE_PATH</code></li>
+    <li>Copies it to the working path at <code>INVESTMENT_EXCEL_PATH</code></li>
+    <li>Writes a <code>.cache_bust</code> timestamp file — all 4 workers see this and clear their in-memory cache on next request</li>
+  </ol>
+  <p>A progress modal shows each step. TanStack Query refetches automatically after the mutation succeeds.</p>
+
+  <h2>Raw data viewer</h2>
+  <p>The <strong>Raw Data</strong> button opens a full-screen modal with every Excel row as-is, useful for debugging column mapping issues.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="weekly-scan">
+  <h1>Weekly Scan Module</h1>
+
+  <h2>Overview</h2>
+  <p>
+    The Weekly Scan module supports a disciplined, repeatable workflow: once per week, the analyst
+    creates a dated scan from their watchlists, evaluates each symbol's chart setup, assigns a
+    colour verdict, and promotes the best setups to an action plan. The module is personal —
+    each user maintains independent scans, symbol lists, and notes.
+  </p>
+
+  <h2>Core concepts</h2>
+
+  <h3>Symbol lists</h3>
+  <p>A user maintains one or more named <strong>symbol lists</strong> (e.g. "SET50", "Crypto DRs", "US Watchlist"). Each list has a market context that drives Yahoo Finance ticker suffix logic. Lists are ordered by <code>sort_order</code>; symbols within a list preserve the user-defined order.</p>
+
+  <h3>Scans</h3>
+  <p>A <strong>scan</strong> is a dated snapshot. Name convention: <code>WEEKLY_SCAN_DD_MM_YYYY</code> (target Saturday). When created, all symbols from all active lists are copied into the scan grouped by list name. Items are not automatically updated when the underlying list changes — use <strong>Refresh</strong> to merge.</p>
+
+  <h3>Colour mark system</h3>
+  <table>
+    <tr><th>Mark</th><th>Meaning</th></tr>
+    <tr><td><span class="badge badge-cyan">CYAN</span></td><td>Strong buy candidate — top priority. Appears first in the Evaluate queue and Dashboard charts.</td></tr>
+    <tr><td><span class="badge badge-green">GREEN</span></td><td>Buy candidate.</td></tr>
+    <tr><td><span class="badge badge-yellow">YELLOW</span></td><td>Watch / borderline — needs more data.</td></tr>
+    <tr><td><span class="badge badge-red">RED</span></td><td>Skip — no setup. In Evaluate view, selecting RED auto-advances to the next symbol.</td></tr>
+    <tr><td><span class="badge badge-purple">PURPLE</span></td><td>Already in portfolio. Assigned automatically by <strong>Mark Portfolio Symbols</strong> — cross-references active positions with scan symbols.</td></tr>
+    <tr><td><span class="badge badge-grey">—</span></td><td>Not yet evaluated (pending).</td></tr>
+  </table>
+
+  <h3>Strategies</h3>
+  <table>
+    <tr><th>Strategy</th><th>Short code</th></tr>
+    <tr><td>BREAK OUT</td><td>BO</td></tr>
+    <tr><td>BUY ON DIP</td><td>BOD</td></tr>
+    <tr><td>แท่งเทียนกลับตัว (Candle Reversal)</td><td>ททกต</td></tr>
+    <tr><td>ยยจท (Thai technical pattern)</td><td>ยยจท</td></tr>
+    <tr><td>NEWS</td><td>NEWS</td></tr>
+    <tr><td>AJ PAO</td><td>PAO</td></tr>
+    <tr><td>OTHERS</td><td>OTH. (custom free text)</td></tr>
+  </table>
+
+  <h2>Scan table view (<code>/weekly-scan/[id]</code>)</h2>
+  <p>All symbols in a sortable, filterable inline-edit table.</p>
+  <table>
+    <tr><th>Column</th><th>Description</th></tr>
+    <tr><td>Symbol</td><td>Ticker; click to open the Analytics modal</td></tr>
+    <tr><td>List</td><td>Source symbol list name (used as tab filter)</td></tr>
+    <tr><td>Market</td><td>SET / US / HK / CRYPTO</td></tr>
+    <tr><td>Mon Open</td><td>Monday open price for the scan week from Yahoo Finance</td></tr>
+    <tr><td>Fri Close</td><td>Friday close price for the scan week</td></tr>
+    <tr><td>Week %</td><td>(Fri − Mon) / Mon × 100; green positive, red negative</td></tr>
+    <tr><td>Color</td><td>Inline colour picker (five coloured dots)</td></tr>
+    <tr><td>Strategy</td><td>Inline icon buttons for each strategy preset</td></tr>
+    <tr><td>Buy / Size / TP / SL</td><td>Inline editable numbers (click to edit, blur/Enter to save)</td></tr>
+    <tr><td>Remark</td><td>Inline editable free-text</td></tr>
+    <tr><td>Actions</td><td>Add to purchase plan (cart icon); delete symbol</td></tr>
+  </table>
+  <p>Filters: list tabs, symbol text search, colour multi-select, strategy text search.</p>
+
+  <h2>Evaluate view (<code>/weekly-scan/[id]/evaluate</code>)</h2>
+  <p>Full-screen sequential review. Accessible via <strong>Start Scan</strong> with mode selector:</p>
+  <ul>
+    <li><strong>All symbols</strong> — every symbol in the selected list</li>
+    <li><strong>Remaining only</strong> — symbols with no colour mark</li>
+    <li><strong>[Colour] only</strong> — already-marked symbols of a specific colour</li>
+  </ul>
+  <p>Layout:</p>
+  <ul>
+    <li><strong>Left panel</strong>: scrollable symbol queue with colour indicators</li>
+    <li><strong>Centre</strong>: <code>EChartsChart</code> — OHLCV candlestick + volume + MA lines + RSI + Stochastic; interval selector (1d / 1wk / 1mo)</li>
+    <li><strong>Right panel</strong>: evaluation form (colour picker, strategy, buy/size/TP/SL/remark)</li>
+    <li><strong>Top bar</strong>: live price and day change % for the current symbol</li>
+    <li><strong>Analysis Log panel</strong> (below chart): pre-generated analysis HTML or Markdown from <code>/app/investment_agent/</code></li>
+    <li><strong>Fibonacci Chart panel</strong>: Fibonacci chart image if available</li>
+    <li><strong>Notes panel</strong>: personal notes persisted in <code>symbol_notes</code> table (per user, per symbol, across all scans)</li>
+  </ul>
+  <p>RED selection auto-advances to the next symbol. <strong>Save &amp; Close</strong> saves the current evaluation and returns to the scan table.</p>
+
+  <h2>Scan dashboard (<code>/weekly-scan/[id]/dashboard</code>)</h2>
+  <p>One-page summary of a completed scan.</p>
+  <ul>
+    <li><strong>Overview tab</strong>: stat cards (Total symbols, Evaluated, CYAN+GREEN actionable, best/worst week performer), ECharts donut of colour distribution, bar chart of week % by colour group</li>
+    <li><strong>Review tab</strong>: CYAN+GREEN symbol returns bar chart compared against SET50 for the scan week; filtered symbol tables grouped by colour</li>
+  </ul>
+
+  <h2>Add to purchase plan</h2>
+  <p>From the scan table, click the cart icon on any row. The <strong>Add to Plan</strong> modal lists the five most recent purchase plans. Selecting one appends the symbol to that plan's items, carrying over buy price, size, TP, SL, and strategy.</p>
+
+  <h2>Week price calculation</h2>
+  <p>The backend parses the <code>DD_MM_YYYY</code> date from the scan name to determine the Monday–Friday window. Prices are fetched concurrently (semaphore of 5) from Yahoo Finance. Ticker suffix rules:</p>
+  <table>
+    <tr><th>Market</th><th>Ticker format</th></tr>
+    <tr><td>SET</td><td><code>{SYMBOL}.BK</code></td></tr>
+    <tr><td>US / OTHER</td><td>No suffix</td></tr>
+    <tr><td>HK</td><td>Zero-pad to 4 digits + <code>.HK</code></td></tr>
+    <tr><td>CRYPTO / DR symbols</td><td>No suffix</td></tr>
+  </table>
+  <p>If the scan week is in the future (Monday has not yet occurred), the most recent close is returned as the proxy for Monday open.</p>
+
+  <h2>Edge cases</h2>
+  <table>
+    <tr><th>Condition</th><th>Behaviour</th></tr>
+    <tr><td>No symbol lists configured</td><td>Scan created using SET50 defaults (50 symbols + 2 DRs)</td></tr>
+    <tr><td>Scan name does not match <code>DD_MM_YYYY</code></td><td>Week price columns show <code>—</code> for all symbols</td></tr>
+    <tr><td>yfinance returns no data for a symbol</td><td>Mon/Fri columns show <code>—</code>; no error raised</td></tr>
+    <tr><td>Symbol already in scan</td><td><code>POST .../items</code> returns 409; UI prevents duplicate add</td></tr>
+    <tr><td>No purchase plans exist</td><td>Add to Plan modal shows informational message; no list displayed</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="action-plan">
+  <h1>Action Plan</h1>
+
+  <h2>Overview</h2>
+  <p>
+    The Action Plan module (<code>/action-plan</code>) provides structured trade planning documents.
+    There are two plan types, each with its own item schema and editor.
+  </p>
+
+  <h2>Plan types</h2>
+  <table>
+    <tr><th>Type</th><th>Purpose</th><th>Item fields</th></tr>
+    <tr>
+      <td><span class="badge badge-blue">purchase</span></td>
+      <td>Watchlist with entry targets for stocks not yet bought</td>
+      <td>stock, current_price, buy_price, size, TP, SL, strategy, reason, triggered</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-purple">portfolio</span></td>
+      <td>Active position sizing and management plan</td>
+      <td>symbol, current_price, entry_price, size, TP, SL, order_size</td>
+    </tr>
+  </table>
+
+  <h2>Plan list (<code>/action-plan</code>)</h2>
+  <ul>
+    <li>Lists all plans with type badge, name, item count, and last-updated date</li>
+    <li>Filter by type (purchase / portfolio) and month</li>
+    <li>New plan button calls <code>GET /api/v1/action-plans/suggest-name</code> to pre-fill today's date-based name</li>
+  </ul>
+
+  <h2>Purchase plan editor (<code>/action-plan/purchase/[id]</code>)</h2>
+  <ul>
+    <li>Header: plan name (editable), SET analysis text block, AI recommendation text block</li>
+    <li>Items table: inline editing of all fields</li>
+    <li>Adding a stock fetches its live price via <code>GET /api/v1/action-plans/stock-price?symbol=X</code></li>
+    <li><strong>Triggered</strong> toggle marks an item when the entry condition is met</li>
+    <li>Drag-to-reorder via <code>sort_order</code></li>
+  </ul>
+
+  <h2>Portfolio plan editor (<code>/action-plan/portfolio/[id]</code>)</h2>
+  <ul>
+    <li>Same structure as purchase plan editor</li>
+    <li>Items represent open positions; <code>order_size</code> tracks how many shares to add or trim</li>
+    <li>Live price fetched on row creation and shown alongside entry price for quick risk/reward reference</li>
+  </ul>
+
+  <h2>Integration with Weekly Scan</h2>
+  <p>From the scan table, the "Add to Plan" modal appends any scan item to an existing purchase plan, carrying over buy_price, size, TP, SL, strategy, and symbol in one click.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="analytics">
+  <h1>Analytics</h1>
+
+  <h2>Overview</h2>
+  <p>
+    The Analytics page (<code>/analytics</code>) and the <code>AnalyticsModal</code> component
+    provide full OHLCV candlestick charts for any symbol, accessible from the scan table, evaluate
+    view, and portfolio page.
+  </p>
+
+  <h2>EChartsChart component</h2>
+  <p>
+    <code>components/analytics/EChartsChart.tsx</code> — the core charting component. Features:
+  </p>
+  <ul>
+    <li>OHLCV candlestick chart with volume panel below</li>
+    <li>Moving average lines (MA5, MA10, MA20, MA60)</li>
+    <li>Log scale toggle for better visibility of large price ranges</li>
+    <li>dataZoom slider + brush for custom date ranges</li>
+    <li>VRVP (Volume by Price) panel on the right</li>
+    <li>Interval selector: <code>1d</code> / <code>1wk</code> / <code>1mo</code></li>
+    <li>RSI and Stochastic oscillator panels (Evaluate view)</li>
+    <li>Dark theme: <code>backgroundColor: '#0d1117'</code></li>
+  </ul>
+
+  <h2>AnalyticsModal</h2>
+  <p>
+    Wraps <code>EChartsChart</code> in a full-screen dialog. Opened by clicking a symbol ticker
+    in the scan table, the evaluate view, or the portfolio page. Fetches data via
+    <code>GET /api/v1/analytics/{symbol}/chart</code>.
+  </p>
+
+  <h2>Symbol search</h2>
+  <p>
+    <code>analyticsService.search(symbol, market)</code> calls
+    <code>GET /api/v1/analytics/search?symbol=X&amp;market=SET</code> which looks up the
+    current price and company name via Yahoo Finance. This is the same lookup used when adding
+    a symbol to an action plan.
+  </p>
+
+  <h2>Analysis log and Fibonacci chart</h2>
+  <p>
+    For symbols that have pre-generated analysis files in the AI knowledge base volume
+    (<code>/app/investment_agent/</code>), the Evaluate view shows an <strong>Analysis Log</strong>
+    panel (HTML or Markdown rendered inline) and a <strong>Fibonacci Chart</strong> image panel.
+    These are served by <code>GET /api/v1/analytics/{symbol}/analysis-log</code> and
+    <code>GET /api/v1/analytics/{symbol}/fibo-chart</code>.
+  </p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="ai">
+  <h1>AI Copilot</h1>
+
+  <h2>Overview</h2>
+  <p>
+    The AI Copilot (<code>/ai-copilot</code>) is a streaming chat interface backed by Anthropic's
+    Claude claude-sonnet-4-6 model. The assistant has access to portfolio tools and can answer questions
+    about positions, performance, and market data.
+  </p>
+
+  <h2>How it works</h2>
+  <ol>
+    <li>The browser sends a <code>POST /api/v1/ai/copilot/stream</code> with the user message and session ID</li>
+    <li>The Next.js proxy streams the <code>text/event-stream</code> SSE response back to the browser</li>
+    <li>FastAPI runs a tool-use loop (up to 6 iterations) calling portfolio tools as needed</li>
+    <li>SSE events are emitted for each step: <code>text</code>, <code>tool_start</code>, <code>tool_end</code>, <code>error</code>, <code>done</code></li>
+  </ol>
+
+  <h2>Available tools</h2>
+  <table>
+    <tr><th>Tool name</th><th>What it does</th></tr>
+    <tr><td><code>get_portfolio_positions</code></td><td>Reads all current positions from the Excel file via <code>portfolio_excel.get_positions()</code></td></tr>
+    <tr><td><code>get_live_price</code></td><td>Fetches the current price for a symbol via yfinance</td></tr>
+    <tr><td><code>get_performance_summary</code></td><td>Returns P&amp;L summary metrics from the portfolio Excel</td></tr>
+    <tr><td><code>read_knowledge_doc</code></td><td>Reads a Markdown knowledge base file from <code>/app/investment_agent/knowledge/</code></td></tr>
+    <tr><td><code>run_analysis_script</code></td><td>Runs a Python analysis script from the knowledge base (subprocess)</td></tr>
+  </table>
+
+  <h2>Configuration</h2>
+  <ul>
+    <li>Requires <code>ANTHROPIC_API_KEY</code> in <code>backend/.env</code>; AI Copilot is disabled (returns 503) without it</li>
+    <li>Model: <code>claude-sonnet-4-6</code></li>
+    <li>AI knowledge base mounted at <code>/app/investment_agent</code> (read-only, path set by <code>INVESTMENT_AGENT_PATH</code> host volume)</li>
+  </ul>
+
+  <div class="callout warn">Session history is stored in the FastAPI worker's memory (<code>_SESSIONS</code> dict). With 4 Uvicorn workers, sessions are sticky per TCP connection. History does not persist across container restarts.</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="settings">
+  <h1>Settings &amp; Administration</h1>
+
+  <h2>Profile settings (<code>/settings</code>)</h2>
+  <ul>
+    <li>Update display name and email via <code>PUT /api/v1/users/me</code></li>
+    <li>Change own password via <code>PUT /api/v1/users/me/password</code> (requires current password)</li>
+  </ul>
+
+  <h2>Portfolio configuration</h2>
+  <ul>
+    <li>Configure the Excel source file path (stored in <code>app_config</code> table)</li>
+    <li>Test the path inside the container via <code>POST /api/v1/app-config/test-path</code></li>
+    <li>Trigger a data refresh from this page</li>
+  </ul>
+
+  <h2>Symbol lists</h2>
+  <ul>
+    <li>Full CRUD for named watchlists (<code>/api/v1/weekly-scan/symbol-lists</code>)</li>
+    <li><strong>Sync from Portfolio</strong> button: merges all active position symbols from the Excel file into the selected list</li>
+    <li>Drag-to-reorder list sort order</li>
+  </ul>
+
+  <h2>App configuration (admin only)</h2>
+  <ul>
+    <li>Key-value config store in the database (<code>app_config</code> table)</li>
+    <li>Used for the Excel source path and other backend settings that should be editable at runtime without redeploying</li>
+    <li>Accessible at <code>GET/PUT /api/v1/app-config</code></li>
+  </ul>
+
+  <h2>User management (admin only)</h2>
+  <ul>
+    <li>List all users with role and active status</li>
+    <li>Create new users and assign roles (<code>admin</code> / <code>analyst</code> / <code>viewer</code>)</li>
+    <li>Edit name, role, and <code>is_active</code> flag</li>
+    <li>Force-set another user's password</li>
+    <li>Soft-delete by setting <code>is_active = false</code> (preferred over hard delete)</li>
+  </ul>
+
+  <h2>Portfolio DB (<code>/settings/portfolio-db</code>)</h2>
+  <p>An alternative database-backed position tracker independent of the Excel file. Full CRUD for positions stored in <code>portfolio_db_positions</code>. Useful for tracking positions that are not yet in the Excel, or for future migration away from Excel dependency.</p>
+
+  <h2>Documents viewer (<code>/settings/documents</code>)</h2>
+  <p>Built-in documentation viewer. Fetches the doc tree manifest from <code>GET /api/v1/docs-content/manifest</code> and renders individual Markdown or HTML files served by <code>GET /api/v1/docs-content/file?path=</code>. HTML files (like this guide) are rendered inside a sandboxed <code>&lt;iframe&gt;</code>.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="docker">
+  <h1>Docker &amp; Deployment</h1>
+
+  <h2>Services overview</h2>
+  <table>
+    <tr><th>Container</th><th>Image</th><th>Port</th><th>Health check</th></tr>
+    <tr><td><code>inv_postgres</code></td><td>postgres:16-alpine</td><td>5432</td><td><code>pg_isready -U postgres -d investment_db</code></td></tr>
+    <tr><td><code>inv_redis</code></td><td>redis:7-alpine</td><td>6379</td><td><code>redis-cli ping</code></td></tr>
+    <tr><td><code>inv_backend</code></td><td>custom Python 3.12-slim</td><td>8000</td><td><code>curl -f http://localhost:8000/api/v1/health/live</code> (start period: 30 s)</td></tr>
+    <tr><td><code>inv_frontend</code></td><td>custom Node 20-alpine</td><td>3000</td><td>none (depends on backend healthy)</td></tr>
+    <tr><td><code>inv_adminer</code></td><td>adminer:latest</td><td>8080</td><td>none (<code>--profile dev</code> only)</td></tr>
+  </table>
+  <p>All containers connect to <code>dashboard-net</code> (Docker bridge). Services communicate by hostname: <code>backend</code>, <code>postgres</code>, <code>redis</code>, <code>frontend</code>.</p>
+
+  <h2>Backend Dockerfile</h2>
+  <p>Multi-stage build: <code>builder</code> stage installs Python packages; <code>runtime</code> stage copies them to a non-root <code>appuser</code>.</p>
+  <pre><code>FROM python:3.12-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y gcc libpq-dev curl
+COPY backend/requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+FROM python:3.12-slim AS runtime
+RUN addgroup --gid 1001 appgroup && \
+    adduser --uid 1001 --gid 1001 --disabled-password --no-create-home appuser
+WORKDIR /app
+RUN apt-get update && apt-get install -y libpq5 curl
+COPY --from=builder /root/.local /home/appuser/.local
+COPY backend/ .
+RUN chown -R appuser:appgroup /app
+USER appuser
+ENV PATH=/home/appuser/.local/bin:$PATH
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]</code></pre>
+  <p>In development, the <code>./backend:/app:cached</code> volume mount provides hot-reload without rebuilding the image. Uvicorn's <code>--reload</code> flag watches for file changes.</p>
+
+  <h2>Frontend Dockerfile</h2>
+  <p>Three-stage build: <code>deps</code> installs npm packages; <code>builder</code> runs <code>next build</code>; <code>runtime</code> uses Next.js standalone output.</p>
+  <pre><code>FROM node:20-alpine AS deps
+WORKDIR /app
+RUN apk add --no-cache libc6-compat
+COPY frontend/package.json ./
+RUN npm install --no-audit --legacy-peer-deps
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ .
+RUN npm run build          # requires output: 'standalone' in next.config.js
+
+FROM node:20-alpine AS runtime
+RUN addgroup --gid 1001 nodejs && \
+    adduser --uid 1001 --ingroup nodejs --disabled-password nextjs
+WORKDIR /app
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+USER nextjs
+ENV NODE_ENV=production PORT=3000
+CMD ["node", "server.js"]</code></pre>
+  <div class="callout warn">The frontend is a <strong>production build</strong>. TypeScript and CSS changes require rebuilding: <code>docker compose build frontend &amp;&amp; docker compose up -d frontend</code>. There is no hot-reload for the frontend container.</div>
+
+  <h2>Volume mounts</h2>
+  <table>
+    <tr><th>Named volume / host path</th><th>Container path</th><th>Mode</th><th>Purpose</th></tr>
+    <tr><td><code>postgres_data</code></td><td><code>/var/lib/postgresql/data</code></td><td>rw</td><td>PostgreSQL data persistence</td></tr>
+    <tr><td><code>redis_data</code></td><td><code>/data</code></td><td>rw</td><td>Redis AOF persistence</td></tr>
+    <tr><td><code>uploads_data</code></td><td><code>/app/uploads</code></td><td>rw</td><td>Working Excel copy + <code>.cache_bust</code> file</td></tr>
+    <tr><td><code>./backend</code></td><td><code>/app</code></td><td>cached</td><td>Hot-reload source (dev only; remove for prod)</td></tr>
+    <tr><td><code>&lt;host Excel dir&gt;</code></td><td><code>/app/investment_data</code></td><td>ro</td><td>Source Excel file</td></tr>
+    <tr><td><code>&lt;host agent dir&gt;</code></td><td><code>/app/investment_agent</code></td><td>ro</td><td>AI knowledge base + analysis scripts</td></tr>
+    <tr><td><code>./docs</code></td><td><code>/app/docs</code></td><td>ro</td><td>Documentation tree served by <code>docs-content</code> API</td></tr>
+  </table>
+
+  <h2>Cloudflare Tunnel deployment</h2>
+  <p>
+    Because all browser API calls go through the Next.js proxy route (not directly to port 8000),
+    you only need to expose port 3000 via the Cloudflare Tunnel. The <code>BACKEND_URL</code>
+    env var remains <code>http://backend:8000</code> — the internal Docker hostname — regardless
+    of the public URL. No frontend rebuild is required when the public URL changes.
+  </p>
+  <pre><code># Cloudflare Tunnel example: expose only the frontend
+cloudflared tunnel run --url http://localhost:3000 my-tunnel</code></pre>
+
+  <h2>Common operational commands</h2>
+  <pre><code># Build and start all services
+docker compose up -d --build
+
+# Start with Adminer DB browser
+docker compose --profile dev up -d
+
+# Rebuild and restart a single service
+docker compose build backend && docker compose up -d backend
+docker compose build frontend && docker compose up -d frontend
+
+# View logs
+docker logs inv_backend -f
+docker logs inv_frontend -f
+
+# Access PostgreSQL directly
+docker exec -it inv_postgres psql -U postgres -d investment_db
+
+# Access Redis CLI
+docker exec -it inv_redis redis-cli
+
+# Run Alembic migrations
+docker exec -it inv_backend alembic upgrade head
+
+# Tear down (preserve data volumes)
+docker compose down
+
+# Tear down and delete all data
+docker compose down -v</code></pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="decisions">
+  <h1>Design Decisions</h1>
+
+  <h2>Why Excel as the portfolio source of truth</h2>
+  <p>
+    The Excel file (<code>Investment tracking.xlsx</code>) was the investor's existing workflow
+    before this app was built. Keeping it as the source means no data migration, no double-entry,
+    and the Excel remains the authoritative record. The backend mounts it read-only and copies it
+    to a working location on explicit refresh. The <code>portfolio_db_positions</code> table exists
+    as a future migration path if the Excel dependency is eventually removed.
+  </p>
+
+  <h2>Why the Next.js proxy pattern</h2>
+  <p>
+    Decoupling the frontend URL from the backend location is critical for a self-hosted tool that
+    may be exposed via different tunnels (Cloudflare, ngrok, reverse proxy). If the browser called
+    <code>http://localhost:8000</code> directly, that URL would be baked into the JavaScript bundle
+    at build time and would break behind any tunnel. The proxy means the frontend image is built
+    once and the <code>BACKEND_URL</code> env var is changed at container start time to point to
+    the correct internal hostname.
+  </p>
+
+  <h2>Why weekly scans are user-scoped</h2>
+  <p>
+    The weekly scan is a personal investment discipline tool. Each user maintains independent
+    watchlists, evaluation verdicts, and notes. There is no shared scan or collaborative review
+    workflow by design — the colour marks and strategies reflect individual conviction, not
+    committee consensus. This also simplifies the data model: all scan tables cascade-delete on
+    <code>users.id</code> with no cross-user foreign keys.
+  </p>
+
+  <h2>Why Alembic for database migrations</h2>
+  <p>
+    Early versions of the project used <code>Base.metadata.create_all</code> at startup to
+    auto-create tables. This is fragile for production: it cannot drop columns, rename tables, or
+    add constraints to existing tables. Alembic's <code>alembic revision --autogenerate</code>
+    command inspects the ORM models and the current database state and generates a versioned
+    migration script, making schema evolution traceable and reversible. The
+    <code>create_all</code> call is retained only as a development convenience for fresh containers
+    that have no migration history.
+  </p>
+
+  <h2>Why react-grid-layout for the dashboard</h2>
+  <p>
+    The dashboard is intended to be personalised to the investor's own priorities. Some users
+    want the allocation chart prominent; others want the holdings table front-and-centre.
+    <code>react-grid-layout</code> provides drag-and-drop and resize for a 12-column grid with
+    breakpoint support. Layout state is persisted in localStorage so the user's arrangement
+    survives page refreshes and container restarts.
+  </p>
+
+  <h2>Why Zustand + TanStack Query (not Redux)</h2>
+  <p>
+    Zustand is used only for truly global, non-server state: auth tokens, layout preferences, and
+    UI notifications. All server data (positions, plans, scans) is managed by TanStack Query, which
+    provides caching, background refetch, mutation-based invalidation, and stale-while-revalidate
+    semantics out of the box. This separation avoids the complexity of manually managing loading
+    and error states in a global Redux store for every API call.
+  </p>
+
+  <h2>Why 4 Uvicorn workers and a file-based cache bust</h2>
+  <p>
+    Python's GIL limits true parallelism, but multiple workers allow concurrent request handling
+    for independent requests (e.g. one user refreshing data while another runs a weekly scan
+    update). The trade-off is that in-memory state (caches, session history) is not shared.
+    The <code>.cache_bust</code> file provides a cheap cross-worker cache invalidation mechanism
+    without requiring Redis pub/sub or a distributed lock.
+  </p>
+</section>
+
+</main>
+<script>
+  // Intercept all anchor clicks — about:srcdoc doesn't support hash navigation
+  document.querySelectorAll('a[href^="#"]').forEach(function(a) {
+    a.addEventListener('click', function(e) {
+      e.preventDefault()
+      var id = this.getAttribute('href').slice(1)
+      var target = document.getElementById(id)
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  })
+
+  // Active nav highlight via IntersectionObserver
+  const links = document.querySelectorAll('nav a')
+  const sections = [...document.querySelectorAll('section[id]')]
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#' + e.target.id))
+      }
+    })
+  }, { threshold: 0.15 })
+  sections.forEach(s => obs.observe(s))
+</script>
+</body>
+</html>

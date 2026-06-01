@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Authentication — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Authentication — Technical Design</h1>
+
+<h2>1. JWT implementation</h2>
+<p><strong>File:</strong> <code>backend/app/auth/jwt.py</code></p>
+<p>JWTs are signed with HS256 (HMAC-SHA256) using a symmetric key. The same key is used for signing and verification, so it must be kept secret. All token operations go through this module.</p>
+<pre><code>from jose import jwt, JWTError
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(plain: str) -> str:
+    return pwd_context.hash(plain)
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+def create_access_token(sub: str) -> str:
+    expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
+    return jwt.encode(
+        {"sub": sub, "exp": expire, "type": "access"},
+        settings.app_secret_key,
+        algorithm=settings.jwt_algorithm   # "HS256"
+    )
+
+def create_refresh_token(sub: str) -> str:
+    expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
+    return jwt.encode(
+        {"sub": sub, "exp": expire, "type": "refresh"},
+        settings.app_secret_key,
+        algorithm=settings.jwt_algorithm
+    )
+
+def verify_token(token: str) -> dict:
+    # Raises JWTError if the token is expired, has an invalid signature,
+    # or is malformed. The caller handles the exception.
+    payload = jwt.decode(token, settings.app_secret_key, algorithms=[settings.jwt_algorithm])
+    return payload</code></pre>
+
+<h4>JWT payload structure</h4>
+<table>
+  <thead><tr><th>Claim</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>sub</code></td><td>string</td><td>User UUID (subject)</td></tr>
+    <tr><td><code>exp</code></td><td>timestamp</td><td>Expiry time (UTC)</td></tr>
+    <tr><td><code>type</code></td><td>string</td><td><code>"access"</code> or <code>"refresh"</code></td></tr>
+    <tr><td><code>jti</code></td><td>string</td><td>JWT ID (UUID) — used for blacklisting on logout</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn"><strong>Dependency constraint:</strong> <code>bcrypt==3.2.2</code> must be pinned. passlib 1.7.4 is incompatible with bcrypt 4.x and will raise an error on startup if the wrong version is installed.</div>
+
+<h2>2. FastAPI auth dependencies</h2>
+<p><strong>File:</strong> <code>backend/app/auth/dependencies.py</code></p>
+<p>Three dependency functions cover the three levels of protection. They are composed using FastAPI's <code>Depends()</code> mechanism and can be mixed at the endpoint level.</p>
+<pre><code>bearer_scheme = HTTPBearer(auto_error=False)
+
+async def get_current_user_id(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    redis: CacheClient = Depends(get_redis),
+) -> str:
+    """Validates the Bearer token and returns the user UUID string.
+    Also checks the Redis blacklist for revoked tokens."""
+    if not credentials:
+        raise HTTPException(401, "Not authenticated")
+    payload = verify_token(credentials.credentials)   # raises JWTError on invalid
+    jti = payload.get("jti")
+    if jti and await redis.exists(f"blacklist:{jti}"):
+        raise HTTPException(401, "Token revoked")
+    return str(payload["sub"])
+
+async def get_current_user(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Fetches the full User ORM object from the database."""
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if not user.is_active:
+        raise HTTPException(403, "Account disabled")
+    return user
+
+async def require_admin(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin access required")
+    return current_user
+
+async def require_analyst(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if current_user.role not in ("admin", "analyst"):
+        raise HTTPException(403, "Analyst or admin access required")
+    return current_user</code></pre>
+
+<h3>Usage pattern in endpoints</h3>
+<p>Type aliases make dependency injection concise and readable:</p>
+<pre><code># In dependencies.py
+UserId = Annotated[str, Depends(get_current_user_id)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
+
+# In endpoint files
+@router.get("/positions")
+async def list_positions(_: UserId) -> PositionsResponse:
+    # Just needs a valid token, doesn't need the user object
+    ...
+
+@router.put("/users/{user_id}")
+async def update_user(user_id: uuid.UUID, current_user: CurrentUser = Depends(require_admin)):
+    # Needs admin role and the full user object
+    ...</code></pre>
+
+<h2>3. Token blacklist (Redis)</h2>
+<p>When a user logs out, the access token is blacklisted in Redis so it cannot be reused even before it expires naturally. The blacklist entry uses the token's JTI (JWT ID) as the key and expires automatically when the token's remaining lifetime reaches zero.</p>
+<pre><code># On logout (backend/app/api/v1/endpoints/auth.py):
+payload = verify_token(token)
+jti = payload.get("jti")
+ttl = int(payload["exp"] - time.time())
+if ttl > 0 and jti:
+    await redis.setex(f"blacklist:{jti}", ttl, "1")
+
+# On every authenticated request (dependencies.py):
+if jti and await redis.exists(f"blacklist:{jti}"):
+    raise HTTPException(401, "Token revoked")</code></pre>
+<div class="callout">This approach avoids storing all active tokens in Redis. Only revoked tokens are stored, and they expire automatically. The tradeoff is that if Redis is unavailable, revoked tokens might temporarily be accepted — but the token will still expire at its natural expiry time.</div>
+
+<h2>4. Password reset flow (Redis)</h2>
+<p>Password reset tokens are short-lived UUIDs stored in Redis. The token maps to the user's UUID, allowing the reset endpoint to look up the user without exposing the UUID in the URL.</p>
+<pre><code># POST /auth/forgot-password:
+token = str(uuid.uuid4())                           # random UUID reset token
+await redis.setex(f"pwd_reset:{token}", 3600, str(user.id))  # 1-hour TTL
+return {"message": "Reset link generated", "reset_token": token}  # dev mode
+
+# POST /auth/reset-password:
+user_id_str = await redis.get(f"pwd_reset:{token}")
+if not user_id_str:
+    raise HTTPException(400, "Reset token is invalid or has expired")
+# Fetch user, hash new password, update database
+user.hashed_password = hash_password(new_password)
+await redis.delete(f"pwd_reset:{token}")    # single-use: delete immediately after use
+await db.commit()</code></pre>
+
+<h2>5. Frontend auth store</h2>
+<p><strong>File:</strong> <code>frontend/src/store/auth.ts</code></p>
+<p>The Zustand store persists auth state to <code>sessionStorage</code> using the <code>persist</code> middleware. <code>sessionStorage</code> (unlike <code>localStorage</code>) is automatically cleared when the browser tab is closed, providing a natural session boundary.</p>
+<pre><code>interface AuthState {
+  accessToken: string | null
+  refreshToken: string | null
+  user: {
+    id: string
+    email: string
+    name: string
+    role: string
+  } | null
+  setTokens: (data: { accessToken: string; refreshToken: string; user: User }) => void
+  clearAuth: () => void
+}
+
+export const useAuthStore = create&lt;AuthState&gt;()(
+  persist(
+    (set) => ({
+      accessToken: null,
+      refreshToken: null,
+      user: null,
+      setTokens: (data) => set(data),
+      clearAuth: () => set({ accessToken: null, refreshToken: null, user: null }),
+    }),
+    {
+      name: 'auth-storage',
+      storage: createJSONStorage(() => sessionStorage),
+    }
+  )
+)</code></pre>
+
+<h2>6. Axios interceptors</h2>
+<p><strong>File:</strong> <code>frontend/src/services/api.ts</code></p>
+<p>The Axios instance is configured with two interceptors: one that attaches the Bearer token to outgoing requests, and one that handles 401 responses with automatic token refresh.</p>
+<pre><code>const BASE_URL = '/api/proxy'
+
+export const apiClient = axios.create({ baseURL: `${BASE_URL}/api/v1` })
+
+// Request interceptor: attach current access token
+apiClient.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().accessToken
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// Response interceptor: handle 401 with silent refresh
+apiClient.interceptors.response.use(
+  (res) => res,
+  async (error: AxiosError) => {
+    const original = error.config as any
+    if (error.response?.status === 401 && !original._retry) {
+      original._retry = true    // prevents infinite retry loop
+      try {
+        const { refreshToken, setTokens } = useAuthStore.getState()
+        const { data } = await axios.post(
+          '/api/proxy/api/v1/auth/refresh',
+          { refreshToken }
+        )
+        setTokens(data)
+        original.headers.Authorization = `Bearer ${data.accessToken}`
+        return apiClient(original)    // retry original request with new token
+      } catch {
+        useAuthStore.getState().clearAuth()
+        window.location.href = '/login'
+        return Promise.reject(error)
+      }
+    }
+    return Promise.reject(error)
+  }
+)</code></pre>
+<div class="callout tip">The refresh call uses the bare <code>axios</code> instance (not <code>apiClient</code>) to avoid triggering the interceptor recursively. The <code>_retry</code> flag on the original config prevents the interceptor from retrying the failed refresh indefinitely.</div>
+
+<h2>7. Security headers</h2>
+<p><strong>File:</strong> <code>backend/app/middleware/security.py</code></p>
+<p>The <code>SecurityHeadersMiddleware</code> is a Starlette <code>BaseHTTPMiddleware</code> that adds security headers to every response. The <code>RequestIdMiddleware</code> in the same file injects a unique <code>X-Request-ID</code> UUID into every request for log correlation.</p>
+<pre><code>class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+        )
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response</code></pre>
+<p>Every log entry from structlog automatically includes the <code>X-Request-ID</code> value, enabling correlation of all log lines for a single request even across multiple log statements.</p>
+</body>
+</html>

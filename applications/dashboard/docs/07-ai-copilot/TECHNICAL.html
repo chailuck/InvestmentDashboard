@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Copilot — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>AI Copilot — Technical Design</h1>
+
+<h2>1. Files</h2>
+<pre><code>backend/app/api/v1/endpoints/ai.py            — SSE streaming endpoint and tool execution
+frontend/src/app/(dashboard)/ai-copilot/page.tsx  — chat UI and stream consumer</code></pre>
+
+<h2>2. Backend — streaming endpoint</h2>
+
+<h3>2.1 Endpoint definition</h3>
+<pre><code>@router.post("/copilot/stream")
+async def stream_chat(body: ChatRequest, user_id: UserId) -&gt; StreamingResponse:
+    sid = body.session_id or str(uuid.uuid4())
+    return StreamingResponse(
+        _stream_response(body.message, sid),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",    # prevents nginx from buffering the stream
+        },
+    )</code></pre>
+
+<h3>2.2 SSE event format</h3>
+<p>Each Server-Sent Event is a JSON-encoded string on a single <code>data:</code> line. The client parses the JSON after stripping the <code>"data: "</code> prefix.</p>
+<pre><code>data: {"type": "text",       "content": "Hello "}
+data: {"type": "tool_start", "name": "get_portfolio_positions"}
+data: {"type": "tool_end",   "name": "get_portfolio_positions"}
+data: {"type": "error",      "content": "Error message string"}
+data: {"type": "done",       "session_id": "uuid-string"}</code></pre>
+
+<h3>2.3 Streaming generator</h3>
+<p>The generator runs a tool-use loop, calling the Anthropic API up to 6 times until the model stops requesting tools. Each Anthropic call is wrapped with <code>asyncio.to_thread()</code> because the SDK is synchronous.</p>
+<pre><code>async def _stream_response(message: str, session_id: str) -&gt; AsyncIterator[str]:
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    messages = _SESSIONS.setdefault(session_id, [])
+    messages.append({"role": "user", "content": message})
+
+    for _iteration in range(6):    # max 6 tool-use iterations per message
+        response = await asyncio.to_thread(
+            client.messages.create,
+            model=settings.ai_default_model,
+            max_tokens=4096,
+            system=_system_prompt(),
+            messages=messages,
+            tools=TOOLS,
+        )
+
+        # Append assistant response to session history
+        messages.append({"role": "assistant", "content": response.content})
+
+        # Stream text blocks word-by-word for a real-time effect
+        for block in response.content:
+            if block.type == "text":
+                for word in block.text.split(" "):
+                    yield f"data: {json.dumps({'type': 'text', 'content': word + ' '})}\n\n"
+                    await asyncio.sleep(0)    # yield to event loop between words
+
+        # If model stopped for a reason other than tool_use, we're done
+        if response.stop_reason != "tool_use":
+            break
+
+        # Execute all tool calls in this response
+        tool_results = []
+        for block in response.content:
+            if block.type != "tool_use":
+                continue
+            yield f"data: {json.dumps({'type': 'tool_start', 'name': block.name})}\n\n"
+            result = await asyncio.to_thread(_execute_tool, block.name, block.input)
+            yield f"data: {json.dumps({'type': 'tool_end', 'name': block.name})}\n\n"
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": str(result),
+            })
+        messages.append({"role": "user", "content": tool_results})
+
+    # Trim session to last 20 messages to avoid unbounded memory growth
+    _SESSIONS[session_id] = messages[-20:]
+    yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"</code></pre>
+
+<h2>3. Tool definitions</h2>
+<p>Tools are passed to the Anthropic API as a list of JSON schema objects. The model decides autonomously which tools to call based on the user's message and the tool descriptions.</p>
+<pre><code>TOOLS = [
+    {
+        "name": "get_portfolio_positions",
+        "description": "Get current portfolio positions with live prices and P&amp;L calculations",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "closed", "all"],
+                    "description": "Filter positions by status"
+                }
+            }
+        }
+    },
+    {
+        "name": "get_live_price",
+        "description": "Get the current live price for a stock ticker",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": { "type": "string", "description": "Stock symbol (e.g. GULF, KBANK)" }
+            },
+            "required": ["ticker"]
+        }
+    },
+    {
+        "name": "get_performance_summary",
+        "description": "Get portfolio performance summary by stock and by time period",
+        "input_schema": { "type": "object", "properties": {} }
+    },
+    {
+        "name": "read_knowledge_doc",
+        "description": "Read a document from the personal knowledge base",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": { "type": "string", "description": "Knowledge file name (e.g. personal-trading-style.md)" }
+            },
+            "required": ["filename"]
+        }
+    },
+    {
+        "name": "run_analysis_script",
+        "description": "Run a Python analysis script from the investment agent directory",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "script_name": { "type": "string" }
+            },
+            "required": ["script_name"]
+        }
+    }
+]</code></pre>
+
+<h2>4. System prompt</h2>
+<p>The system prompt is built dynamically from files in <code>/app/investment_agent/</code> on every API call. This means the prompt always reflects the current state of the knowledge base without requiring a restart.</p>
+<pre><code>def _system_prompt() -> str:
+    parts = []
+    base_dir = Path("/app/investment_agent")
+
+    # 1. CLAUDE.md — main persona (if it exists)
+    claude_md = base_dir / "CLAUDE.md"
+    if claude_md.exists():
+        parts.append(claude_md.read_text())
+    else:
+        parts.append("You are an expert investment advisor with deep knowledge of Thai SET stocks...")
+
+    # 2. Personal trading style knowledge
+    style_doc = base_dir / "knowledge" / "personal-trading-style.md"
+    if style_doc.exists():
+        parts.append(f"## Personal Trading Style\n{style_doc.read_text()}")
+
+    # 3. Dashboard tool usage instructions
+    parts.append("""
+## Available Tools
+Use the provided tools to fetch live data before answering data-dependent questions.
+Always call get_portfolio_positions before answering questions about current holdings.
+    """)
+
+    return "\n\n".join(parts)</code></pre>
+
+<h2>5. Frontend — streaming consumer</h2>
+<p>The AI Copilot uses the native Fetch API with a <code>ReadableStream</code> reader rather than Axios. Axios does not support streaming response bodies — it buffers the entire response before resolving the promise.</p>
+<pre><code>const sendMessage = async (message: string) =&gt; {
+  const token = useAuthStore.getState().accessToken
+  const response = await fetch('/api/proxy/api/v1/ai/copilot/stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ message, session_id: sessionId }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let currentMessage = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    const text = decoder.decode(value, { stream: true })
+
+    // Parse SSE lines — each line is "data: {...}"
+    for (const line of text.split('\n')) {
+      if (!line.startsWith('data: ')) continue
+      try {
+        const event = JSON.parse(line.slice(6))
+        switch (event.type) {
+          case 'text':
+            currentMessage += event.content
+            setCurrentAssistantMessage(currentMessage)
+            break
+          case 'tool_start':
+            setActiveTool(event.name)
+            break
+          case 'tool_end':
+            setActiveTool(null)
+            break
+          case 'done':
+            setSessionId(event.session_id)
+            finalizeMessage(currentMessage)
+            currentMessage = ''
+            break
+          case 'error':
+            showError(event.content)
+            break
+        }
+      } catch {
+        // Ignore malformed SSE lines
+      }
+    }
+  }
+}</code></pre>
+
+<h2>6. Session storage</h2>
+<p>Sessions are stored in a module-level dictionary in <code>ai.py</code>. This is a deliberate simplification — the AI Copilot is a personal tool with a single primary user, and SSE connections are sticky to one worker.</p>
+<pre><code>_SESSIONS: dict[str, list] = {}   # session_id → last 20 messages</code></pre>
+<table>
+  <thead><tr><th>Limitation</th><th>Impact</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>Not shared across workers</td><td>Connection to a different worker loses history</td><td>SSE is sticky per connection; low impact in practice</td></tr>
+    <tr><td>Lost on restart</td><td>All conversation history cleared</td><td>User can start a new session manually; history is bounded to last 20 messages anyway</td></tr>
+    <tr><td>Max 20 messages</td><td>Very long conversations lose early context</td><td>Important context is available via tools (portfolio data, knowledge docs)</td></tr>
+  </tbody>
+</table>
+
+<h2>7. Model configuration</h2>
+<table>
+  <thead><tr><th>Setting</th><th>Env var</th><th>Default</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Model ID</td><td><code>AI_DEFAULT_MODEL</code></td><td><code>claude-sonnet-4-6</code></td><td>Any Anthropic model that supports tool use</td></tr>
+    <tr><td>Max tokens per response</td><td>hardcoded</td><td><code>4096</code></td><td>Sufficient for detailed analysis; increase if responses are being truncated</td></tr>
+    <tr><td>Max tool iterations</td><td>hardcoded</td><td><code>6</code></td><td>Prevents infinite tool-use loops; 6 is sufficient for complex multi-step queries</td></tr>
+  </tbody>
+</table>
+<div class="callout tip">To change the model: set <code>AI_DEFAULT_MODEL</code> in <code>backend/.env</code> and restart the backend container with <code>docker compose up -d backend</code>. No rebuild required since the model name is read at runtime.</div>
+</body>
+</html>

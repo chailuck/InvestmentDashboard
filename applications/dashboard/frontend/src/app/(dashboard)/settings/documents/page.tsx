@@ -198,15 +198,18 @@ export default function DocumentsPage() {
     }
   }, [manifest]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const currentFile = selectedNode?.file ?? null
+  const isHtml = currentFile?.endsWith('.html') ?? false
+
   const {
     data: content,
     isLoading: contentLoading,
     isError,
     refetch,
   } = useQuery({
-    queryKey: ['docs-file', selectedNode?.file],
-    queryFn: () => fetchDoc(selectedNode!.file!),
-    enabled: !!selectedNode?.file,
+    queryKey: ['docs-file', currentFile],
+    queryFn: () => fetchDoc(currentFile!),
+    enabled: !!currentFile,
     staleTime: 60_000,
   })
 
@@ -321,99 +324,123 @@ export default function DocumentsPage() {
         )}
       </aside>
 
-      {/* Right content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto">
-
-          {/* Page header with export buttons */}
-          {selectedNode && (
-            <div className="flex items-center justify-between mb-5 gap-3">
-              <h1 className="text-lg font-bold text-ink-primary truncate">{selectedNode.label}</h1>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  onClick={() => refetch()}
-                  className="btn-icon"
-                  title="Reload"
-                >
-                  <RefreshCw className={cn('w-3.5 h-3.5', contentLoading && 'animate-spin')} />
-                </button>
-                <button
-                  onClick={exportCurrentMd}
-                  disabled={!content}
-                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border/50 text-ink-muted hover:text-ink-primary hover:bg-surface-elevated transition-colors disabled:opacity-40"
-                  title="Export this page as Markdown"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  .md
-                </button>
-                <button
-                  onClick={exportCurrentHtml}
-                  disabled={!content}
-                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border/50 text-ink-muted hover:text-ink-primary hover:bg-surface-elevated transition-colors disabled:opacity-40"
-                  title="Export this page as HTML"
-                >
-                  <FileDown className="w-3.5 h-3.5" />
-                  .html
-                </button>
-              </div>
+      {/* Right content — HTML path: full-width, no padding constraints */}
+      {isHtml ? (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Slim toolbar */}
+          <div className="flex items-center justify-between px-5 py-2 border-b border-border/40 shrink-0">
+            <span className="text-sm font-semibold text-ink-secondary truncate">
+              {selectedNode?.label ?? ''}
+            </span>
+            <button onClick={() => refetch()} className="btn-icon shrink-0" title="Reload">
+              <RefreshCw className={cn('w-3.5 h-3.5', contentLoading && 'animate-spin')} />
+            </button>
+          </div>
+          {/* Full-height iframe — no box shadow, no padding, no max-width */}
+          {contentLoading && <div className="skeleton flex-1 m-4 rounded-lg" />}
+          {isError && (
+            <div className="flex items-center justify-center flex-1 text-ink-muted text-sm">
+              Could not load document.
             </div>
           )}
+          {content && !contentLoading && (
+            <iframe
+              key={currentFile}
+              srcDoc={content}
+              style={{ flex: 1, width: '100%', border: 'none', display: 'block', background: '#0d1117' }}
+              title={selectedNode?.label}
+            />
+          )}
+        </div>
+      ) : (
+        /* Markdown path: standard constrained layout */
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-4xl mx-auto">
+            {selectedNode && (
+              <div className="flex items-center justify-between mb-5 gap-3">
+                <h1 className="text-lg font-bold text-ink-primary truncate">{selectedNode.label}</h1>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => refetch()} className="btn-icon" title="Reload">
+                    <RefreshCw className={cn('w-3.5 h-3.5', contentLoading && 'animate-spin')} />
+                  </button>
+                  <button
+                    onClick={exportCurrentMd}
+                    disabled={!content}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border/50 text-ink-muted hover:text-ink-primary hover:bg-surface-elevated transition-colors disabled:opacity-40"
+                    title="Export this page as Markdown"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    .md
+                  </button>
+                  <button
+                    onClick={exportCurrentHtml}
+                    disabled={!content}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-border/50 text-ink-muted hover:text-ink-primary hover:bg-surface-elevated transition-colors disabled:opacity-40"
+                    title="Export this page as HTML"
+                  >
+                    <FileDown className="w-3.5 h-3.5" />
+                    .html
+                  </button>
+                </div>
+              </div>
+            )}
 
-          <div className="card p-6 md:p-8">
-            {!selectedNode && (
-              <div className="text-center py-12 text-ink-muted">
-                <BookOpen className="w-10 h-10 mx-auto mb-3 opacity-40" />
-                <p className="text-sm">Select a document from the left navigation.</p>
-              </div>
-            )}
-            {contentLoading && (
-              <div className="space-y-3">
-                {[...Array(10)].map((_, i) => (
-                  <div key={i} className="skeleton h-4 rounded" style={{ width: `${50 + (i % 5) * 10}%` }} />
-                ))}
-              </div>
-            )}
-            {isError && (
-              <div className="text-center py-10 text-ink-muted">
-                <p className="text-sm">Could not load document.</p>
-                <p className="text-xs mt-1">Make sure the backend docs volume is configured.</p>
-              </div>
-            )}
-            {content && !contentLoading && (
-              <div
-                id="doc-render"
-                ref={renderRef}
-                className={cn(
-                  'prose prose-invert prose-sm max-w-none',
-                  'prose-headings:text-ink-primary prose-headings:font-bold prose-headings:tracking-tight',
-                  'prose-h1:text-2xl prose-h1:mb-4',
-                  'prose-h2:text-xl prose-h2:border-b prose-h2:border-border/50 prose-h2:pb-2 prose-h2:mt-8',
-                  'prose-h3:text-base prose-h3:text-brand-400 prose-h3:mt-6',
-                  'prose-p:text-ink-secondary prose-p:leading-7',
-                  'prose-a:text-brand-400 prose-a:no-underline hover:prose-a:underline',
-                  'prose-code:text-brand-300 prose-code:bg-surface-elevated prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[0.8em] prose-code:before:content-none prose-code:after:content-none',
-                  'prose-pre:bg-surface-elevated prose-pre:border prose-pre:border-border/50 prose-pre:rounded-lg',
-                  'prose-table:text-xs prose-table:border-collapse',
-                  'prose-thead:bg-surface-elevated',
-                  'prose-th:text-ink-muted prose-th:font-semibold prose-th:px-3 prose-th:py-2 prose-th:border prose-th:border-border/50',
-                  'prose-td:text-ink-secondary prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-border/30',
-                  'prose-tr:border-b prose-tr:border-border/30 even:prose-tr:bg-surface-elevated/30',
-                  'prose-ul:text-ink-secondary prose-ul:space-y-1',
-                  'prose-ol:text-ink-secondary prose-ol:space-y-1',
-                  'prose-li:marker:text-ink-muted',
-                  'prose-strong:text-ink-primary prose-strong:font-semibold',
-                  'prose-blockquote:border-l-4 prose-blockquote:border-brand-500/40 prose-blockquote:text-ink-muted prose-blockquote:not-italic prose-blockquote:pl-4',
-                  'prose-hr:border-border/50',
-                )}
-              >
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {content}
-                </ReactMarkdown>
-              </div>
-            )}
+            <div key={selectedNode?.id ?? 'empty'} className="card p-6 md:p-8">
+              {!selectedNode && (
+                <div className="text-center py-12 text-ink-muted">
+                  <BookOpen className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                  <p className="text-sm">Select a document from the left navigation.</p>
+                </div>
+              )}
+              {contentLoading && (
+                <div className="space-y-3">
+                  {[...Array(10)].map((_, i) => (
+                    <div key={i} className="skeleton h-4 rounded" style={{ width: `${50 + (i % 5) * 10}%` }} />
+                  ))}
+                </div>
+              )}
+              {isError && (
+                <div className="text-center py-10 text-ink-muted">
+                  <p className="text-sm">Could not load document.</p>
+                  <p className="text-xs mt-1">Make sure the backend docs volume is configured.</p>
+                </div>
+              )}
+              {content && !contentLoading && (
+                <div
+                  id="doc-render"
+                  ref={renderRef}
+                  className={cn(
+                    'prose prose-invert prose-sm max-w-none',
+                    'prose-headings:text-ink-primary prose-headings:font-bold prose-headings:tracking-tight',
+                    'prose-h1:text-2xl prose-h1:mb-4',
+                    'prose-h2:text-xl prose-h2:border-b prose-h2:border-border/50 prose-h2:pb-2 prose-h2:mt-8',
+                    'prose-h3:text-base prose-h3:text-brand-400 prose-h3:mt-6',
+                    'prose-p:text-ink-secondary prose-p:leading-7',
+                    'prose-a:text-brand-400 prose-a:no-underline hover:prose-a:underline',
+                    'prose-code:text-brand-300 prose-code:bg-surface-elevated prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[0.8em] prose-code:before:content-none prose-code:after:content-none',
+                    'prose-pre:bg-surface-elevated prose-pre:border prose-pre:border-border/50 prose-pre:rounded-lg',
+                    'prose-table:text-xs prose-table:border-collapse',
+                    'prose-thead:bg-surface-elevated',
+                    'prose-th:text-ink-muted prose-th:font-semibold prose-th:px-3 prose-th:py-2 prose-th:border prose-th:border-border/50',
+                    'prose-td:text-ink-secondary prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-border/30',
+                    'prose-tr:border-b prose-tr:border-border/30 even:prose-tr:bg-surface-elevated/30',
+                    'prose-ul:text-ink-secondary prose-ul:space-y-1',
+                    'prose-ol:text-ink-secondary prose-ol:space-y-1',
+                    'prose-li:marker:text-ink-muted',
+                    'prose-strong:text-ink-primary prose-strong:font-semibold',
+                    'prose-blockquote:border-l-4 prose-blockquote:border-brand-500/40 prose-blockquote:text-ink-muted prose-blockquote:not-italic prose-blockquote:pl-4',
+                    'prose-hr:border-border/50',
+                  )}
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {content}
+                  </ReactMarkdown>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
