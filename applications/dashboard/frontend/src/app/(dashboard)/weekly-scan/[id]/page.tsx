@@ -1,22 +1,23 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import {
   ScanLine, ArrowLeft, RefreshCw, Plus, Trash2, X, Loader2,
-  AlertCircle, ChevronDown, Play, ShoppingCart, Check, Filter,
+  AlertCircle, ChevronDown, Play, ShoppingCart, Check, Filter, BookmarkCheck, Clipboard,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import {
   weeklyScanService, COLOR_MARKS, SCAN_STRATEGIES,
-  colorMarkMeta, type WeeklyScanItem, type ColorMark,
+  colorMarkMeta, type WeeklyScanItem, type ColorMark, type WeekPriceEntry,
 } from '@/services/weeklyScan'
 import { actionPlanService, type PlanSummary, type PurchaseItem } from '@/services/actionPlan'
 import { portfolioDbService } from '@/services/portfolioDb'
+import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 
 // ── Inline editable cell ──────────────────────────────────────────────────────
 
@@ -71,69 +72,122 @@ function TextCell({ value, onBlur, placeholder = '—' }: { value: string | null
 // ── Color mark picker (inline) ────────────────────────────────────────────────
 
 function ColorPicker({ value, onChange }: { value: ColorMark | null; onChange: (v: ColorMark | null) => void }) {
-  const [open, setOpen] = useState(false)
-  const meta = value ? colorMarkMeta(value) : null
+  const selectedMeta = value ? colorMarkMeta(value) : null
 
   return (
-    <div className="relative">
-      <button onClick={() => setOpen(v => !v)} title="Change color mark"
-        className={cn('flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-all',
-          meta ? cn(meta.bg, meta.text, meta.border) : 'border-border text-ink-disabled hover:text-ink-muted hover:border-border-focus')}>
-        {meta ? <><span className={cn('w-1.5 h-1.5 rounded-full', meta.dot)} />{meta.label}</> : '— mark'}
-        <ChevronDown className="w-2.5 h-2.5 opacity-60" />
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-            className="absolute left-0 top-full mt-1 bg-surface-card border border-border/60 rounded-xl shadow-xl z-30 overflow-hidden w-36">
-            <button onClick={() => { onChange(null); setOpen(false) }}
-              className="w-full px-3 py-2 text-xs text-ink-muted hover:bg-surface-elevated transition-colors border-b border-border/20 text-left">
-              Clear mark
-            </button>
-            {COLOR_MARKS.map(c => (
-              <button key={c.value} onClick={() => { onChange(c.value as ColorMark); setOpen(false) }}
-                className={cn('w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold transition-colors', c.text,
-                  value === c.value ? cn(c.bg) : 'hover:bg-surface-elevated')}>
-                <span className={cn('w-2 h-2 rounded-full', c.dot)} />
-                {c.label}
-                {value === c.value && <Check className="w-3 h-3 ml-auto" />}
-              </button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1">
+        {COLOR_MARKS.map(c => {
+          const isActive = value === c.value
+          return (
+            <button key={c.value} title={c.label}
+              onClick={() => onChange(isActive ? null : c.value as ColorMark)}
+              className={cn(
+                'rounded-full transition-all border-2 flex-shrink-0',
+                isActive
+                  ? cn('w-3.5 h-3.5', c.dot, 'border-white/30')
+                  : cn('w-2.5 h-2.5', c.dot, 'opacity-35 hover:opacity-65 border-transparent'),
+              )}
+            />
+          )
+        })}
+      </div>
+      {selectedMeta && (
+        <span className={cn('text-[10px] font-semibold', selectedMeta.text)}>
+          {selectedMeta.label}
+        </span>
+      )}
     </div>
   )
 }
 
-// ── Strategy picker (inline) ──────────────────────────────────────────────────
+// ── Week price display cells ──────────────────────────────────────────────────
+
+function WeekPriceCell({ entry, loading, field }: {
+  entry: WeekPriceEntry | undefined
+  loading: boolean
+  field: 'mon' | 'fri'
+}) {
+  if (loading) return <span className="text-ink-disabled text-[10px]">…</span>
+  const val = entry?.[field]
+  if (val == null) return <span className="text-ink-disabled">—</span>
+  return <span className="text-xs text-ink-secondary">{val.toFixed(2)}</span>
+}
+
+function WeekPnlCell({ entry, loading }: { entry: WeekPriceEntry | undefined; loading: boolean }) {
+  if (loading) return <span className="text-ink-disabled text-[10px]">…</span>
+  const { mon, fri } = entry ?? {}
+  if (mon == null || fri == null || mon === 0) return <span className="text-ink-disabled">—</span>
+  const pct = (fri - mon) / mon * 100
+  return (
+    <span className={cn('text-xs font-semibold', pct >= 0 ? 'text-gain' : 'text-loss')}>
+      {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
+    </span>
+  )
+}
+
+// ── Strategy picker (inline icons) ───────────────────────────────────────────
+
+const STRATEGY_ICONS: Record<string, { icon: string; short: string; base: string; active: string }> = {
+  'BREAK OUT':          { icon: '🚀', short: 'BO',    base: 'hover:bg-emerald-500/20 hover:border-emerald-500/30', active: 'bg-emerald-500/20 border-emerald-500/40' },
+  'BUY ON DIP':         { icon: '📉', short: 'BOD',   base: 'hover:bg-sky-500/20 hover:border-sky-500/30',         active: 'bg-sky-500/20 border-sky-500/40'         },
+  'แท่งเทียนกลับตัว':  { icon: '🕯️', short: 'ททกต', base: 'hover:bg-amber-500/20 hover:border-amber-500/30',    active: 'bg-amber-500/20 border-amber-500/40'    },
+  'ยยจท':              { icon: '📈', short: 'ยยจท',  base: 'hover:bg-orange-500/20 hover:border-orange-500/30',   active: 'bg-orange-500/20 border-orange-500/40'   },
+  'NEWS':               { icon: '📰', short: 'NEWS',  base: 'hover:bg-blue-500/20 hover:border-blue-500/30',       active: 'bg-blue-500/20 border-blue-500/40'       },
+  'AJ PAO':             { icon: '🎯', short: 'PAO',   base: 'hover:bg-purple-500/20 hover:border-purple-500/30',   active: 'bg-purple-500/20 border-purple-500/40'   },
+  'OTHERS':             { icon: '✦',  short: 'OTH.',  base: 'hover:bg-zinc-500/20 hover:border-zinc-500/30',       active: 'bg-zinc-500/20 border-zinc-500/40'       },
+}
+
+const NAMED_STRATEGIES = SCAN_STRATEGIES.filter(s => s !== 'OTHERS')
 
 function StrategyCell({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
-  const [open, setOpen] = useState(false)
+  const isOthers = value !== null && !NAMED_STRATEGIES.includes(value)
+  const [othText, setOthText] = useState(() =>
+    value !== null && !NAMED_STRATEGIES.includes(value) && value !== 'OTHERS' ? value : ''
+  )
+
+  useEffect(() => {
+    if (value === null || NAMED_STRATEGIES.includes(value)) setOthText('')
+    else if (value !== 'OTHERS') setOthText(value)
+  }, [value])
+
+  const commitOth = (text: string) => onChange(text.trim() || 'OTHERS')
+
   return (
-    <div className="relative">
-      <button onClick={() => setOpen(v => !v)}
-        className="text-xs text-ink-secondary hover:text-brand-400 transition-colors max-w-[120px] truncate text-left">
-        {value || <span className="text-ink-disabled">— strategy</span>}
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-            className="absolute left-0 top-full mt-1 bg-surface-card border border-border/60 rounded-xl shadow-xl z-30 overflow-hidden w-44">
-            <button onClick={() => { onChange(null); setOpen(false) }}
-              className="w-full px-3 py-2 text-xs text-ink-muted hover:bg-surface-elevated transition-colors border-b border-border/20 text-left">
-              None
-            </button>
-            {SCAN_STRATEGIES.map(s => (
-              <button key={s} onClick={() => { onChange(s); setOpen(false) }}
-                className={cn('w-full px-3 py-1.5 text-xs transition-colors text-left',
-                  value === s ? 'text-brand-400 bg-brand-500/10' : 'text-ink-secondary hover:bg-surface-elevated')}>
-                {s}
-              </button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div className="flex items-center gap-0.5 flex-wrap">
+      {SCAN_STRATEGIES.map(s => {
+        const meta = STRATEGY_ICONS[s] ?? { icon: s[0], short: s, base: '', active: '' }
+        const isActive = s === 'OTHERS' ? isOthers : value === s
+        return (
+          <button key={s} title={s}
+            onClick={() => {
+              if (s === 'OTHERS') {
+                if (isOthers) { onChange(null); setOthText('') }
+                else { onChange('OTHERS'); setOthText('') }
+              } else {
+                onChange(isActive ? null : s)
+              }
+            }}
+            className={cn(
+              'flex flex-col items-center justify-center w-8 h-8 rounded border transition-all',
+              isActive ? meta.active : cn('border-transparent opacity-30 hover:opacity-80', meta.base),
+            )}>
+            <span className="text-sm leading-none">{meta.icon}</span>
+            <span className="text-[8px] leading-none font-medium mt-0.5 tracking-tight">{meta.short}</span>
+          </button>
+        )
+      })}
+      {isOthers && (
+        <input
+          autoFocus={value === 'OTHERS'}
+          value={othText}
+          onChange={e => setOthText(e.target.value)}
+          onBlur={() => commitOth(othText)}
+          onKeyDown={e => { if (e.key === 'Enter') commitOth(othText) }}
+          placeholder="type…"
+          className="ml-1 w-20 bg-surface-elevated border border-border/50 rounded px-1.5 py-0.5 text-[11px] text-ink-secondary placeholder:text-ink-disabled focus:outline-none focus:border-brand-500/50"
+        />
+      )}
     </div>
   )
 }
@@ -288,10 +342,13 @@ export default function WeeklyScanPage() {
   const [addSymbol,     setAddSymbol]     = useState('')
   const [addLoading,    setAddLoading]    = useState(false)
   const [refreshing,    setRefreshing]    = useState(false)
-  const [deleteSymbol,  setDeleteSymbol]  = useState<string | null>(null)
+  const [deleteSymbol,    setDeleteSymbol]    = useState<string | null>(null)
+  const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
   const [deleting,      setDeleting]      = useState(false)
   const [addToPlan,     setAddToPlan]     = useState<WeeklyScanItem | null>(null)
-  const [markingPortfo, setMarkingPortfo] = useState(false)
+  const [markingPortfo,  setMarkingPortfo]  = useState(false)
+  const [savingConfig,   setSavingConfig]   = useState<'idle' | 'saving' | 'done'>('idle')
+  const [copied,         setCopied]         = useState(false)
 
   // Column filters
   const [filterSymbol,   setFilterSymbol]   = useState('')
@@ -302,6 +359,13 @@ export default function WeeklyScanPage() {
     queryKey: ['weekly-scan', id],
     queryFn: () => weeklyScanService.getScan(id),
     staleTime: 30_000,
+  })
+
+  const { data: weekPrices, isLoading: pricesLoading } = useQuery({
+    queryKey: ['weekly-scan-prices', id],
+    queryFn: () => weeklyScanService.getWeekPrices(id),
+    staleTime: 5 * 60_000,
+    enabled: !!scan,
   })
 
   const invalidate = useCallback(() => queryClient.invalidateQueries({ queryKey: ['weekly-scan', id] }), [id, queryClient])
@@ -389,6 +453,17 @@ export default function WeeklyScanPage() {
     } catch { } finally { setMarkingPortfo(false) }
   }
 
+  const saveAsConfig = async () => {
+    if (!scan || savingConfig === 'saving') return
+    setSavingConfig('saving')
+    try {
+      const symbols = scan.items.map(i => i.symbol)
+      await weeklyScanService.updateConfig(symbols)
+      setSavingConfig('done')
+      setTimeout(() => setSavingConfig('idle'), 2000)
+    } catch { setSavingConfig('idle') }
+  }
+
   if (isLoading) return (
     <div className="flex items-center justify-center h-64 gap-2 text-ink-muted">
       <Loader2 className="w-5 h-5 animate-spin" /> Loading scan…
@@ -443,6 +518,20 @@ export default function WeeklyScanPage() {
           Refresh config
         </button>
 
+        <button onClick={saveAsConfig} disabled={savingConfig === 'saving'}
+          title="Save this scan's symbols as the default list for new scans"
+          className={cn(
+            'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50',
+            savingConfig === 'done'
+              ? 'border-gain/40 bg-gain/10 text-gain'
+              : 'border-brand-500/30 bg-brand-500/10 text-brand-400 hover:bg-brand-500/20',
+          )}>
+          {savingConfig === 'saving'
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <BookmarkCheck className="w-3.5 h-3.5" />}
+          {savingConfig === 'done' ? 'Saved as config!' : 'Save as config'}
+        </button>
+
         {/* Auto-mark portfolio purple */}
         <button onClick={markPortfolioSymbols} disabled={markingPortfo}
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-purple-500/30 bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors disabled:opacity-50">
@@ -468,14 +557,31 @@ export default function WeeklyScanPage() {
 
       {/* Symbol table — inline editable */}
       <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-340px)] min-h-[240px]">
           <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border/50 bg-surface-elevated/30 text-ink-muted">
+            <thead className="sticky top-0 z-10">
+              <tr className="border-b border-border/50 bg-surface-elevated text-ink-muted">
                 <th className="px-3 py-2.5 text-left font-medium w-8">#</th>
                 <th className="px-3 py-2.5 text-left font-medium">Symbol</th>
                 <th className="px-3 py-2.5 text-left font-medium">Color</th>
                 <th className="px-3 py-2.5 text-left font-medium">Strategy</th>
+                <th className="px-3 py-2.5 text-right font-medium min-w-[72px]">
+                  <div className="flex flex-col items-end leading-tight">
+                    <span>Mon</span>
+                    <span className="text-[10px] font-normal text-ink-disabled">
+                      {weekPrices?.mon_date ? format(new Date(weekPrices.mon_date), 'dd MMM') : '—'}
+                    </span>
+                  </div>
+                </th>
+                <th className="px-3 py-2.5 text-right font-medium min-w-[72px]">
+                  <div className="flex flex-col items-end leading-tight">
+                    <span>Fri</span>
+                    <span className="text-[10px] font-normal text-ink-disabled">
+                      {weekPrices?.fri_date ? format(new Date(weekPrices.fri_date), 'dd MMM') : '—'}
+                    </span>
+                  </div>
+                </th>
+                <th className="px-3 py-2.5 text-right font-medium min-w-[60px]">W-P&L</th>
                 <th className="px-3 py-2.5 text-left font-medium">Buy</th>
                 <th className="px-3 py-2.5 text-left font-medium">Size</th>
                 <th className="px-3 py-2.5 text-left font-medium">TP</th>
@@ -494,7 +600,7 @@ export default function WeeklyScanPage() {
                 </th>
               </tr>
               {/* Filter row */}
-              <tr className="border-b border-border/40 bg-surface-base/60">
+              <tr className="border-b border-border/40 bg-surface-card">
                 <td className="px-3 py-1.5">
                   <Filter className="w-3 h-3 text-ink-disabled" />
                 </td>
@@ -524,12 +630,34 @@ export default function WeeklyScanPage() {
                     placeholder="Filter…"
                     className="w-full bg-surface-elevated border border-border/50 rounded px-2 py-0.5 text-[11px] text-ink-secondary placeholder:text-ink-disabled focus:outline-none focus:border-brand-500/50" />
                 </td>
+                <td className="px-3 py-1.5 text-right text-[10px] text-ink-disabled">{pricesLoading ? '…' : ''}</td>
+                <td className="px-3 py-1.5"></td>
+                <td className="px-3 py-1.5"></td>
                 <td colSpan={6} className="px-3 py-1.5">
-                  {hasFilters && (
-                    <span className="text-[10px] text-amber-400">
-                      {sortedItems.length} of {scan?.items.length ?? 0} shown
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {hasFilters && (
+                      <span className="text-[10px] text-amber-400">
+                        {sortedItems.length} of {scan?.items.length ?? 0} shown
+                      </span>
+                    )}
+                    <button
+                      onClick={() => {
+                        const csv = sortedItems.map(i => i.symbol).join(',')
+                        navigator.clipboard.writeText(csv)
+                        setCopied(true)
+                        setTimeout(() => setCopied(false), 2000)
+                      }}
+                      title="Copy filtered symbols as comma-separated list"
+                      className={cn(
+                        'flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border transition-colors',
+                        copied
+                          ? 'border-gain/40 bg-gain/10 text-gain'
+                          : 'border-border/50 text-ink-disabled hover:text-ink-secondary hover:border-brand-500/30',
+                      )}>
+                      {copied ? <Check className="w-3 h-3" /> : <Clipboard className="w-3 h-3" />}
+                      {copied ? 'Copied!' : `Copy ${sortedItems.length}`}
+                    </button>
+                  </div>
                 </td>
               </tr>
             </thead>
@@ -547,7 +675,12 @@ export default function WeeklyScanPage() {
                     className={cn('border-b border-border/20 transition-colors',
                       meta ? `${meta.bg.replace('/20', '/5')} hover:${meta.bg.replace('/20', '/10')}` : 'hover:bg-surface-elevated/40')}>
                     <td className="px-3 py-2 text-ink-disabled">{idx + 1}</td>
-                    <td className="px-3 py-2 font-bold font-mono text-ink-primary">{item.symbol}</td>
+                    <td className="px-3 py-2">
+                      <button onClick={() => setAnalyticsSymbol(item.symbol)}
+                        className="font-bold font-mono text-ink-primary hover:text-brand-400 transition-colors">
+                        {item.symbol}
+                      </button>
+                    </td>
                     <td className="px-3 py-2">
                       <ColorPicker value={item.color_mark}
                         onChange={v => updateField(item.symbol, { color_mark: v })} />
@@ -555,6 +688,15 @@ export default function WeeklyScanPage() {
                     <td className="px-3 py-2">
                       <StrategyCell value={item.strategy}
                         onChange={v => updateField(item.symbol, { strategy: v })} />
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      <WeekPriceCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} field="mon" />
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      <WeekPriceCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} field="fri" />
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      <WeekPnlCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} />
                     </td>
                     <td className="px-3 py-2">
                       <NumCell value={item.buy_price}
@@ -598,6 +740,9 @@ export default function WeeklyScanPage() {
 
       {/* Modals */}
       <AnimatePresence>
+        {analyticsSymbol && (
+          <AnalyticsModal symbol={analyticsSymbol} assetType="SET" onClose={() => setAnalyticsSymbol(null)} />
+        )}
         {addToPlan && (
           <AddToPlanModal item={addToPlan} onClose={() => setAddToPlan(null)} />
         )}

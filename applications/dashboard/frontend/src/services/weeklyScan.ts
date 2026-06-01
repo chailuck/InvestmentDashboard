@@ -10,7 +10,7 @@ export const COLOR_MARKS = [
 
 export type ColorMark = (typeof COLOR_MARKS)[number]['value']
 
-export const SCAN_STRATEGIES = ['BREAK OUT', 'BUY ON DIP', 'แท่งเทียนกลับตัว', 'NEWS', 'AJ PAO', 'OTHERS']
+export const SCAN_STRATEGIES = ['BREAK OUT', 'BUY ON DIP', 'แท่งเทียนกลับตัว', 'ยยจท', 'NEWS', 'AJ PAO', 'OTHERS']
 
 export interface ScanConfig {
   symbols: string[]
@@ -56,6 +56,17 @@ export interface WeeklyScan {
   updated_at: string
   items: WeeklyScanItem[]
   color_counts: ColorCounts
+}
+
+export interface WeekPriceEntry {
+  mon: number | null
+  fri: number | null
+}
+
+export interface WeekPrices {
+  mon_date: string | null
+  fri_date: string | null
+  prices: Record<string, WeekPriceEntry>
 }
 
 export const weeklyScanService = {
@@ -112,6 +123,11 @@ export const weeklyScanService = {
 
   async deleteItem(scanId: string, symbol: string): Promise<void> {
     await apiClient.delete(`/weekly-scan/scans/${scanId}/items/${symbol}`)
+  },
+
+  async getWeekPrices(scanId: string): Promise<WeekPrices> {
+    const { data } = await apiClient.get(`/weekly-scan/scans/${scanId}/week-prices`)
+    return data
   },
 }
 

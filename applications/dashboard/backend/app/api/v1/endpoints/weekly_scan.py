@@ -1,10 +1,14 @@
 ﻿"""Weekly Manual Scan endpoints."""
 
 
+import asyncio
+import re
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 
+import pandas as pd
+import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import select, text
@@ -20,7 +24,7 @@ DB     = Annotated[AsyncSession, Depends(get_db)]
 
 router = APIRouter(prefix="/weekly-scan", tags=["weekly-scan"])
 
-# â”€â”€ Default symbol list (SET50 + extras) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Default symbol list (SET50 + extras) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 SET50_DEFAULT = [
     "ADVANC", "AOT", "AWC", "BANPU", "BBL", "BDMS", "BEM", "BGRIM", "BH", "BTS",
@@ -31,7 +35,7 @@ SET50_DEFAULT = [
     "BTCUSD-DR", "GOLUSD-DR",
 ]
 
-# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 def _next_saturday() -> str:
     today = date.today()
@@ -73,7 +77,7 @@ def _item_dict(item: WeeklyScanItem) -> dict[str, Any]:
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
     }
 
-# â”€â”€ Pydantic schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Pydantic schemas â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 class ConfigUpdate(BaseModel):
     symbols: list[str]
@@ -93,7 +97,70 @@ class ItemEval(BaseModel):
 class ItemAdd(BaseModel):
     symbol: str
 
-# â”€â”€ Config endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Week-price helpers ────────────────────────────────────────────────────────
+
+def _parse_week_dates(scan_name: str) -> tuple[date | None, date | None]:
+    """Extract Monday/Friday from scan name WEEKLY_SCAN_DD_MM_YYYY."""
+    m = re.search(r'(\d{2})_(\d{2})_(\d{4})', scan_name)
+    if not m:
+        return None, None
+    try:
+        sat = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        return sat - timedelta(days=5), sat - timedelta(days=1)
+    except ValueError:
+        return None, None
+
+
+def _sym_to_ticker(symbol: str) -> str:
+    if symbol.endswith('-DR') or 'USD' in symbol:
+        return symbol
+    return f"{symbol}.BK"
+
+
+def _fetch_sym_prices(symbol: str, monday: date, friday: date) -> dict[str, float | None]:
+    today       = date.today()
+    fetch_start = (monday - timedelta(days=7)).strftime("%Y-%m-%d")
+    fetch_end   = (min(friday, today) + timedelta(days=4)).strftime("%Y-%m-%d")
+
+    try:
+        df = yf.Ticker(_sym_to_ticker(symbol)).history(
+            start=fetch_start, end=fetch_end,
+            interval="1d", auto_adjust=False, back_adjust=False,
+        )
+    except Exception:
+        return {"mon": None, "fri": None}
+
+    if df.empty:
+        return {"mon": None, "fri": None}
+
+    df.index  = pd.to_datetime(df.index).tz_localize(None)
+    idx_dates = df.index.date  # numpy array of datetime.date
+
+    mon_price: float | None = None
+    if monday > today:
+        col = df["Close"].dropna()
+        if not col.empty:
+            mon_price = round(float(col.iloc[-1]), 2)
+    else:
+        mask = idx_dates >= monday
+        sub  = df.loc[mask, "Open"].dropna()
+        if not sub.empty:
+            mon_price = round(float(sub.iloc[0]), 2)
+
+    fri_price: float | None = None
+    if friday >= today:
+        col = df["Close"].dropna()
+        if not col.empty:
+            fri_price = round(float(col.iloc[-1]), 2)
+    else:
+        mask = idx_dates <= friday
+        sub  = df.loc[mask, "Close"].dropna()
+        if not sub.empty:
+            fri_price = round(float(sub.iloc[-1]), 2)
+
+    return {"mon": mon_price, "fri": fri_price}
+
+# â"€â"€ Config endpoints â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 @router.get("/config")
 async def get_scan_config(user_id: UserId, db: DB) -> dict[str, Any]:
@@ -132,7 +199,7 @@ async def suggest_name(user_id: UserId, db: DB) -> dict[str, str]:
     date_str = _next_saturday() if has_scans else _prev_saturday()
     return {"name": f"WEEKLY_SCAN_{date_str}"}
 
-# â”€â”€ Scan list endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Scan list endpoints â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 @router.get("/scans")
 async def list_scans(user_id: UserId, db: DB) -> list[dict[str, Any]]:
@@ -212,7 +279,7 @@ async def delete_scan(scan_id: str, user_id: UserId, db: DB) -> Response:
 
 @router.post("/scans/{scan_id}/refresh")
 async def refresh_scan(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
-    """Merge current config symbols into the scan â€” adds new, preserves existing evaluations."""
+    """Merge current config symbols into the scan â€" adds new, preserves existing evaluations."""
     uid = uuid.UUID(user_id)
     scan = await db.scalar(
         select(WeeklyScan)
@@ -248,7 +315,7 @@ async def refresh_scan(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
         "color_counts": _color_counts(items),
     }
 
-# â”€â”€ Item endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Item endpoints â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 @router.post("/scans/{scan_id}/items")
 async def add_item(scan_id: str, body: ItemAdd, user_id: UserId, db: DB) -> dict[str, Any]:
@@ -313,3 +380,45 @@ async def delete_item(scan_id: str, symbol: str, user_id: UserId, db: DB) -> Res
     await db.delete(item)
     await db.commit()
     return Response(status_code=204)
+
+
+# ── Week prices endpoint ──────────────────────────────────────────────────────
+
+@router.get("/scans/{scan_id}/week-prices")
+async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
+    """Return Monday open and Friday close prices for every symbol in the scan."""
+    uid  = uuid.UUID(user_id)
+    scan = await db.scalar(
+        select(WeeklyScan)
+        .where(WeeklyScan.id == uuid.UUID(scan_id), WeeklyScan.user_id == uid)
+        .options(selectinload(WeeklyScan.items))
+    )
+    if scan is None:
+        raise HTTPException(404, "Scan not found")
+
+    monday, friday = _parse_week_dates(scan.name)
+    symbols = [it.symbol for it in scan.items]
+
+    if not symbols or monday is None:
+        return {
+            "mon_date": monday.isoformat() if monday else None,
+            "fri_date": friday.isoformat() if friday else None,
+            "prices": {s: {"mon": None, "fri": None} for s in symbols},
+        }
+
+    loop = asyncio.get_running_loop()
+    sem  = asyncio.Semaphore(5)
+
+    async def _fetch(sym: str) -> tuple[str, dict]:
+        async with sem:
+            result = await loop.run_in_executor(None, _fetch_sym_prices, sym, monday, friday)
+        return sym, result
+
+    pairs  = await asyncio.gather(*[_fetch(s) for s in symbols])
+    prices = {sym: data for sym, data in pairs}
+
+    return {
+        "mon_date": monday.isoformat(),
+        "fri_date": friday.isoformat(),
+        "prices": prices,
+    }

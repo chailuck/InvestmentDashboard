@@ -20,8 +20,9 @@ import remarkGfm from 'remark-gfm'
 
 const STRATEGY_META: { value: string; label: string; Icon: React.ElementType; short: string }[] = [
   { value: 'BREAK OUT',          label: 'Break Out',       Icon: Zap,           short: 'BO'  },
-  { value: 'BUY ON DIP',         label: 'Buy on Dip',      Icon: TrendingDown,  short: 'DIP' },
-  { value: 'แท่งเทียนกลับตัว',      label: 'Candle Rev.',     Icon: BarChart2,     short: 'CAN' },
+  { value: 'BUY ON DIP',         label: 'Buy on Dip',      Icon: TrendingDown,  short: 'BOD' },
+  { value: 'แท่งเทียนกลับตัว',      label: 'Candle Rev.',     Icon: BarChart2,     short: 'ททกต'},
+  { value: 'ยยจท',              label: 'ย่อ-ยก-จ้วง-แทง', Icon: TrendingUp,    short: 'ยยจท'},
   { value: 'NEWS',                label: 'News',            Icon: FileText,      short: 'NEWS'},
   { value: 'AJ PAO',             label: 'AJ PAO',          Icon: Target,        short: 'AJP' },
   { value: 'OTHERS',             label: 'Others',          Icon: MoreHorizontal,short: '...' },
@@ -166,18 +167,17 @@ interface EvalFormProps {
   onSaveClose: () => Promise<void>
   onNext: () => void
   onPrev: () => void
+  onSkipNext: (f: EvalForm) => void
   saving: boolean
   hasPrev: boolean
   hasNext: boolean
   savedFlash: boolean
 }
 
-function EvaluationForm({ form, onChange, onSaveClose, onNext, onPrev, saving, hasPrev, hasNext, savedFlash }: EvalFormProps) {
+function EvaluationForm({ form, onChange, onSaveClose, onNext, onPrev, onSkipNext, saving, hasPrev, hasNext, savedFlash }: EvalFormProps) {
   const set = (key: keyof EvalForm) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       onChange({ ...form, [key]: e.target.value })
-
-  const canSkip = form.color_mark === 'RED' || form.color_mark === 'YELLOW'
 
   return (
     <div className="flex flex-col overflow-y-auto p-3 space-y-3 h-full">
@@ -188,7 +188,12 @@ function EvaluationForm({ form, onChange, onSaveClose, onNext, onPrev, saving, h
         <div className="flex flex-col gap-1">
           {COLOR_MARKS.map(c => (
             <button key={c.value}
-              onClick={() => onChange({ ...form, color_mark: form.color_mark === c.value ? '' : c.value as ColorMark })}
+              onClick={() => {
+                const newColor: ColorMark | '' = form.color_mark === c.value ? '' : c.value as ColorMark
+                const newForm: EvalForm = { ...form, color_mark: newColor }
+                onChange(newForm)
+                if (newColor === 'RED' && hasNext) onSkipNext(newForm)
+              }}
               className={cn(
                 'flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all text-left',
                 c.bg, c.border, c.text,
@@ -228,6 +233,35 @@ function EvaluationForm({ form, onChange, onSaveClose, onNext, onPrev, saving, h
         )}
       </div>
 
+      {/* Actions — below Strategy */}
+      <div className="space-y-1.5 shrink-0">
+        <div className="grid grid-cols-2 gap-1.5">
+          <button onClick={onPrev} disabled={!hasPrev || saving}
+            className="flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:bg-surface-elevated transition-colors disabled:opacity-30">
+            <ArrowLeft className="w-3 h-3" /> Prev
+          </button>
+          <button onClick={onNext} disabled={!hasNext || saving}
+            className={cn(
+              'flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-lg transition-all disabled:opacity-30',
+              hasNext ? 'btn-primary' : 'border border-border text-ink-muted',
+            )}>
+            Next <ArrowRight className="w-3 h-3" />
+          </button>
+        </div>
+        <button onClick={onSaveClose} disabled={saving}
+          className={cn(
+            'w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-lg border transition-all',
+            savedFlash
+              ? 'bg-gain/20 text-gain border-gain/30'
+              : 'border-border text-ink-muted hover:text-ink-primary hover:bg-surface-elevated',
+          )}>
+          {saving
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <Save className="w-3.5 h-3.5" />}
+          {savedFlash ? 'Saved!' : 'Save & Close'}
+        </button>
+      </div>
+
       {/* Numeric fields */}
       <div className="grid grid-cols-2 gap-2">
         {([['Buy', 'buy_price'], ['Size', 'size'], ['TP', 'tp'], ['SL', 'sl']] as [string, keyof EvalForm][]).map(([label, key]) => (
@@ -244,43 +278,6 @@ function EvaluationForm({ form, onChange, onSaveClose, onNext, onPrev, saving, h
         <label className="block text-[10px] font-semibold text-ink-muted uppercase tracking-wider mb-1">Remark</label>
         <textarea value={form.remark} onChange={set('remark')} rows={2}
           className="input w-full text-xs py-1 flex-1" placeholder="Optional…" style={{ resize: 'vertical' }} />
-      </div>
-
-      {/* Actions */}
-      <div className="space-y-1.5 pt-1 shrink-0">
-        {/* Prev / Next — auto-save */}
-        <div className="grid grid-cols-2 gap-1.5">
-          <button onClick={onPrev} disabled={!hasPrev || saving}
-            className="flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:bg-surface-elevated transition-colors disabled:opacity-30">
-            <ArrowLeft className="w-3 h-3" /> Prev
-          </button>
-          <button onClick={onNext} disabled={!hasNext || saving}
-            className="flex items-center justify-center gap-1 py-1.5 text-xs font-semibold rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:bg-surface-elevated transition-colors disabled:opacity-30">
-            Next <ArrowRight className="w-3 h-3" />
-          </button>
-        </div>
-
-        {/* Skip shortcut for red/yellow */}
-        {canSkip && (
-          <button onClick={onNext} disabled={!hasNext}
-            className="w-full py-1.5 text-[10px] font-semibold rounded-lg border border-border/50 text-ink-disabled hover:text-ink-muted hover:bg-surface-elevated transition-colors disabled:opacity-30">
-            Skip to next →
-          </button>
-        )}
-
-        {/* Save & Close */}
-        <button onClick={onSaveClose} disabled={saving}
-          className={cn(
-            'w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-lg transition-all',
-            savedFlash
-              ? 'bg-gain/20 text-gain border border-gain/30'
-              : 'btn-primary',
-          )}>
-          {saving
-            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            : <Save className="w-3.5 h-3.5" />}
-          {savedFlash ? 'Saved!' : 'Save & Close'}
-        </button>
       </div>
     </div>
   )
@@ -412,6 +409,27 @@ export default function EvaluatePage() {
     router.push(`/weekly-scan/${id}`)
   }
 
+  const handleSkipNext = useCallback(async (newForm: EvalForm) => {
+    if (!currentItem) return
+    setSaving(true)
+    try {
+      const payload = {
+        color_mark: (newForm.color_mark || null) as ColorMark | null,
+        strategy:   newForm.strategy   || null,
+        buy_price:  newForm.buy_price  ? parseFloat(newForm.buy_price)  : null,
+        size:       newForm.size       ? parseInt(newForm.size)          : null,
+        tp:         newForm.tp         ? parseFloat(newForm.tp)          : null,
+        sl:         newForm.sl         ? parseFloat(newForm.sl)          : null,
+        remark:     newForm.remark     || null,
+      }
+      await weeklyScanService.upsertItem(id, currentItem.symbol, payload)
+      setSavedColors(prev => ({ ...prev, [currentItem.symbol]: payload.color_mark }))
+      setSavedFlash(true)
+      setTimeout(() => setSavedFlash(false), 800)
+    } catch { } finally { setSaving(false) }
+    setTimeout(() => setIdx(i => Math.min(i + 1, queue.length - 1)), 350)
+  }, [id, currentItem, queue.length])
+
   if (loadingInit) return (
     <div className="flex items-center justify-center h-screen gap-2 text-ink-muted">
       <Loader2 className="w-5 h-5 animate-spin" /> Loading…
@@ -487,6 +505,7 @@ export default function EvaluatePage() {
               onSaveClose={handleSaveClose}
               onNext={goNext}
               onPrev={goPrev}
+              onSkipNext={handleSkipNext}
               saving={saving}
               hasPrev={idx > 0}
               hasNext={idx < queue.length - 1}

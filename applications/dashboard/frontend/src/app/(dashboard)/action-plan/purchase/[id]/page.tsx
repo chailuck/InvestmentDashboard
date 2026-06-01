@@ -13,7 +13,7 @@ import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const STRATEGIES = ['BREAK OUT', 'BUY ON DIP', 'แท่งเทียนกลับตัว', 'NEWS', 'AJ PAO', 'OTHERS'] as const
+const STRATEGIES = ['BREAK OUT', 'BUY ON DIP', 'แท่งเทียนกลับตัว', 'ยยจท', 'NEWS', 'AJ PAO', 'OTHERS'] as const
 type StrategyOption = (typeof STRATEGIES)[number]
 
 // ── Row type ──────────────────────────────────────────────────────────────────

@@ -165,15 +165,20 @@ function buildOption(data: ChartData, logScale: boolean, zoomStart: number) {
           const volNorm   = api.value(0)
           const priceHigh = api.value(1)
           const priceLow  = api.value(2)
-          const [, yH] = api.coord([dates[0], priceHigh])
-          const [, yL] = api.coord([dates[0], priceLow])
-          const barH = Math.max(Math.abs(yL - yH), 1)
-          const { x: cx, width: cw } = _params.coordSys
+          // Use last (most recent) date so coord() maps into the visible y-scale
+          const lastDate  = dates[dates.length - 1]
+          const [, yH] = api.coord([lastDate, priceHigh])
+          const [, yL] = api.coord([lastDate, priceLow])
+          const { x: cx, y: cy, width: cw, height: ch } = _params.coordSys
+          // Clip bar to visible grid area
+          const top    = Math.max(Math.min(yH, yL), cy)
+          const bottom = Math.min(Math.max(yH, yL), cy + ch)
+          if (top >= bottom) return { type: 'rect', shape: { x: 0, y: 0, width: 0, height: 0 } }
           const barW = Math.max(volNorm * cw * 0.18, 1)
           return {
             type: 'rect',
-            shape: { x: cx + cw - barW, y: Math.min(yH, yL), width: barW, height: barH },
-            style: { fill: 'rgba(99,102,241,0.22)', stroke: 'rgba(99,102,241,0.38)', lineWidth: 0.5 },
+            shape: { x: cx + cw - barW, y: top, width: barW, height: bottom - top },
+            style: { fill: 'rgba(99,102,241,0.32)', stroke: 'rgba(99,102,241,0.55)', lineWidth: 0.5 },
           }
         },
       },
