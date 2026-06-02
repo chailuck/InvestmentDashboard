@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   GitBranch, Plus, Pencil, Trash2, Check, X, Loader2,
-  Info, ToggleLeft, ToggleRight,
+  Info, ToggleLeft, ToggleRight, Download, Upload,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -120,6 +120,7 @@ export default function DrMappingsPage() {
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const importRef = useRef<HTMLInputElement>(null)
 
   const { data: mappings = [], isLoading } = useQuery<DrMapping[]>({
     queryKey: ['dr-mappings'],
@@ -128,6 +129,50 @@ export default function DrMappingsPage() {
   })
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['dr-mappings'] })
+
+  // ── Export / Import ──────────────────────────────────────────────────────
+  // Format: DR_SYMBOL|PARENT_SYMBOL|MARKET|RATIO  (one mapping per line)
+
+  const exportMappings = () => {
+    const header = 'DR_SYMBOL|PARENT_SYMBOL|MARKET|RATIO'
+    const lines = mappings.map(m =>
+      `${m.dr_symbol}|${m.parent_symbol}|${m.parent_market}|${m.ratio}`
+    )
+    const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/plain' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'dr_mappings.txt'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  const importMappings = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    const text = await file.text()
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('DR_SYMBOL'))
+    if (lines.length === 0) { setError('No valid rows found in file'); return }
+    if (!confirm(`Import ${lines.length} mapping(s)? Existing mappings with the same DR symbol will be skipped.`)) return
+    setSaving(true); setError(null)
+    let created = 0; let skipped = 0
+    for (const line of lines) {
+      const parts = line.split('|')
+      if (parts.length < 3) { skipped++; continue }
+      const [dr_symbol, parent_symbol, market_or_ratio, ratio_or_undef] = parts
+      const hasMarket = parts.length >= 4
+      const parent_market = hasMarket ? market_or_ratio.toUpperCase() : 'CRYPTO'
+      const ratio = parseFloat(hasMarket ? ratio_or_undef : market_or_ratio)
+      if (!dr_symbol || !parent_symbol || isNaN(ratio)) { skipped++; continue }
+      try {
+        await drMappingService.create({ dr_symbol: dr_symbol.toUpperCase(), parent_symbol: parent_symbol.toUpperCase(), parent_market, ratio })
+        created++
+      } catch { skipped++ }
+    }
+    setSaving(false)
+    refresh()
+    if (skipped > 0) setError(`Imported ${created}, skipped ${skipped} (duplicates or invalid rows)`)
+  }
 
   const handleCreate = async (form: DrMappingCreate) => {
     setSaving(true); setError(null)
@@ -177,12 +222,25 @@ export default function DrMappingsPage() {
             </p>
           </div>
         </div>
-        {isAdmin && !adding && (
-          <button onClick={() => { setAdding(true); setEditId(null) }}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold transition-colors">
-            <Plus className="w-3.5 h-3.5" /> Add Mapping
+        <div className="flex items-center gap-2 flex-wrap">
+          <input ref={importRef} type="file" accept=".txt" className="hidden" onChange={importMappings} />
+          <button onClick={exportMappings} disabled={mappings.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-ink-muted hover:text-ink-primary text-xs font-semibold transition-colors disabled:opacity-40">
+            <Download className="w-3.5 h-3.5" /> Export
           </button>
-        )}
+          {isAdmin && (
+            <button onClick={() => importRef.current?.click()} disabled={saving}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-ink-muted hover:text-ink-primary text-xs font-semibold transition-colors disabled:opacity-40">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />} Import
+            </button>
+          )}
+          {isAdmin && !adding && (
+            <button onClick={() => { setAdding(true); setEditId(null) }}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold transition-colors">
+              <Plus className="w-3.5 h-3.5" /> Add Mapping
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Error */}

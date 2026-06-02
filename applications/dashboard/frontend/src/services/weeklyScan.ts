@@ -74,6 +74,7 @@ export interface UserSymbolList {
   id: string
   name: string
   market: ScanMarket
+  is_dr: boolean
   symbols: string[]
   sort_order: number
   updated_at: string | null
@@ -85,13 +86,16 @@ export interface WeekPriceEntry {
   current?: number | null
   change_abs?: number | null
   change_pct?: number | null
-  // DR-enriched fields (present only for DR-mapped symbols)
+  // DR symbol (BTCUSD-DR): fetches parent, returns parent USD + DR THB
   parent_mon?: number | null
   parent_fri?: number | null
   dr_mon_thb?: number | null
   dr_fri_thb?: number | null
   dr_current_thb?: number | null
-  parent_symbol?: string | null
+  parent_symbol?: string | null   // the parent this DR tracks (e.g. BTC-USD)
+  // Parent symbol in a DR-flagged list: fetches itself, returns DR SET ticker + DR THB
+  dr_symbol?: string | null       // the Thai SET DR ticker (e.g. BTCUSD-DR)
+  dr_list?: boolean               // true when symbol is from DR-flagged list (even if no mapping)
   ratio?: number | null
 }
 
@@ -174,12 +178,12 @@ export const weeklyScanService = {
     return data
   },
 
-  async createSymbolList(name: string, symbols: string[], market: ScanMarket = 'SET'): Promise<UserSymbolList> {
-    const { data } = await apiClient.post('/weekly-scan/symbol-lists', { name, symbols, market })
+  async createSymbolList(name: string, symbols: string[], market: ScanMarket = 'SET', is_dr = false): Promise<UserSymbolList> {
+    const { data } = await apiClient.post('/weekly-scan/symbol-lists', { name, symbols, market, is_dr })
     return data
   },
 
-  async updateSymbolList(id: string, patch: Partial<Pick<UserSymbolList, 'name' | 'market' | 'symbols' | 'sort_order'>>): Promise<UserSymbolList> {
+  async updateSymbolList(id: string, patch: Partial<Pick<UserSymbolList, 'name' | 'market' | 'is_dr' | 'symbols' | 'sort_order'>>): Promise<UserSymbolList> {
     const { data } = await apiClient.put(`/weekly-scan/symbol-lists/${id}`, patch)
     return data
   },

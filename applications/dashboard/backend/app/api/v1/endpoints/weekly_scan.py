@@ -106,11 +106,13 @@ class ItemAdd(BaseModel):
 class SymbolListCreate(BaseModel):
     name: str
     market: str = 'SET'
+    is_dr: bool = False
     symbols: list[str] = []
 
 class SymbolListUpdate(BaseModel):
     name: str | None = None
     market: str | None = None
+    is_dr: bool | None = None
     symbols: list[str] | None = None
     sort_order: int | None = None
 
@@ -231,6 +233,7 @@ def _list_dict(sl: UserSymbolList) -> dict[str, Any]:
         "id": str(sl.id),
         "name": sl.name,
         "market": sl.market,
+        "is_dr": sl.is_dr,
         "symbols": sl.symbols,
         "sort_order": sl.sort_order,
         "updated_at": sl.updated_at.isoformat() if sl.updated_at else None,
@@ -281,6 +284,7 @@ async def create_symbol_list(body: SymbolListCreate, user_id: UserId, db: DB) ->
         user_id=uid,
         name=body.name.strip(),
         market=body.market,
+        is_dr=body.is_dr,
         symbols=symbols,
         sort_order=next_order,
     )
@@ -307,6 +311,8 @@ async def update_symbol_list(
         sl.name = body.name.strip()
     if body.market is not None:
         sl.market = body.market
+    if body.is_dr is not None:
+        sl.is_dr = body.is_dr
     if body.symbols is not None:
         sl.symbols = [s.strip().upper() for s in body.symbols if s.strip()]
     if body.sort_order is not None:
@@ -628,11 +634,20 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
     sym_market     = {it.symbol: it.market for it in items}
     symbols        = list(sym_market.keys())
 
-    # Load active DR mappings
+    # Load active DR mappings — forward (dr_symbol→mapping) and reverse (parent_symbol→mapping)
     dr_result = await db.execute(
         select(DrMapping).where(DrMapping.is_active == True)  # noqa: E712
     )
-    dr_map: dict[str, DrMapping] = {m.dr_symbol: m for m in dr_result.scalars().all()}
+    all_mappings = dr_result.scalars().all()
+    dr_map: dict[str, DrMapping] = {m.dr_symbol: m for m in all_mappings}
+    parent_dr_map: dict[str, DrMapping] = {m.parent_symbol: m for m in all_mappings}
+
+    # Symbols from DR-flagged lists (reverse lookup: parent symbol in scan → find DR ticker)
+    dr_lists_result = await db.execute(
+        select(UserSymbolList).where(UserSymbolList.user_id == uid, UserSymbolList.is_dr == True)  # noqa: E712
+    )
+    dr_list_names: set[str] = {sl.name for sl in dr_lists_result.scalars().all()}
+    dr_list_syms: set[str] = {it.symbol for it in items if it.list_name in dr_list_names}
 
     if not symbols or monday is None:
         return {
@@ -645,16 +660,22 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
     loop = asyncio.get_running_loop()
     sem  = asyncio.Semaphore(5)
 
-    # Fetch exchange rate once if any DR symbols are present
-    has_dr = any(s in dr_map for s in symbols)
+    # Fetch exchange rate once if any DR symbols/lists are present
+    has_dr = any(s in dr_map for s in symbols) or bool(dr_list_syms)
     usd_thb: float | None = None
     if has_dr:
         usd_thb = await loop.run_in_executor(None, _fetch_usd_thb)
 
     async def _fetch(sym: str) -> tuple[str, dict]:
         async with sem:
-            mapping = dr_map.get(sym)
+            mapping = dr_map.get(sym)              # sym IS a DR symbol (e.g. BTCUSD-DR)
+            rev_mapping = (
+                parent_dr_map.get(sym)             # sym is a parent in a DR-flagged list
+                if sym in dr_list_syms else None
+            )
+
             if mapping:
+                # Existing: sym is a DR ticker — fetch parent, compute DR THB
                 parent_prices = await loop.run_in_executor(
                     None, _fetch_sym_prices,
                     mapping.parent_symbol, monday, friday, mapping.parent_market,
@@ -663,9 +684,7 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
                 fx = usd_thb or 34.0
 
                 def _thb(usd: float | None) -> float | None:
-                    if usd is None:
-                        return None
-                    return round(usd / ratio * fx, 2)
+                    return None if usd is None else round(usd / ratio * fx, 2)
 
                 return sym, {
                     "mon":            parent_prices["mon"],
@@ -681,6 +700,29 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
                     "parent_symbol":  mapping.parent_symbol,
                     "ratio":          ratio,
                 }
+            elif rev_mapping:
+                # New: sym is a parent in a DR-flagged list — fetch it directly, add DR info
+                result = await loop.run_in_executor(
+                    None, _fetch_sym_prices, sym, monday, friday, sym_market.get(sym, 'SET')
+                )
+                ratio = float(rev_mapping.ratio)
+                fx = usd_thb or 34.0
+
+                def _dr(v: float | None) -> float | None:
+                    return None if v is None else round(v / ratio * fx, 2)
+
+                return sym, {
+                    **result,
+                    "dr_symbol":      rev_mapping.dr_symbol,   # e.g. BTCUSD-DR
+                    "dr_current_thb": _dr(result.get("current")),
+                    "ratio":          ratio,
+                }
+            elif sym in dr_list_syms:
+                # In a DR list but no mapping found — return prices with dr_symbol=None marker
+                result = await loop.run_in_executor(
+                    None, _fetch_sym_prices, sym, monday, friday, sym_market.get(sym, 'SET')
+                )
+                return sym, {**result, "dr_symbol": None, "dr_list": True}
             else:
                 result = await loop.run_in_executor(
                     None, _fetch_sym_prices, sym, monday, friday, sym_market.get(sym, 'SET')

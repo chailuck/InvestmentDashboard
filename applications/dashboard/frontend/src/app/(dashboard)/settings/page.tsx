@@ -365,7 +365,7 @@ function SymbolListCard({
   isLast,
 }: {
   list: UserSymbolList
-  onSave: (id: string, name: string, symbols: string[], market: ScanMarket) => Promise<void>
+  onSave: (id: string, name: string, symbols: string[], market: ScanMarket, is_dr: boolean) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onMoveUp: (id: string) => void
   onMoveDown: (id: string) => void
@@ -375,6 +375,7 @@ function SymbolListCard({
   const [open,    setOpen]    = useState(false)
   const [name,    setName]    = useState(list.name)
   const [market,  setMarket]  = useState<ScanMarket>(list.market)
+  const [isDr,    setIsDr]    = useState(list.is_dr)
   const [text,    setText]    = useState(list.symbols.join('\n'))
   const [saving,  setSaving]  = useState(false)
   const [deleting,setDeleting]= useState(false)
@@ -396,7 +397,7 @@ function SymbolListCard({
       }
       const merged = [...symbols, ...newSymbols]
       setText(merged.join('\n'))
-      await onSave(list.id, name.trim() || list.name, merged, market)
+      await onSave(list.id, name.trim() || list.name, merged, market, isDr)
       toast.success(`Added ${newSymbols.length} new symbol${newSymbols.length !== 1 ? 's' : ''} from portfolio`)
     } catch {
       toast.error('Failed to sync from portfolio')
@@ -406,7 +407,7 @@ function SymbolListCard({
   const save = async () => {
     setSaving(true)
     try {
-      await onSave(list.id, name.trim() || list.name, symbols, market)
+      await onSave(list.id, name.trim() || list.name, symbols, market, isDr)
       toast.success(`Saved "${name}" — ${symbols.length} symbols`)
     } catch {
       toast.error('Failed to save')
@@ -454,17 +455,32 @@ function SymbolListCard({
         <GripVertical className="w-3.5 h-3.5 text-ink-disabled shrink-0" />
         <input value={name} onChange={e => setName(e.target.value)}
           className="flex-1 bg-transparent text-sm font-semibold text-ink-primary outline-none border-b border-transparent focus:border-brand-500/50 transition-colors"
-          onBlur={() => name !== list.name && onSave(list.id, name.trim() || list.name, list.symbols, market).catch(() => {})} />
+          onBlur={() => name !== list.name && onSave(list.id, name.trim() || list.name, list.symbols, market, isDr).catch(() => {})} />
         <select value={market} onChange={e => {
             const m = e.target.value as ScanMarket
             setMarket(m)
-            onSave(list.id, name.trim() || list.name, list.symbols, m).catch(() => {})
+            onSave(list.id, name.trim() || list.name, list.symbols, m, isDr).catch(() => {})
           }}
           className="shrink-0 bg-surface-elevated border border-border/50 rounded px-1.5 py-0.5 text-[10px] text-ink-secondary focus:outline-none focus:border-brand-500/50">
           {SCAN_MARKETS.map(m => (
             <option key={m.value} value={m.value} title={m.desc}>{m.label}</option>
           ))}
         </select>
+        <button
+          onClick={() => {
+            const next = !isDr
+            setIsDr(next)
+            onSave(list.id, name.trim() || list.name, list.symbols, market, next).catch(() => {})
+          }}
+          title="DR list — shows DR SET ticker and price estimates in weekly scan"
+          className={cn(
+            'shrink-0 px-1.5 py-0.5 text-[10px] font-bold rounded border transition-colors',
+            isDr
+              ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-400'
+              : 'border-border/50 text-ink-disabled hover:text-ink-muted',
+          )}>
+          DR
+        </button>
         <span className="text-[10px] text-ink-disabled shrink-0">{symbols.length} symbols</span>
         <button onClick={() => setOpen(v => !v)}
           className="text-xs text-brand-400 hover:text-brand-300 transition-colors shrink-0 px-1.5">
@@ -524,8 +540,8 @@ function ScanListSection() {
 
   useEffect(() => { reload() }, [])
 
-  const handleSave = async (id: string, name: string, symbols: string[], market: ScanMarket) => {
-    await weeklyScanService.updateSymbolList(id, { name, symbols, market })
+  const handleSave = async (id: string, name: string, symbols: string[], market: ScanMarket, is_dr: boolean) => {
+    await weeklyScanService.updateSymbolList(id, { name, symbols, market, is_dr })
     await reload()
   }
 

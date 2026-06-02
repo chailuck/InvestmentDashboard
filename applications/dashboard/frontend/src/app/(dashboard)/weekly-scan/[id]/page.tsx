@@ -206,6 +206,31 @@ function DrParentNote({ thbValue, ratio, usdThb }: {
   )
 }
 
+/**
+ * DR note for items in DR-flagged lists.
+ * Shows "DR: ฿xxx" for Current/Buy/TP/SL columns.
+ * parentUsdValue = the USD price to convert (e.g. current price or user-entered Buy)
+ */
+function DrListPriceNote({ parentUsdValue, ratio, usdThb, hasMapped }: {
+  parentUsdValue: number | null | undefined
+  ratio: number | null | undefined
+  usdThb: number | null | undefined
+  hasMapped: boolean  // false = no DR mapping exists
+}) {
+  if (!hasMapped) {
+    return <span className="text-[9px] text-ink-disabled font-mono leading-none">DR: —</span>
+  }
+  if (parentUsdValue == null || !ratio || !usdThb) {
+    return <span className="text-[9px] text-ink-disabled font-mono leading-none">DR: —</span>
+  }
+  const drThb = parentUsdValue / ratio * usdThb
+  return (
+    <span className="text-[9px] text-cyan-400 font-mono leading-none tabular-nums">
+      DR: ฿{drThb.toLocaleString('en', { maximumFractionDigits: 2 })}
+    </span>
+  )
+}
+
 // ── Strategy picker (inline icons) ───────────────────────────────────────────
 
 const STRATEGY_ICONS: Record<string, { icon: string; short: string; base: string; active: string }> = {
@@ -466,6 +491,13 @@ export default function WeeklyScanPage() {
     staleTime: 5 * 60_000,
     enabled: !!scan,
   })
+
+  const { data: symbolLists = [] } = useQuery({
+    queryKey: ['symbol-lists'],
+    queryFn: () => weeklyScanService.getSymbolLists(),
+    staleTime: 5 * 60_000,
+  })
+  const drListNames = new Set(symbolLists.filter(l => l.is_dr).map(l => l.name))
 
   const invalidate = useCallback(() => queryClient.invalidateQueries({ queryKey: ['weekly-scan', id] }), [id, queryClient])
 
@@ -861,13 +893,26 @@ export default function WeeklyScanPage() {
                     className={cn('border-b border-border/20 transition-colors',
                       meta ? `${meta.bg.replace('/20', '/5')} hover:${meta.bg.replace('/20', '/10')}` : 'hover:bg-surface-elevated/40')}>
                     <td className="px-3 py-2 text-ink-disabled">{idx + 1}</td>
-                    <td className="px-3 py-2 w-[84px] max-w-[84px]">
-                      <button onClick={() => setAnalyticsSymbol({ symbol: item.symbol, market: item.market ?? 'SET' })}
-                        title={item.symbol}
-                        className="font-bold font-mono text-ink-primary hover:text-brand-400 transition-colors block w-full truncate text-left">
-                        {item.symbol}
-                      </button>
-                    </td>
+                    {(() => {
+                      const isInDrList = item.list_name ? drListNames.has(item.list_name) : false
+                      const pe = weekPrices?.prices[item.symbol]
+                      const drSetTicker = pe?.dr_symbol   // e.g. BTCUSD-DR
+                      const drHasMapped = drSetTicker !== undefined  // entry exists, mapping found
+                      return (
+                        <td className="px-3 py-2 w-[84px] max-w-[84px]">
+                          <button onClick={() => setAnalyticsSymbol({ symbol: item.symbol, market: item.market ?? 'SET' })}
+                            title={item.symbol}
+                            className="font-bold font-mono text-ink-primary hover:text-brand-400 transition-colors block w-full truncate text-left">
+                            {item.symbol}
+                          </button>
+                          {isInDrList && (
+                            <span className="text-[9px] font-mono text-cyan-400 leading-none block truncate">
+                              {drHasMapped ? (drSetTicker ?? '—') : '—'}
+                            </span>
+                          )}
+                        </td>
+                      )
+                    })()}
                     <td className="px-3 py-2">
                       <ColorPicker value={item.color_mark}
                         onChange={v => updateField(item.symbol, { color_mark: v })} />
@@ -878,13 +923,25 @@ export default function WeeklyScanPage() {
                     </td>
                     {(() => {
                       const priceEntry = weekPrices?.prices[item.symbol]
-                      const isDr = priceEntry?.parent_symbol != null
+                      const isDrSymbol = priceEntry?.parent_symbol != null  // item IS a DR ticker
+                      const isInDrList = item.list_name ? drListNames.has(item.list_name) : false
                       const ratio = priceEntry?.ratio
                       const usdThb = weekPrices?.usd_thb
+                      // For DR-flagged list items: dr_symbol set = mapping found; dr_list=true but dr_symbol undefined = no mapping
+                      const drHasMapped = isInDrList && priceEntry?.dr_symbol !== undefined
                       return (
                         <>
                           <td className="px-3 py-2 text-right tabular-nums">
-                            <CurrentPriceCell entry={priceEntry} loading={pricesLoading} />
+                            <div className="flex flex-col items-end gap-0.5">
+                              <CurrentPriceCell entry={priceEntry} loading={pricesLoading} />
+                              {isInDrList && (
+                                <DrListPriceNote
+                                  parentUsdValue={priceEntry?.current}
+                                  ratio={ratio} usdThb={usdThb}
+                                  hasMapped={drHasMapped}
+                                />
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             <ChangePctCell entry={priceEntry} loading={pricesLoading} />
@@ -899,7 +956,14 @@ export default function WeeklyScanPage() {
                             <div className="flex flex-col gap-0.5">
                               <NumCell value={item.buy_price}
                                 onBlur={v => updateField(item.symbol, { buy_price: v })} />
-                              {isDr && <DrParentNote thbValue={item.buy_price} ratio={ratio} usdThb={usdThb} />}
+                              {isDrSymbol && <DrParentNote thbValue={item.buy_price} ratio={ratio} usdThb={usdThb} />}
+                              {isInDrList && (
+                                <DrListPriceNote
+                                  parentUsdValue={item.buy_price}
+                                  ratio={ratio} usdThb={usdThb}
+                                  hasMapped={drHasMapped}
+                                />
+                              )}
                             </div>
                           </td>
                           <td className="px-3 py-2">
@@ -910,14 +974,28 @@ export default function WeeklyScanPage() {
                             <div className="flex flex-col gap-0.5">
                               <NumCell value={item.tp}
                                 onBlur={v => updateField(item.symbol, { tp: v })} />
-                              {isDr && <DrParentNote thbValue={item.tp} ratio={ratio} usdThb={usdThb} />}
+                              {isDrSymbol && <DrParentNote thbValue={item.tp} ratio={ratio} usdThb={usdThb} />}
+                              {isInDrList && (
+                                <DrListPriceNote
+                                  parentUsdValue={item.tp}
+                                  ratio={ratio} usdThb={usdThb}
+                                  hasMapped={drHasMapped}
+                                />
+                              )}
                             </div>
                           </td>
                           <td className="px-3 py-2">
                             <div className="flex flex-col gap-0.5">
                               <NumCell value={item.sl}
                                 onBlur={v => updateField(item.symbol, { sl: v })} />
-                              {isDr && <DrParentNote thbValue={item.sl} ratio={ratio} usdThb={usdThb} />}
+                              {isDrSymbol && <DrParentNote thbValue={item.sl} ratio={ratio} usdThb={usdThb} />}
+                              {isInDrList && (
+                                <DrListPriceNote
+                                  parentUsdValue={item.sl}
+                                  ratio={ratio} usdThb={usdThb}
+                                  hasMapped={drHasMapped}
+                                />
+                              )}
                             </div>
                           </td>
                         </>
