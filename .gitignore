@@ -18,6 +18,8 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
+# Windows-reserved filename created by Linux/Docker processes (e.g. pytest redirects)
+**/nul
 
 # Node / Next.js
 node_modules/
