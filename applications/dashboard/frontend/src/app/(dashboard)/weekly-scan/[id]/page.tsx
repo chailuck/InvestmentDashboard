@@ -109,9 +109,14 @@ function WeekPriceCell({ entry, loading, field }: {
   field: 'mon' | 'fri'
 }) {
   if (loading) return <span className="text-ink-disabled text-[10px]">…</span>
+  const isDr = entry?.parent_symbol != null
   const val = entry?.[field]
   if (val == null) return <span className="text-ink-disabled">—</span>
-  return <span className="text-xs text-ink-secondary">{val.toFixed(2)}</span>
+  return (
+    <span className={cn('text-xs tabular-nums', isDr ? 'text-amber-300' : 'text-ink-secondary')}>
+      {isDr ? '$' : ''}{val.toLocaleString('en', { maximumFractionDigits: 2 })}
+    </span>
+  )
 }
 
 function WeekPnlCell({ entry, loading }: { entry: WeekPriceEntry | undefined; loading: boolean }) {
@@ -122,6 +127,22 @@ function WeekPnlCell({ entry, loading }: { entry: WeekPriceEntry | undefined; lo
   return (
     <span className={cn('text-xs font-semibold', pct >= 0 ? 'text-gain' : 'text-loss')}>
       {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
+    </span>
+  )
+}
+
+function DrPriceCell({ entry, loading, field }: {
+  entry: WeekPriceEntry | undefined
+  loading: boolean
+  field: 'dr_mon_thb' | 'dr_fri_thb'
+}) {
+  if (loading) return <span className="text-ink-disabled text-[10px]">…</span>
+  if (!entry?.parent_symbol) return <span className="text-ink-disabled text-[10px]">—</span>
+  const val = entry[field]
+  if (val == null) return <span className="text-ink-disabled">—</span>
+  return (
+    <span className="text-xs tabular-nums text-cyan-400 font-mono">
+      ฿{val.toLocaleString('en', { maximumFractionDigits: 0 })}
     </span>
   )
 }
@@ -657,6 +678,15 @@ export default function WeeklyScanPage() {
 
       {/* Symbol table — inline editable */}
       <div className="card overflow-hidden">
+        {weekPrices?.usd_thb && (
+          <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border/30 bg-surface-elevated/50">
+            <span className="text-[10px] text-ink-muted">Exchange rate:</span>
+            <span className="text-[10px] font-mono font-semibold text-amber-400">
+              1 USD = ฿{weekPrices.usd_thb.toFixed(2)}
+            </span>
+            <span className="text-[10px] text-ink-disabled">(used for DR price estimates)</span>
+          </div>
+        )}
         <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-340px)] min-h-[240px]">
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10">
@@ -682,6 +712,18 @@ export default function WeeklyScanPage() {
                   </div>
                 </th>
                 <th className="px-3 py-2.5 text-right font-medium min-w-[60px]">W-P&L</th>
+                <th className="px-3 py-2.5 text-right font-medium min-w-[80px]">
+                  <div className="flex flex-col items-end leading-tight">
+                    <span className="text-cyan-500">DR Mon</span>
+                    <span className="text-[10px] font-normal text-ink-disabled">est. ฿</span>
+                  </div>
+                </th>
+                <th className="px-3 py-2.5 text-right font-medium min-w-[80px]">
+                  <div className="flex flex-col items-end leading-tight">
+                    <span className="text-cyan-500">DR Fri</span>
+                    <span className="text-[10px] font-normal text-ink-disabled">est. ฿</span>
+                  </div>
+                </th>
                 <th className="px-3 py-2.5 text-left font-medium">Buy</th>
                 <th className="px-3 py-2.5 text-left font-medium">Size</th>
                 <th className="px-3 py-2.5 text-left font-medium">TP</th>
@@ -733,6 +775,8 @@ export default function WeeklyScanPage() {
                 <td className="px-3 py-1.5 text-right text-[10px] text-ink-disabled">{pricesLoading ? '…' : ''}</td>
                 <td className="px-3 py-1.5"></td>
                 <td className="px-3 py-1.5"></td>
+                <td className="px-3 py-1.5"></td>
+                <td className="px-3 py-1.5"></td>
                 <td colSpan={6} className="px-3 py-1.5">
                   <div className="flex items-center gap-2">
                     {hasFilters && (
@@ -764,7 +808,7 @@ export default function WeeklyScanPage() {
             <tbody>
               {sortedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-ink-muted">
+                  <td colSpan={15} className="px-4 py-10 text-center text-ink-muted">
                     No symbols yet. Add symbols or click <strong>Refresh config</strong>.
                   </td>
                 </tr>
@@ -797,6 +841,12 @@ export default function WeeklyScanPage() {
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       <WeekPnlCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} />
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      <DrPriceCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} field="dr_mon_thb" />
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      <DrPriceCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} field="dr_fri_thb" />
                     </td>
                     <td className="px-3 py-2">
                       <NumCell value={item.buy_price}

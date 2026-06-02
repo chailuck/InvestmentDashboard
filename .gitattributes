@@ -1,0 +1,37 @@
+# Force LF line endings for all source files (required for Docker/Linux containers)
+* text=auto eol=lf
+
+# Explicitly LF
+*.py        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.json      text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.md        text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+*.sh        text eol=lf
+*.ini       text eol=lf
+*.toml      text eol=lf
+*.txt       text eol=lf
+*.env       text eol=lf
+*.env.*     text eol=lf
+Dockerfile  text eol=lf
+*.dockerfile text eol=lf
+
+# Binary — no conversion
+*.xlsx      binary
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.eot       binary
+*.gz        binary
+*.zip       binary

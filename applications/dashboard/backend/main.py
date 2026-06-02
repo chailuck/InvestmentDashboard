@@ -1,4 +1,4 @@
-﻿"""FastAPI application entry point."""
+"""FastAPI application entry point."""
 
 from __future__ import annotations
 
@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.models.symbol_note import SymbolNote  # noqa: F401
     from app.models.portfolio_db import PortfolioDbPosition  # noqa: F401
     from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem, UserSymbolList  # noqa: F401
+    from app.models.dr_mapping import DrMapping  # noqa: F401
     from app.auth.jwt import hash_password
 
     async with engine.begin() as conn:
@@ -59,8 +60,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with engine.begin() as conn:
             await conn.execute(
                 text("""
-                    INSERT INTO users (id, email, name, hashed_password, role, is_active)
-                    VALUES (uuid_generate_v4(), :email, :name, :pwd, 'admin', true)
+                    INSERT INTO users (id, email, name, hashed_password, role, is_active, portfolio_mode)
+                    VALUES (uuid_generate_v4(), :email, :name, :pwd, 'admin', true, 'excel')
                     ON CONFLICT (email) DO NOTHING
                 """),
                 {"email": settings.admin_email,

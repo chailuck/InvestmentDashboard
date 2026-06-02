@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testing Strategy — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 1000px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 }
+.yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+
+<h1>Testing Strategy &amp; Test Cases</h1>
+
+<h2>1. Overview</h2>
+<p>The test suite covers the full InvestmentDashboard stack. Two automated suites run in parallel and are unified under a single shell script entry point.</p>
+<table>
+  <tr><th>Layer</th><th>Tool</th><th>Total Tests</th><th>Coverage Target</th></tr>
+  <tr><td>Backend (Python)</td><td>pytest 8.3 + pytest-asyncio + httpx</td><td>95</td><td>&gt;70% of <code>app/</code></td></tr>
+  <tr><td>Frontend (TypeScript)</td><td>Vitest + React Testing Library</td><td>79</td><td>&gt;60% of <code>src/</code></td></tr>
+  <tr><td>E2E (manual)</td><td>Acceptance checklist (section 6)</td><td>12 scenarios</td><td>100% critical flows</td></tr>
+</table>
+
+<h3>Single entry point</h3>
+<pre><code># Run all suites
+bash applications/dashboard/run-tests.sh
+
+# Backend only
+bash applications/dashboard/run-tests.sh backend
+
+# Frontend only
+bash applications/dashboard/run-tests.sh frontend</code></pre>
+
+<hr>
+
+<h2>2. Backend Test Suite</h2>
+
+<h3>2.1 Prerequisites</h3>
+<p>The backend tests use a dedicated <code>investment_test_db</code> postgres database. Create it once:</p>
+<pre><code>docker exec inv_postgres psql -U postgres -c "CREATE DATABASE investment_test_db;"</code></pre>
+<div class="callout warn">Tests drop and recreate all tables at session start. Never point <code>TEST_DATABASE_URL</code> at the production database.</div>
+
+<h3>2.2 Configuration — <code>backend/pytest.ini</code></h3>
+<pre><code>[pytest]
+asyncio_mode = auto
+testpaths = tests
+addopts = -v --tb=short --cov=app --cov-report=term-missing --cov-report=html:htmlcov
+filterwarnings = ignore::DeprecationWarning</code></pre>
+
+<h3>2.3 Fixtures — <code>backend/tests/conftest.py</code></h3>
+<table>
+  <tr><th>Fixture</th><th>Scope</th><th>Description</th></tr>
+  <tr><td><code>engine</code></td><td>session</td><td>Creates async engine against <code>investment_test_db</code>. Runs <code>Base.metadata.create_all</code> at start and <code>drop_all</code> at end.</td></tr>
+  <tr><td><code>db_session</code></td><td>function</td><td>Opens a session, yields it, rolls back after each test — full isolation.</td></tr>
+  <tr><td><code>client</code></td><td>function</td><td><code>AsyncClient</code> with <code>get_db</code> overridden to use <code>db_session</code>. Base URL: <code>http://test</code>.</td></tr>
+  <tr><td><code>auth_client</code></td><td>function</td><td>Creates a test user directly in the DB (bypasses admin-only registration route), mints a JWT, returns an authenticated <code>AsyncClient</code>.</td></tr>
+</table>
+<div class="callout">
+  <strong>Important:</strong> There is no public <code>POST /auth/register</code> endpoint. User creation is admin-only (<code>POST /api/v1/users</code>). The <code>auth_client</code> fixture inserts the user via SQLAlchemy directly and mints a token using the app's JWT utility — it does not go through the HTTP layer for setup.
+</div>
+<div class="callout">
+  <strong>Important:</strong> The FastAPI app is wrapped in a Socket.IO middleware. Use <code>fastapi_app</code> (not <code>app</code>) when constructing <code>ASGITransport</code>. Import it with <code>from main import fastapi_app</code>.
+</div>
+
+<h3>2.4 Running backend tests</h3>
+<pre><code># Inside the running Docker container
+docker exec inv_backend bash -c "cd /app && pytest --tb=short -v"
+
+# With HTML coverage report
+docker exec inv_backend bash -c "cd /app && pytest --cov=app --cov-report=html:htmlcov"
+
+# Single file
+docker exec inv_backend bash -c "cd /app && pytest tests/test_auth.py -v"
+
+# Single test
+docker exec inv_backend bash -c "cd /app && pytest tests/test_auth.py::test_login_success -v"
+
+# Using the helper script
+docker exec inv_backend bash /app/run_tests.sh</code></pre>
+
+<h3>2.5 Test Cases</h3>
+
+<h4>test_health.py — 8 tests</h4>
+<table>
+  <tr><th>Test</th><th>Method + Path</th><th>Expected</th></tr>
+  <tr><td>test_live</td><td>GET /api/v1/health/live</td><td>200, <code>{"status":"alive"}</code></td></tr>
+  <tr><td>test_ready</td><td>GET /api/v1/health/ready</td><td>200</td></tr>
+  <tr><td>test_live_no_auth_required</td><td>GET /api/v1/health/live (no token)</td><td>200 (public endpoint)</td></tr>
+  <tr><td>test_ready_no_auth_required</td><td>GET /api/v1/health/ready (no token)</td><td>200</td></tr>
+  <tr><td>test_live_response_shape</td><td>GET /api/v1/health/live</td><td>Response body contains <code>status</code> key</td></tr>
+  <tr><td>test_docs_endpoint</td><td>GET /docs</td><td>200 (OpenAPI UI)</td></tr>
+  <tr><td>test_openapi_schema</td><td>GET /openapi.json</td><td>200, <code>info.title</code> present</td></tr>
+  <tr><td>test_404_unknown_route</td><td>GET /api/v1/nonexistent</td><td>404</td></tr>
+</table>
+
+<h4>test_auth.py — 20 tests</h4>
+<table>
+  <tr><th>Test</th><th>Input</th><th>Expected</th></tr>
+  <tr><td>test_login_success</td><td>Valid email + password JSON</td><td>200, <code>access_token</code> + <code>refresh_token</code> in response</td></tr>
+  <tr><td>test_login_wrong_password</td><td>Correct email, wrong password</td><td>401</td></tr>
+  <tr><td>test_login_nonexistent_user</td><td>Unknown email</td><td>401</td></tr>
+  <tr><td>test_login_missing_fields</td><td>Empty body</td><td>422</td></tr>
+  <tr><td>test_get_me_authenticated</td><td>Valid Bearer token</td><td>200, <code>email</code> matches test user</td></tr>
+  <tr><td>test_get_me_no_token</td><td>No Authorization header</td><td>401</td></tr>
+  <tr><td>test_get_me_invalid_token</td><td><code>Bearer invalid.token.here</code></td><td>401</td></tr>
+  <tr><td>test_get_me_expired_token</td><td>Expired JWT (time-mocked)</td><td>401</td></tr>
+  <tr><td>test_refresh_token_success</td><td>Valid refresh_token in body</td><td>200, new <code>access_token</code></td></tr>
+  <tr><td>test_refresh_token_invalid</td><td>Garbage refresh_token</td><td>401</td></tr>
+  <tr><td>test_logout</td><td>Valid token</td><td>200</td></tr>
+  <tr><td>test_update_profile</td><td>PUT /auth/me, new name</td><td>200, name updated in response</td></tr>
+  <tr><td>test_update_profile_invalid_email</td><td>PUT /auth/me, malformed email</td><td>422</td></tr>
+  <tr><td>test_change_password_success</td><td>Correct current_password + new_password</td><td>200</td></tr>
+  <tr><td>test_change_password_wrong_current</td><td>Wrong current_password</td><td>400 or 401</td></tr>
+  <tr><td>test_change_password_weak_new</td><td>new_password &lt; 8 chars</td><td>422</td></tr>
+  <tr><td>test_forgot_password</td><td>POST /auth/forgot-password with known email</td><td>200 (always — no email leak)</td></tr>
+  <tr><td>test_forgot_password_unknown</td><td>Unknown email</td><td>200 (same response)</td></tr>
+  <tr><td>test_reset_password_invalid_token</td><td>POST /auth/reset-password with bad token</td><td>400 or 422</td></tr>
+  <tr><td>test_admin_list_users</td><td>GET /api/v1/users (admin token)</td><td>200, <code>users</code> array</td></tr>
+</table>
+
+<h4>test_weekly_scan.py — 27 tests</h4>
+<table>
+  <tr><th>Test</th><th>Input</th><th>Expected</th></tr>
+  <tr><td>test_get_config_default</td><td>GET /weekly-scan/config (first access)</td><td>200, <code>symbols</code> contains SET50 defaults</td></tr>
+  <tr><td>test_update_config</td><td>PUT /weekly-scan/config <code>{"symbols":["ADVANC","GULF"]}</code></td><td>200, symbols saved</td></tr>
+  <tr><td>test_suggest_name_format</td><td>GET /weekly-scan/suggest-name</td><td>200, name matches <code>WEEKLY_SCAN_\d{2}_\d{2}_\d{4}</code></td></tr>
+  <tr><td>test_create_scan</td><td>POST /weekly-scan/scans <code>{"name":"WEEKLY_SCAN_07_06_2026"}</code></td><td>200, <code>id</code> UUID returned</td></tr>
+  <tr><td>test_list_scans_contains_created</td><td>GET /weekly-scan/scans</td><td>200, list contains scan by id</td></tr>
+  <tr><td>test_get_scan_has_items</td><td>GET /weekly-scan/scans/{id}</td><td>200, <code>items</code> array present</td></tr>
+  <tr><td>test_get_scan_color_counts</td><td>GET /weekly-scan/scans/{id}</td><td><code>color_counts</code> has keys CYAN/GREEN/YELLOW/RED/PURPLE/NONE</td></tr>
+  <tr><td>test_delete_scan</td><td>DELETE /weekly-scan/scans/{id}</td><td>204, scan absent from list</td></tr>
+  <tr><td>test_upsert_item_cyan</td><td>PUT /weekly-scan/scans/{id}/items/ADVANC <code>{"color_mark":"CYAN"}</code></td><td>200, <code>color_mark</code> = "CYAN"</td></tr>
+  <tr><td>test_upsert_item_strategy</td><td>PUT with <code>{"strategy":"BREAK OUT","buy_price":200.0}</code></td><td>200, fields persisted</td></tr>
+  <tr><td>test_upsert_item_partial</td><td>PUT with only <code>{"remark":"watch"}</code></td><td>200, other fields unchanged</td></tr>
+  <tr><td>test_delete_item</td><td>DELETE /weekly-scan/scans/{id}/items/ADVANC</td><td>204, item gone from GET response</td></tr>
+  <tr><td>test_create_symbol_list</td><td>POST /weekly-scan/symbol-lists <code>{"name":"My SET","symbols":["PTT","KBANK"]}</code></td><td>200, <code>id</code> returned</td></tr>
+  <tr><td>test_list_symbol_lists</td><td>GET /weekly-scan/symbol-lists</td><td>200, list contains created list</td></tr>
+  <tr><td>test_update_symbol_list_name</td><td>PUT /weekly-scan/symbol-lists/{id} <code>{"name":"Renamed"}</code></td><td>200, name updated</td></tr>
+  <tr><td>test_update_symbol_list_symbols</td><td>PUT with new symbols array</td><td>200, symbols replaced</td></tr>
+  <tr><td>test_delete_symbol_list</td><td>DELETE /weekly-scan/symbol-lists/{id}</td><td>204</td></tr>
+  <tr><td>test_get_symbol_note_default</td><td>GET /weekly-scan/symbol-notes/ADVANC (no note yet)</td><td>200, <code>note</code> is null</td></tr>
+  <tr><td>test_upsert_symbol_note</td><td>PUT /weekly-scan/symbol-notes/ADVANC <code>{"note":"Strong breakout setup"}</code></td><td>200, note saved</td></tr>
+  <tr><td>test_get_symbol_note_after_upsert</td><td>GET after upsert</td><td>200, <code>note</code> = "Strong breakout setup"</td></tr>
+  <tr><td>test_symbol_note_update</td><td>PUT same symbol with new note</td><td>200, note replaced (not duplicated)</td></tr>
+  <tr><td>test_symbol_note_clear</td><td>PUT <code>{"note":null}</code></td><td>200, <code>note</code> is null</td></tr>
+  <tr><td>test_week_prices_endpoint_shape</td><td>GET /weekly-scan/scans/{id}/week-prices</td><td>200, response has <code>prices</code> dict and <code>mon_date</code>/<code>fri_date</code></td></tr>
+  <tr><td>test_refresh_scan</td><td>POST /weekly-scan/scans/{id}/refresh</td><td>200, returns updated scan object</td></tr>
+  <tr><td>test_scan_unauthenticated</td><td>GET /weekly-scan/scans (no token)</td><td>401</td></tr>
+  <tr><td>test_scan_not_found</td><td>GET /weekly-scan/scans/00000000-0000-0000-0000-000000000000</td><td>404</td></tr>
+  <tr><td>test_symbol_list_sort_order</td><td>Create two lists; verify <code>sort_order</code> increments</td><td>List 1 sort_order=0, list 2 sort_order=1</td></tr>
+</table>
+
+<h4>test_action_plan.py — 23 tests</h4>
+<table>
+  <tr><th>Test</th><th>Input</th><th>Expected</th></tr>
+  <tr><td>test_create_purchase_plan</td><td>POST /action-plans <code>{"name":"2026-06-02","plan_type":"purchase"}</code></td><td>201, <code>id</code> returned</td></tr>
+  <tr><td>test_create_portfolio_plan</td><td>POST with <code>plan_type="portfolio"</code></td><td>201</td></tr>
+  <tr><td>test_list_plans</td><td>GET /action-plans</td><td>200, list contains both plans</td></tr>
+  <tr><td>test_list_plans_filter_purchase</td><td>GET /action-plans?plan_type=purchase</td><td>Only purchase plans returned</td></tr>
+  <tr><td>test_get_plan_detail</td><td>GET /action-plans/{id}</td><td>200, <code>purchase_items</code> array present</td></tr>
+  <tr><td>test_update_plan_add_items</td><td>PATCH /action-plans/{id} with <code>purchase_items</code> array</td><td>200, items persisted</td></tr>
+  <tr><td>test_update_plan_notes</td><td>PATCH with <code>notes</code> field</td><td>200, notes saved</td></tr>
+  <tr><td>test_update_plan_set_analysis</td><td>PATCH with <code>set_analysis</code></td><td>200, field saved</td></tr>
+  <tr><td>test_delete_plan</td><td>DELETE /action-plans/{id}</td><td>204, plan absent from list</td></tr>
+  <tr><td>test_suggest_name_purchase</td><td>GET /action-plans/suggest-name?plan_type=purchase</td><td>200, name matches <code>YYYY-MM-DD</code></td></tr>
+  <tr><td>test_suggest_name_unique</td><td>Create plan with suggested name, call suggest-name again</td><td>Second name has <code>-2</code> suffix or incremented</td></tr>
+  <tr><td>test_plan_not_found</td><td>GET /action-plans/00000000-...</td><td>404</td></tr>
+  <tr><td>test_plan_unauthenticated</td><td>GET /action-plans (no token)</td><td>401</td></tr>
+  <tr><td>test_purchase_item_fields</td><td>PATCH with item: stock, buy_price, size, tp, sl, strategy, reason, triggered</td><td>All fields round-trip correctly</td></tr>
+  <tr><td>test_portfolio_item_fields</td><td>PATCH with portfolio_items: symbol, entry_price, size, tp, sl, order_size</td><td>All fields round-trip correctly</td></tr>
+  <tr><td>test_item_sort_order</td><td>PATCH with 3 items of different sort_order</td><td>Items returned in sort_order sequence</td></tr>
+  <tr><td>test_duplicate_plan_name</td><td>POST two plans with same name</td><td>Second may succeed (no unique constraint) — verify behavior</td></tr>
+  <tr><td>test_plan_isolation</td><td>Two users; each creates a plan</td><td>User A cannot GET user B's plan (404)</td></tr>
+  <tr><td>test_stock_price_endpoint</td><td>GET /action-plans/stock-price?symbol=ADVANC</td><td>200, <code>price</code> is number or null (yfinance mocked)</td></tr>
+  <tr><td>test_plan_update_replaces_items</td><td>PATCH items twice with different arrays</td><td>Second PATCH fully replaces first (no duplication)</td></tr>
+  <tr><td>test_triggered_flag</td><td>PATCH item with <code>triggered:true</code></td><td>Round-trips as <code>true</code></td></tr>
+  <tr><td>test_ai_recommend_field</td><td>PATCH with <code>ai_recommend</code></td><td>200, field saved</td></tr>
+  <tr><td>test_list_plans_empty</td><td>GET /action-plans for fresh user</td><td>200, empty list</td></tr>
+</table>
+
+<h4>test_portfolio_tracker.py — 17 tests (yfinance mocked)</h4>
+<table>
+  <tr><th>Test</th><th>Mock setup</th><th>Expected</th></tr>
+  <tr><td>test_get_set_indices_shape</td><td>yfinance patched to return mock quotes</td><td>List of objects with <code>name/value/change/changePct</code></td></tr>
+  <tr><td>test_get_global_indices_shape</td><td>Same</td><td>S&amp;P500, NASDAQ, DOW, BTC, Gold present</td></tr>
+  <tr><td>test_indices_changepct_null_safe</td><td>yfinance returns None for some fields</td><td>No 500 error; <code>changePct</code> is null</td></tr>
+  <tr><td>test_get_positions_no_excel</td><td>Excel path not configured</td><td>200, empty positions or descriptive error</td></tr>
+  <tr><td>test_performance_empty</td><td>No Excel data</td><td>200, empty array</td></tr>
+  <tr><td>test_refresh_endpoint</td><td>POST /portfolio-tracker/refresh</td><td>200, response has <code>status</code> field</td></tr>
+  <tr><td>test_market_endpoint_unauthenticated</td><td>No token</td><td>401</td></tr>
+  <tr><td>test_set_indices_count</td><td>Mock returns 5 SET tickers</td><td>Response has 5 items</td></tr>
+  <tr><td>test_performance_by_stock_shape</td><td>Mock Excel with 2 closed positions</td><td>Each item has <code>symbol/net/pnlPct/wins/losses</code></td></tr>
+  <tr><td>test_performance_by_date_shape</td><td>Same</td><td>Each item has <code>period/label/net/winRate</code></td></tr>
+  <tr><td>test_positions_active_only</td><td>Mock Excel with 1 active + 1 closed</td><td>status=active returns 1 position</td></tr>
+  <tr><td>test_positions_closed_only</td><td>Same</td><td>status=closed returns 1 position</td></tr>
+  <tr><td>test_positions_all</td><td>Same</td><td>status=all returns 2 positions</td></tr>
+  <tr><td>test_positions_total_pnl</td><td>Two positions with netPnl 1000 and -200</td><td><code>totalNetPnl</code> = 800</td></tr>
+  <tr><td>test_transactions_endpoint</td><td>GET /portfolio-tracker/performance/transactions?period_key=2026-06&period=monthly</td><td>200, list of transaction objects</td></tr>
+  <tr><td>test_raw_data_endpoint</td><td>GET /portfolio-tracker/raw-data</td><td>200, <code>columns</code> array and <code>rows</code> present</td></tr>
+  <tr><td>test_date_range_filter</td><td>GET /positions?from_date=2026-01-01&amp;to_date=2026-06-01</td><td>200, positions within range only</td></tr>
+</table>
+
+<hr>
+
+<h2>3. Frontend Test Suite</h2>
+
+<h3>3.1 Prerequisites</h3>
+<pre><code>cd applications/dashboard/frontend
+npm install          # installs @testing-library/jest-dom and @vitest/coverage-v8
+npx vitest run       # run all tests once
+npx vitest           # watch mode</code></pre>
+
+<h3>3.2 Configuration — <code>frontend/vitest.config.ts</code></h3>
+<pre><code>import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+import path from 'path'
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/components/**', 'src/services/**', 'src/store/**'],
+    },
+  },
+  resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+})</code></pre>
+
+<h3>3.3 Global Mocks — <code>frontend/src/test/setup.ts</code></h3>
+<table>
+  <tr><th>Module mocked</th><th>Why</th><th>Mock behaviour</th></tr>
+  <tr><td><code>next/navigation</code></td><td>Not available in jsdom</td><td><code>useRouter</code> returns <code>{push, replace, back}</code> as <code>vi.fn()</code></td></tr>
+  <tr><td><code>echarts-for-react</code></td><td>Requires canvas; fails in jsdom</td><td>Renders <code>&lt;div data-testid="echarts" data-option={JSON}/&gt;</code> so tests can assert on chart config</td></tr>
+  <tr><td><code>next/dynamic</code></td><td>SSR-disabled imports fail in jsdom</td><td>Synchronous passthrough — returns the factory result immediately</td></tr>
+  <tr><td><code>framer-motion</code></td><td>Animation timing causes <code>act()</code> warnings</td><td>Proxy that forwards <code>motion.div/span</code> as plain elements; <code>AnimatePresence</code> is passthrough</td></tr>
+  <tr><td><code>ResizeObserver</code></td><td>Not in jsdom</td><td><code>vi.fn()</code> with <code>observe/unobserve/disconnect</code></td></tr>
+  <tr><td><code>IntersectionObserver</code></td><td>Not in jsdom</td><td>Same pattern</td></tr>
+</table>
+
+<h3>3.4 Test Utilities — <code>frontend/src/test/test-utils.tsx</code></h3>
+<p>Exports a custom <code>render()</code> that wraps the component in a fresh <code>QueryClientProvider</code> with <code>retry:false</code> and <code>gcTime:0</code>. Always import <code>render</code> from <code>@/test/test-utils</code>, not directly from <code>@testing-library/react</code>.</p>
+
+<h3>3.5 Test Cases</h3>
+
+<h4>dashboard.test.ts — 14 tests</h4>
+<table>
+  <tr><th>Test</th><th>What is asserted</th></tr>
+  <tr><td>starts with editMode false</td><td><code>useDashboardStore.getState().editMode === false</code></td></tr>
+  <tr><td>toggleEditMode turns true</td><td>After <code>toggleEditMode()</code>, <code>editMode === true</code></td></tr>
+  <tr><td>toggleEditMode turns false again</td><td>Double toggle → back to false</td></tr>
+  <tr><td>DEFAULT_WIDGETS includes portfolio_summary</td><td><code>widgets.some(w =&gt; w.type === 'portfolio_summary')</code></td></tr>
+  <tr><td>DEFAULT_WIDGETS includes market_pulse</td><td><code>widgets.some(w =&gt; w.type === 'market_pulse')</code></td></tr>
+  <tr><td>DEFAULT_WIDGETS includes scan_heat_tile</td><td><code>widgets.some(w =&gt; w.type === 'scan_heat_tile')</code></td></tr>
+  <tr><td>DEFAULT_WIDGETS includes pnl_waterfall</td><td><code>widgets.some(w =&gt; w.type === 'pnl_waterfall')</code></td></tr>
+  <tr><td>updateWidgetLayout updates position</td><td>After update, matching widget has new x/y/w/h</td></tr>
+  <tr><td>updateWidgetLayout ignores unknown ids</td><td>Non-matching widgets unchanged</td></tr>
+  <tr><td>resetLayout restores defaults</td><td>After setWidgets([]), resetLayout() restores DEFAULT_WIDGETS</td></tr>
+  <tr><td>setSelectedPortfolio stores id</td><td><code>selectedPortfolioId === 'test-id'</code></td></tr>
+  <tr><td>setSelectedPortfolio accepts null</td><td><code>selectedPortfolioId === null</code></td></tr>
+  <tr><td>setWidgets replaces widgets array</td><td>Custom array replaces defaults</td></tr>
+  <tr><td>DEFAULT_WIDGETS all have required fields</td><td>Every widget has id/type/title/x/y/w/h</td></tr>
+</table>
+
+<h4>weeklyScan.service.test.ts — 26 tests</h4>
+<table>
+  <tr><th>Group</th><th>Tests</th></tr>
+  <tr><td>colorMarkMeta()</td><td>Returns correct meta for CYAN; GREEN; null input returns null; all 5 marks present in COLOR_MARKS</td></tr>
+  <tr><td>SCAN_STRATEGIES</td><td>Contains "BREAK OUT"; contains "BUY ON DIP"; has exactly 7 entries</td></tr>
+  <tr><td>listScans()</td><td>Calls GET /weekly-scan/scans; returns data array</td></tr>
+  <tr><td>getScan(id)</td><td>Calls GET /weekly-scan/scans/{id}; returns scan with items</td></tr>
+  <tr><td>createScan(name)</td><td>Calls POST with name body; returns {id, name}</td></tr>
+  <tr><td>upsertItem()</td><td>Calls PUT with correct path and fields body</td></tr>
+  <tr><td>getSymbolNote()</td><td>Calls GET /symbol-notes/{symbol}; returns note</td></tr>
+  <tr><td>upsertSymbolNote()</td><td>Calls PUT with {note}; encodes symbol in URL</td></tr>
+  <tr><td>getSymbolLists()</td><td>Calls GET /symbol-lists; returns array</td></tr>
+  <tr><td>updateSymbolList()</td><td>Calls PUT /symbol-lists/{id} with patch</td></tr>
+  <tr><td>getWeekPrices()</td><td>Calls GET /scans/{id}/week-prices; returns WeekPrices shape</td></tr>
+  <tr><td>Error propagation</td><td>API rejection propagates to caller</td></tr>
+</table>
+
+<h4>PortfolioSummaryWidget.test.tsx — 11 tests</h4>
+<table>
+  <tr><th>Test</th><th>Assertion</th></tr>
+  <tr><td>renders 4 metric cards</td><td>4 cards in DOM after query resolves</td></tr>
+  <tr><td>shows win/loss breakdown</td><td>"1W / 1L" text present</td></tr>
+  <tr><td>shows positive P&amp;L in gain color</td><td>Element with <code>text-gain</code> class contains P&amp;L value</td></tr>
+  <tr><td>shows 50% win rate</td><td>"50%" text present</td></tr>
+  <tr><td>renders loading skeletons initially</td><td>Skeleton divs present before query resolves</td></tr>
+  <tr><td>handles zero positions</td><td>Empty mock → no crash, shows "0" position count</td></tr>
+  <tr><td>formats THB compact for large numbers</td><td>Values &gt; 1M show "M ฿" suffix</td></tr>
+  <tr><td>avg P&amp;L per trade calculation</td><td>totalPnl / total matches displayed value</td></tr>
+  <tr><td>negative P&amp;L uses loss color</td><td><code>text-loss</code> class when totalPnl &lt; 0</td></tr>
+  <tr><td>refetches every 60s</td><td><code>refetchInterval: 60000</code> in useQuery options</td></tr>
+  <tr><td>renders with minimal config</td><td>No crash if only id/type/title/x/y/w/h provided</td></tr>
+</table>
+
+<h4>MarketPulseWidget.test.tsx — 9 tests</h4>
+<table>
+  <tr><th>Test</th><th>Assertion</th></tr>
+  <tr><td>renders SET index names</td><td>"SET50", "SET100" text visible after load</td></tr>
+  <tr><td>renders global index names</td><td>"S&amp;P 500" or "NASDAQ" visible</td></tr>
+  <tr><td>positive changePct shows green class</td><td>Element with <code>text-gain</code> present</td></tr>
+  <tr><td>negative changePct shows red class</td><td>Element with <code>text-loss</code> present</td></tr>
+  <tr><td>null changePct renders —</td><td>Dash character present, no crash</td></tr>
+  <tr><td>renders loading state</td><td>Skeleton or spinner present before resolve</td></tr>
+  <tr><td>renders both SET and global sections</td><td>Both index groups present in DOM</td></tr>
+  <tr><td>pulse dot present for each index</td><td>At least one animated indicator element</td></tr>
+  <tr><td>no crash when all values null</td><td>All mock values null → renders without error</td></tr>
+</table>
+
+<h4>PnlWaterfallWidget.test.tsx — 9 tests</h4>
+<table>
+  <tr><th>Test</th><th>Assertion</th></tr>
+  <tr><td>renders ECharts chart</td><td><code>data-testid="echarts"</code> present</td></tr>
+  <tr><td>renders time range buttons</td><td>"All", "3M", "1M" buttons visible</td></tr>
+  <tr><td>All button active by default</td><td>"All" button has active/selected styling</td></tr>
+  <tr><td>click 3M changes active button</td><td>"3M" becomes active after click</td></tr>
+  <tr><td>chart data sorted descending by net</td><td>In <code>data-option</code>, ADVANC (15000) before GULF (-3000)</td></tr>
+  <tr><td>positive bar is green</td><td>ADVANC itemStyle color = #10B981</td></tr>
+  <tr><td>negative bar is red</td><td>GULF itemStyle color = #EF4444</td></tr>
+  <tr><td>empty state when no stocks</td><td>Mock returns [] → empty state message shown</td></tr>
+  <tr><td>loading state</td><td>Skeleton present while loading</td></tr>
+</table>
+
+<h4>AllocationChartWidget.test.tsx — 10 tests</h4>
+<table>
+  <tr><th>Test</th><th>Assertion</th></tr>
+  <tr><td>renders ECharts when positions exist</td><td><code>data-testid="echarts"</code> present</td></tr>
+  <tr><td>shows empty state when no positions</td><td>"No open positions" text</td></tr>
+  <tr><td>shows total position value label</td><td>"Total Position Value" text visible</td></tr>
+  <tr><td>chart is donut type</td><td><code>data-option</code> series[0].type === "pie"</td></tr>
+  <tr><td>donut radius correct</td><td>series[0].radius matches ["38%","68%"]</td></tr>
+  <tr><td>each position gets a slice</td><td>data length equals distinct symbols</td></tr>
+  <tr><td>slice value is currentPrice × positionSize</td><td>Computed value matches mock data</td></tr>
+  <tr><td>loading skeleton shown</td><td>Skeleton div before query resolves</td></tr>
+  <tr><td>empty state config link</td><td>Mention of Settings in empty state message</td></tr>
+  <tr><td>no crash with single position</td><td>1 position → renders without error</td></tr>
+</table>
+
+<hr>
+
+<h2>4. Master Test Runner</h2>
+<p>File: <code>applications/dashboard/run-tests.sh</code></p>
+<pre><code>bash run-tests.sh            # backend + frontend
+bash run-tests.sh backend    # backend only
+bash run-tests.sh frontend   # frontend only</code></pre>
+<p>The script detects whether the <code>inv_backend</code> Docker container is running and executes pytest inside it. If not, it falls back to running pytest locally (requires backend venv with deps installed).</p>
+
+<hr>
+
+<h2>5. Adding Tests for New Features</h2>
+
+<h3>Backend (new endpoint)</h3>
+<ol>
+  <li>Add a new <code>async def test_*(auth_client)</code> function in the appropriate <code>tests/test_*.py</code> file</li>
+  <li>Use <code>auth_client</code> for authenticated calls; <code>client</code> for unauthenticated tests</li>
+  <li>Assert <code>response.status_code</code> and key fields in <code>response.json()</code></li>
+  <li>For endpoints that call yfinance or read Excel, patch with <code>monkeypatch.setattr()</code></li>
+  <li>Run: <code>docker exec inv_backend bash -c "cd /app &amp;&amp; pytest tests/test_NEW.py -v"</code></li>
+</ol>
+
+<h3>Frontend (new widget)</h3>
+<ol>
+  <li>Create <code>src/components/dashboard/__tests__/NewWidget.test.tsx</code></li>
+  <li>Mock the service: <code>vi.mock('@/services/portfolioTracker', () =&gt; ({ portfolioTrackerService: { getX: vi.fn().mockResolvedValue(...) } }))</code></li>
+  <li>Import <code>render</code> from <code>@/test/test-utils</code> (provides QueryClient)</li>
+  <li>Use <code>waitFor(() =&gt; expect(screen.getByText('...')).toBeInTheDocument())</code> for async</li>
+  <li>Run: <code>npx vitest run src/components/dashboard/__tests__/NewWidget.test.tsx</code></li>
+</ol>
+
+<hr>
+
+<h2>6. Manual Acceptance Test Checklist</h2>
+<p>Run through all 12 scenarios after each significant deployment.</p>
+<ol>
+  <li><strong>Auth:</strong> Register → Login → View dashboard → Logout → Login again with same credentials</li>
+  <li><strong>Dashboard layout:</strong> Click "Edit layout" → Drag Market Pulse widget → Click "Lock layout" → Reload page → Widget stays in new position</li>
+  <li><strong>Market Pulse Widget:</strong> Verify SET50/SET100/sSET and S&amp;P500/NASDAQ/DOW/BTC/Gold all display with change %</li>
+  <li><strong>Scan-to-plan flow:</strong> Create weekly scan → Evaluate 3 symbols → Mark 1 CYAN + 1 GREEN → Scan Dashboard → "Export CYAN+GREEN to Plan" → Select plan → Verify plan has 2 items, no duplicates</li>
+  <li><strong>Keyboard shortcuts:</strong> Open evaluate view → Press 1 → symbol marked CYAN → Press → → next symbol → Press S → saved successfully</li>
+  <li><strong>Symbol Notes:</strong> Open evaluate for ADVANC → Type note → Click away (blur) → "Saved" flash appears → Reopen same symbol → Note persists</li>
+  <li><strong>Sync from Portfolio:</strong> Settings → Symbol Lists → "Sync from Portfolio" → Count of new symbols matches active positions not already in list</li>
+  <li><strong>P&amp;L Waterfall:</strong> Toggle 1M → bars change → Toggle 3M → bars change → Toggle All → shows lifetime data</li>
+  <li><strong>Scan Heat Tile:</strong> Ensure ≥1 CYAN/GREEN scan pick is also an active position → Widget shows colored tile for that symbol with correct P&amp;L%</li>
+  <li><strong>Documents:</strong> Open all 10 sections → Each renders correctly in HTML iframe → Application Guide sidebar nav scrolls to correct section on click</li>
+  <li><strong>Bulk Export deduplication:</strong> Export CYAN+GREEN from two different scans to the same plan → No duplicate stock entries in plan</li>
+  <li><strong>Portfolio Tracker refresh:</strong> Click refresh in portfolio page → Data reloads → Performance chart updates</li>
+</ol>
+
+</body>
+</html>

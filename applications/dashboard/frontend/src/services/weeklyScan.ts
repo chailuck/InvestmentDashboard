@@ -82,11 +82,19 @@ export interface UserSymbolList {
 export interface WeekPriceEntry {
   mon: number | null
   fri: number | null
+  // DR-enriched fields (present only for DR-mapped symbols)
+  parent_mon?: number | null
+  parent_fri?: number | null
+  dr_mon_thb?: number | null
+  dr_fri_thb?: number | null
+  parent_symbol?: string | null
+  ratio?: number | null
 }
 
 export interface WeekPrices {
   mon_date: string | null
   fri_date: string | null
+  usd_thb?: number | null
   prices: Record<string, WeekPriceEntry>
 }
 

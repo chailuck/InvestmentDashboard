@@ -1,4 +1,4 @@
-﻿"""Weekly Manual Scan endpoints."""
+"""Weekly Manual Scan endpoints."""
 
 
 import asyncio
@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import get_current_user_id
 from app.database.session import get_db
+from app.models.dr_mapping import DrMapping
 from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem, UserSymbolList
 from app.models.symbol_note import SymbolNote
 
@@ -130,9 +131,27 @@ def _parse_week_dates(scan_name: str) -> tuple[date | None, date | None]:
         return None, None
 
 
+_fx_cache: dict[str, Any] = {"rate": None, "ts": 0.0}
+_FX_TTL = 3600.0
+
+
+def _fetch_usd_thb() -> float:
+    import time
+    now = time.time()
+    if _fx_cache["rate"] is not None and now - _fx_cache["ts"] < _FX_TTL:
+        return float(_fx_cache["rate"])
+    try:
+        df = yf.Ticker("THB=X").history(period="2d", interval="1d")
+        rate = round(float(df["Close"].dropna().iloc[-1]), 4) if not df.empty else 34.0
+    except Exception:
+        rate = float(_fx_cache["rate"]) if _fx_cache["rate"] else 34.0
+    _fx_cache.update({"rate": rate, "ts": now})
+    return rate
+
+
 def _sym_to_ticker(symbol: str, market: str = 'SET') -> str:
     sym = symbol.strip().upper()
-    if market == 'CRYPTO' or sym.endswith('-DR') or 'USD' in sym:
+    if market in ('CRYPTO', 'COMMODITY', 'US', 'OTHER') or sym.endswith('-DR') or 'USD' in sym:
         return sym
     if market == 'HK':
         return f"{sym.zfill(4)}.HK"
@@ -570,7 +589,10 @@ async def delete_item(scan_id: str, symbol: str, user_id: UserId, db: DB) -> Res
 
 @router.get("/scans/{scan_id}/week-prices")
 async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
-    """Return Monday open and Friday close prices for every symbol in the scan."""
+    """Return Monday open and Friday close prices for every symbol.
+
+    DR-mapped symbols also return parent USD prices and estimated THB prices.
+    """
     uid  = uuid.UUID(user_id)
     scan = await db.scalar(
         select(WeeklyScan)
@@ -585,22 +607,60 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
     sym_market     = {it.symbol: it.market for it in items}
     symbols        = list(sym_market.keys())
 
+    # Load active DR mappings
+    dr_result = await db.execute(
+        select(DrMapping).where(DrMapping.is_active == True)  # noqa: E712
+    )
+    dr_map: dict[str, DrMapping] = {m.dr_symbol: m for m in dr_result.scalars().all()}
+
     if not symbols or monday is None:
         return {
             "mon_date": monday.isoformat() if monday else None,
             "fri_date": friday.isoformat() if friday else None,
+            "usd_thb": None,
             "prices": {s: {"mon": None, "fri": None} for s in symbols},
         }
 
     loop = asyncio.get_running_loop()
     sem  = asyncio.Semaphore(5)
 
+    # Fetch exchange rate once if any DR symbols are present
+    has_dr = any(s in dr_map for s in symbols)
+    usd_thb: float | None = None
+    if has_dr:
+        usd_thb = await loop.run_in_executor(None, _fetch_usd_thb)
+
     async def _fetch(sym: str) -> tuple[str, dict]:
         async with sem:
-            result = await loop.run_in_executor(
-                None, _fetch_sym_prices, sym, monday, friday, sym_market.get(sym, 'SET')
-            )
-        return sym, result
+            mapping = dr_map.get(sym)
+            if mapping:
+                parent_prices = await loop.run_in_executor(
+                    None, _fetch_sym_prices,
+                    mapping.parent_symbol, monday, friday, mapping.parent_market,
+                )
+                ratio = float(mapping.ratio)
+                fx = usd_thb or 34.0
+
+                def _thb(usd: float | None) -> float | None:
+                    if usd is None:
+                        return None
+                    return round(usd / ratio * fx, 2)
+
+                return sym, {
+                    "mon":           parent_prices["mon"],
+                    "fri":           parent_prices["fri"],
+                    "parent_mon":    parent_prices["mon"],
+                    "parent_fri":    parent_prices["fri"],
+                    "dr_mon_thb":    _thb(parent_prices["mon"]),
+                    "dr_fri_thb":    _thb(parent_prices["fri"]),
+                    "parent_symbol": mapping.parent_symbol,
+                    "ratio":         ratio,
+                }
+            else:
+                result = await loop.run_in_executor(
+                    None, _fetch_sym_prices, sym, monday, friday, sym_market.get(sym, 'SET')
+                )
+                return sym, result
 
     pairs  = await asyncio.gather(*[_fetch(s) for s in symbols])
     prices = {sym: data for sym, data in pairs}
@@ -608,7 +668,8 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
     return {
         "mon_date": monday.isoformat(),
         "fri_date": friday.isoformat(),
-        "prices": prices,
+        "usd_thb":  round(usd_thb, 4) if usd_thb else None,
+        "prices":   prices,
     }
 
 
