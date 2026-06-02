@@ -676,8 +676,12 @@ export default function ScanDashboardPage() {
           </p>
         </div>
         <button onClick={refresh} disabled={loading}
-          className="btn-icon disabled:opacity-40" title="Refresh data">
-          <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />
+          title="Re-fetch prices and re-check DR mappings from database"
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
+          {loading
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <RefreshCw className="w-3.5 h-3.5" />}
+          Refresh Prices
         </button>
         {/* Feature 1 — Bulk export button */}
         <button

@@ -122,7 +122,7 @@ export default function DrMappingsPage() {
   const [error, setError] = useState<string | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
 
-  const { data: mappings = [], isLoading } = useQuery<DrMapping[]>({
+  const { data: mappings = [], isLoading, isFetching } = useQuery<DrMapping[]>({
     queryKey: ['dr-mappings'],
     queryFn: () => drMappingService.list(),
     staleTime: 60_000,
@@ -281,7 +281,7 @@ export default function DrMappingsPage() {
 
       {/* Table */}
       <div className="card overflow-hidden">
-        {isLoading ? (
+        {isLoading || (isFetching && mappings.length === 0) ? (
           <div className="space-y-2 p-4">
             {[...Array(3)].map((_, i) => <div key={i} className="skeleton h-10 rounded-lg" />)}
           </div>

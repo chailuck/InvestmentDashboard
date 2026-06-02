@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Database Migrations — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 1000px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 }
+.yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+
+<h1>Database Migrations — Technical Guide</h1>
+
+<p>This document covers the Alembic migration workflow, how to write and run migrations, the Redis key schema, and safe schema evolution rules. Source files: <code>backend/alembic/</code>, <code>backend/alembic.ini</code>.</p>
+
+<hr>
+
+<h2>1. Alembic Setup</h2>
+
+<h3>1.1 File Layout</h3>
+<pre><code>backend/
+├── alembic.ini                       — Alembic config (script_location, sqlalchemy.url)
+└── alembic/
+    ├── env.py                        — Migration environment (loads models, builds engine)
+    └── versions/
+        └── 20260601_1004_a6bcb833f755_add_symbol_notes_table.py   — example migration</code></pre>
+
+<h3>1.2 Environment Variables</h3>
+<table>
+  <tr><th>Variable</th><th>Used by</th><th>Example</th></tr>
+  <tr><td><code>DATABASE_URL</code></td><td>Alembic <code>env.py</code>, SQLAlchemy session</td><td><code>postgresql+asyncpg://postgres:secret@postgres:5432/investment_db</code></td></tr>
+  <tr><td><code>TEST_DATABASE_URL</code></td><td>pytest fixtures</td><td><code>postgresql+asyncpg://postgres:secret@localhost:5432/investment_test_db</code></td></tr>
+</table>
+
+<div class="callout warn">Alembic uses a synchronous engine even though the application uses <code>asyncpg</code>. The <code>env.py</code> constructs a sync URL by replacing <code>postgresql+asyncpg://</code> with <code>postgresql+psycopg2://</code> (or <code>postgresql://</code>) for migration runs only.</div>
+
+<hr>
+
+<h2>2. Common Alembic Commands</h2>
+
+<p>All commands run inside the backend container. Replace <code>inv_backend</code> with your container name if different.</p>
+
+<h3>2.1 Check Current Migration State</h3>
+<pre><code># Show the current revision applied to the database
+docker exec inv_backend alembic current
+
+# Show full migration history (oldest → newest)
+docker exec inv_backend alembic history --verbose</code></pre>
+
+<h3>2.2 Apply Migrations</h3>
+<pre><code># Apply all pending migrations (upgrade to latest)
+docker exec inv_backend alembic upgrade head
+
+# Apply exactly one pending migration
+docker exec inv_backend alembic upgrade +1
+
+# Upgrade to a specific revision
+docker exec inv_backend alembic upgrade a6bcb833f755</code></pre>
+
+<h3>2.3 Roll Back Migrations</h3>
+<pre><code># Roll back one migration
+docker exec inv_backend alembic downgrade -1
+
+# Roll back to a specific revision
+docker exec inv_backend alembic downgrade a6bcb833f755
+
+# Roll back ALL migrations (empty database — destructive!)
+docker exec inv_backend alembic downgrade base</code></pre>
+
+<div class="callout warn"><code>downgrade base</code> drops all managed tables. Only use this on a development or test database.</div>
+
+<h3>2.4 Generate a New Migration</h3>
+<pre><code># Auto-generate from model changes (inspect diff vs current schema)
+docker exec inv_backend alembic revision --autogenerate -m "add_new_column"
+
+# Create a blank migration (for manual data transforms)
+docker exec inv_backend alembic revision -m "backfill_sector_data"</code></pre>
+
+<div class="callout tip"><code>--autogenerate</code> compares SQLAlchemy model metadata against the live database. It detects added/dropped columns and tables but does <strong>not</strong> detect renames — those must be written manually using <code>op.alter_column</code> or <code>op.drop_column</code> + <code>op.add_column</code>.</div>
+
+<hr>
+
+<h2>3. Migration File Structure</h2>
+
+<h3>3.1 Filename Convention</h3>
+<pre><code>YYYYMMDD_HHMM_&lt;8-char-hash&gt;_&lt;description&gt;.py
+
+# Example
+20260601_1004_a6bcb833f755_add_symbol_notes_table.py</code></pre>
+
+<h3>3.2 Template</h3>
+<pre><code>"""&lt;short description&gt;
+
+Revision ID: &lt;hash&gt;
+Revises: &lt;parent hash or None&gt;
+Create Date: 2026-06-01 10:04:06.473195+00:00
+"""
+from __future__ import annotations
+from typing import Sequence, Union
+from alembic import op
+import sqlalchemy as sa
+
+revision: str = '&lt;hash&gt;'
+down_revision: Union[str, None] = '&lt;parent hash&gt;'   # None if first migration
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    # --- forward changes here ---
+    pass
+
+
+def downgrade() -> None:
+    # --- reverse the upgrade here ---
+    pass</code></pre>
+
+<hr>
+
+<h2>4. Real Migration Example</h2>
+
+<p>Migration <code>a6bcb833f755</code> modifies the <code>symbol_notes</code> table: makes <code>note</code> nullable and removes two columns.</p>
+
+<pre><code>def upgrade() -> None:
+    # Make 'note' column nullable (was NOT NULL)
+    op.alter_column('symbol_notes', 'note',
+        existing_type=sa.TEXT(),
+        nullable=True)
+
+    # Remove columns no longer needed
+    op.drop_column('symbol_notes', 'asset_type')
+    op.drop_column('symbol_notes', 'created_at')
+
+
+def downgrade() -> None:
+    # Restore the removed columns with their original definitions
+    op.add_column('symbol_notes',
+        sa.Column('created_at',
+            postgresql.TIMESTAMP(timezone=True),
+            server_default=sa.text('now()'),
+            nullable=False))
+    op.add_column('symbol_notes',
+        sa.Column('asset_type', sa.VARCHAR(length=10), nullable=False))
+
+    # Revert note back to NOT NULL
+    op.alter_column('symbol_notes', 'note',
+        existing_type=sa.TEXT(),
+        nullable=False)</code></pre>
+
+<hr>
+
+<h2>5. Common Migration Operations</h2>
+
+<h3>5.1 Add a Nullable Column</h3>
+<pre><code>def upgrade() -> None:
+    op.add_column('positions',
+        sa.Column('strategy_tag', sa.VARCHAR(50), nullable=True))
+
+def downgrade() -> None:
+    op.drop_column('positions', 'strategy_tag')</code></pre>
+
+<h3>5.2 Add a NOT NULL Column with Default</h3>
+<pre><code>def upgrade() -> None:
+    # 1. Add as nullable first
+    op.add_column('positions',
+        sa.Column('currency', sa.VARCHAR(3), nullable=True))
+    # 2. Backfill existing rows
+    op.execute("UPDATE positions SET currency = 'THB' WHERE currency IS NULL")
+    # 3. Apply NOT NULL constraint
+    op.alter_column('positions', 'currency', nullable=False)
+
+def downgrade() -> None:
+    op.drop_column('positions', 'currency')</code></pre>
+
+<div class="callout warn">Never add a NOT NULL column with no default in a single step — this will fail on any table that already has rows.</div>
+
+<h3>5.3 Create a New Table</h3>
+<pre><code>def upgrade() -> None:
+    op.create_table('watchlist',
+        sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True,
+                  server_default=sa.text('gen_random_uuid()')),
+        sa.Column('user_id', postgresql.UUID(as_uuid=True),
+                  sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+        sa.Column('symbol', sa.VARCHAR(20), nullable=False),
+        sa.Column('created_at', sa.TIMESTAMP(timezone=True),
+                  server_default=sa.text('now()'), nullable=False),
+    )
+    op.create_index('ix_watchlist_user_id', 'watchlist', ['user_id'])
+
+def downgrade() -> None:
+    op.drop_index('ix_watchlist_user_id', 'watchlist')
+    op.drop_table('watchlist')</code></pre>
+
+<h3>5.4 Create an Index Concurrently (large tables)</h3>
+<pre><code>def upgrade() -> None:
+    # CONCURRENTLY avoids full table lock on large tables
+    op.execute(
+        "CREATE INDEX CONCURRENTLY ix_positions_symbol ON positions (symbol)"
+    )
+
+def downgrade() -> None:
+    op.execute("DROP INDEX CONCURRENTLY ix_positions_symbol")</code></pre>
+
+<div class="callout tip"><code>CONCURRENTLY</code> cannot run inside a transaction. Alembic wraps migrations in transactions by default. To use it, add <code>with op.get_context().autocommit_block():</code> or set <code>transaction_per_migration = false</code> in <code>alembic.ini</code>.</div>
+
+<h3>5.5 Rename a Column</h3>
+<pre><code>def upgrade() -> None:
+    op.alter_column('positions', 'pnl', new_column_name='net_pnl')
+
+def downgrade() -> None:
+    op.alter_column('positions', 'net_pnl', new_column_name='pnl')</code></pre>
+
+<hr>
+
+<h2>6. Migration Rules</h2>
+
+<table>
+  <tr><th>#</th><th>Rule</th><th>Rationale</th></tr>
+  <tr><td>1</td><td>Always implement <code>downgrade()</code></td><td>Enables rollback during failed deploys</td></tr>
+  <tr><td>2</td><td>Test <code>downgrade()</code> locally before merging</td><td>A broken downgrade is discovered after — not before — a bad deploy</td></tr>
+  <tr><td>3</td><td>Never add NOT NULL without a DEFAULT or two-step backfill</td><td>Existing rows fail the constraint</td></tr>
+  <tr><td>4</td><td>Do not modify a migration after it has been applied to production</td><td>Alembic uses revision IDs — modifying a file does not re-run it</td></tr>
+  <tr><td>5</td><td>One concern per migration file</td><td>Easier to bisect failures and roll back selectively</td></tr>
+  <tr><td>6</td><td>Use <code>CONCURRENTLY</code> for indexes on tables &gt;100k rows</td><td>Avoids locking users out during index creation</td></tr>
+</table>
+
+<hr>
+
+<h2>7. Redis Key Schema</h2>
+
+<p>Redis is used for three purposes: JWT token blacklisting, password reset tokens, and rate limiting. All keys are set with TTL — no manual cleanup is needed.</p>
+
+<table>
+  <tr><th>Key pattern</th><th>TTL</th><th>Value</th><th>Set by</th></tr>
+  <tr><td><code>blacklist:{jti}</code></td><td>Remaining access token lifetime (seconds)</td><td><code>"1"</code> (presence is the flag)</td><td><code>POST /auth/logout</code></td></tr>
+  <tr><td><code>pwd_reset:{token}</code></td><td>3600 s (1 hour)</td><td>User email address string</td><td><code>POST /auth/forgot-password</code></td></tr>
+  <tr><td><code>rate_limit:{ip}</code></td><td>60 s</td><td>Request count string (incremented per request)</td><td>Rate-limit middleware</td></tr>
+</table>
+
+<h3>7.1 Token Blacklist Flow</h3>
+<pre><code># On logout — blacklist the current access token's JTI
+await redis.setex(f"blacklist:{jti}", ttl_seconds, "1")
+
+# On every authenticated request — check blacklist
+if await redis.exists(f"blacklist:{jti}"):
+    raise HTTPException(401, "Token has been revoked")</code></pre>
+
+<h3>7.2 Password Reset Flow</h3>
+<pre><code># Generate and store reset token
+reset_token = secrets.token_urlsafe(32)
+await redis.setex(f"pwd_reset:{reset_token}", 3600, user_email)
+
+# On password reset submission — validate and consume
+email = await redis.get(f"pwd_reset:{reset_token}")
+if not email:
+    raise HTTPException(400, "Invalid or expired reset token")
+await redis.delete(f"pwd_reset:{reset_token}")   # one-time use</code></pre>
+
+<h3>7.3 Recommended Redis Configuration</h3>
+<pre><code># redis.conf (or Docker command args)
+maxmemory-policy allkeys-lru   # evict LRU keys when memory is full
+maxmemory 256mb                # set appropriate to host memory</code></pre>
+
+<div class="callout warn">If Redis runs out of memory and <code>maxmemory-policy</code> is <code>noeviction</code> (the default), all write operations will fail — including token blacklisting. Always set <code>maxmemory-policy allkeys-lru</code> in production.</div>
+
+<hr>
+
+<h2>8. Schema Evolution Checklist</h2>
+
+<p>Before merging any migration, verify each item:</p>
+
+<ul>
+  <li>Migration file has a correct <code>down_revision</code> pointing to the previous revision</li>
+  <li><code>upgrade()</code> runs successfully on a local copy of the database</li>
+  <li><code>downgrade()</code> runs successfully and leaves the schema in the prior state</li>
+  <tr><td>No NOT NULL column added without DEFAULT or two-step backfill</td></tr>
+  <li>Large-table index creation uses <code>CONCURRENTLY</code></li>
+  <li>SQLAlchemy model is updated to match the new schema</li>
+  <li>Pydantic schemas updated if the changed column is exposed in the API</li>
+  <li><code>alembic current</code> shows the correct head revision after upgrade</li>
+</ul>
+
+</body>
+</html>

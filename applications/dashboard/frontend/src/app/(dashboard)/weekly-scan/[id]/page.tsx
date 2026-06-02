@@ -485,7 +485,7 @@ export default function WeeklyScanPage() {
     staleTime: 30_000,
   })
 
-  const { data: weekPrices, isLoading: pricesLoading } = useQuery({
+  const { data: weekPrices, isLoading: pricesLoading, isFetching: pricesFetching, refetch: refetchPrices } = useQuery({
     queryKey: ['weekly-scan-prices', id],
     queryFn: () => weeklyScanService.getWeekPrices(id),
     staleTime: 5 * 60_000,
@@ -718,6 +718,15 @@ export default function WeeklyScanPage() {
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors disabled:opacity-50">
           <RefreshCw className={cn('w-3.5 h-3.5', refreshing && 'animate-spin')} />
           Refresh config
+        </button>
+
+        <button onClick={() => refetchPrices()} disabled={pricesFetching}
+          title="Re-fetch week prices and re-check DR mappings from database"
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
+          {pricesFetching
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <RefreshCw className="w-3.5 h-3.5" />}
+          Refresh Prices{pricesFetching ? '…' : ''}
         </button>
 
         <button onClick={saveAsConfig} disabled={savingConfig === 'saving'}

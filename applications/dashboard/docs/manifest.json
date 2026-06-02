@@ -77,6 +77,34 @@
         { "id": "ws-functional", "label": "Functional Spec",  "file": "09-weekly-scan/FUNCTIONAL.html" },
         { "id": "ws-technical",  "label": "Technical Design", "file": "09-weekly-scan/TECHNICAL.html"  }
       ]
+    },
+    {
+      "id": "frontend-internals",
+      "label": "Frontend Internals",
+      "children": [
+        { "id": "fe-technical", "label": "Types, Services & WebSocket", "file": "11-frontend-internals/TECHNICAL.html" }
+      ]
+    },
+    {
+      "id": "excel-parsing",
+      "label": "Excel Parsing",
+      "children": [
+        { "id": "excel-technical", "label": "Parsing Spec & Edge Cases", "file": "12-excel-parsing/TECHNICAL.html" }
+      ]
+    },
+    {
+      "id": "ai-tools",
+      "label": "AI Tool Reference",
+      "children": [
+        { "id": "ai-tools-technical", "label": "Tool Definitions & SSE Format", "file": "13-ai-tools/TECHNICAL.html" }
+      ]
+    },
+    {
+      "id": "migrations",
+      "label": "Migrations & Redis",
+      "children": [
+        { "id": "migrations-technical", "label": "Alembic Workflow & Redis Keys", "file": "14-migrations/TECHNICAL.html" }
+      ]
     }
   ]
 }

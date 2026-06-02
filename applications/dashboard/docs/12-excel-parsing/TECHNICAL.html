@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Excel Parsing Technical Spec — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 1000px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 }
+.yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+
+<h1>Excel Parsing — Technical Specification</h1>
+
+<p>This document specifies exactly how the backend reads and interprets the portfolio Excel file, how live prices are fetched, how caching works across multiple workers, and how P&amp;L is calculated. Source: <code>backend/app/services/portfolio_excel.py</code>.</p>
+
+<hr>
+
+<h2>1. File Path Configuration</h2>
+<p>Two path concepts exist: the <strong>source</strong> (read-only, on the host volume) and the <strong>working copy</strong> (writable, inside the container). The service always reads from the working copy.</p>
+
+<table>
+  <tr><th>Concept</th><th>Purpose</th><th>Default env var</th><th>Override (app_config.json key)</th></tr>
+  <tr><td>Source path</td><td>Read-only master file (Docker volume)</td><td><code>INVESTMENT_EXCEL_SOURCE_PATH</code> → <code>INVESTMENT_EXCEL_PATH</code></td><td><code>excel_source_path</code></td></tr>
+  <tr><td>Working path</td><td>Writable copy the service reads from</td><td><code>INVESTMENT_EXCEL_PATH</code></td><td><code>excel_working_path</code></td></tr>
+</table>
+
+<div class="callout">When a user triggers <strong>Refresh from Source</strong> in the UI, <code>copy_excel_from_source()</code> copies the source to the working path and busts all worker caches. The source file itself is never modified by the application.</div>
+
+<h3>1.1 Startup Auto-Copy</h3>
+<pre><code># _ensure_working_copy() — called before every _load_df()
+if not working_path.exists():
+    copy_excel_from_source()   # auto-copies on first access</code></pre>
+
+<hr>
+
+<h2>2. Sheet Structure</h2>
+
+<h3>2.1 Sheet Name</h3>
+<p>Hard-coded constant: <code>SHEET = "Sheet1"</code>. The workbook must have exactly this sheet name. Any other sheets are ignored.</p>
+
+<h3>2.2 Required Columns</h3>
+<p>All column names are case-sensitive and must match exactly as shown.</p>
+
+<table>
+  <tr><th>Column name</th><th>Type after parsing</th><th>Notes</th></tr>
+  <tr><td><code>Symbol</code></td><td>string</td><td>Thai SET ticker (e.g. <code>PTT</code>, <code>GULF</code>) or DR code (e.g. <code>AAPL01</code>). Trailing whitespace is stripped with <code>.strip()</code>.</td></tr>
+  <tr><td><code>Entry Date</code></td><td>datetime (coerced)</td><td><code>pd.to_datetime(errors="coerce")</code> — pandas accepts most date formats including Excel serial numbers, <code>YYYY-MM-DD</code>, <code>DD/MM/YYYY</code>. Unparseable values become <code>NaT</code>.</td></tr>
+  <tr><td><code>Exit Date</code></td><td>datetime (coerced)</td><td>Same as Entry Date. <code>NaT</code> = position is still open.</td></tr>
+  <tr><td><code>Entry Price</code></td><td>float (coerced)</td><td><code>pd.to_numeric(errors="coerce")</code>. Non-numeric strings (formulas, text) become <code>NaN</code>.</td></tr>
+  <tr><td><code>Exit Price</code></td><td>float (coerced)</td><td><strong>Key field:</strong> <code>NaN</code> / blank = <em>active/open</em> position. Any numeric value = <em>closed</em> position. Formulas that return numeric values are resolved by Excel before pandas reads them. A formula returning the text string <code>"NOT SELL"</code> is treated as non-numeric → becomes <code>NaN</code> → position counted as active.</td></tr>
+  <tr><td><code>Current price</code></td><td>float (coerced)</td><td>Optional cached price column. Used as fallback when Yahoo Finance is unavailable for an open position. Accessed via <code>df.get("Current price", ...)</code> so it is safe if the column is absent.</td></tr>
+  <tr><td><code>Position Size</code></td><td>int (coerced then cast)</td><td>Number of shares. Non-numeric → <code>NaN</code> → treated as 0.</td></tr>
+  <tr><td><code>Position (Long/Short)</code></td><td>string</td><td>Case-insensitive. Direction multiplier: if <code>"short"</code> is in the lowercased value, P&amp;L is inverted. Default <code>"Long"</code> if missing.</td></tr>
+  <tr><td><code>SL</code></td><td>float (optional)</td><td>Stop loss price. Accessed with <code>.get("SL")</code> — safe if column absent. <code>NaN</code> → <code>None</code> in output.</td></tr>
+  <tr><td><code>TP</code></td><td>float (optional)</td><td>Take profit price. Same as SL.</td></tr>
+  <tr><td><code>Remarks</code></td><td>string (optional)</td><td>Free-text notes. <code>NaN</code> → <code>None</code> in output.</td></tr>
+</table>
+
+<div class="callout warn">Column names are <strong>exact strings</strong> — including capitalisation and spaces. "entry date" or "EntryDate" will not be found and will raise a <code>KeyError</code> at runtime.</div>
+
+<h3>2.3 Active vs Closed Detection</h3>
+<pre><code># Active (open) position: Exit Price is NaN
+open_mask = df["Exit Price"].isna()
+
+# Closed position: Exit Price has a numeric value
+closed_mask = df["Exit Price"].notna()
+
+# Filtering by status
+if status == "active":   df = df[open_mask]
+if status == "closed":   df = df[~open_mask]
+if status == "all":      df = df            # no filter</code></pre>
+
+<hr>
+
+<h2>3. P&amp;L Calculations</h2>
+
+<h3>3.1 Net P&amp;L</h3>
+<pre><code>def _net_pnl(entry: float, exit_p: float, size: float, direction: str) -> float:
+    mult = -1 if "short" in str(direction).lower() else 1
+    return round((exit_p - entry) * size * mult, 0)
+
+# Long example: entry=10.00, exit=12.00, size=1000
+#   → (12 - 10) * 1000 * 1 = 2,000 ฿
+# Short example: entry=10.00, exit=8.00, size=1000
+#   → (8 - 10) * 1000 * -1 = 2,000 ฿</code></pre>
+
+<h3>3.2 P&amp;L Percentage</h3>
+<pre><code>def _pnl_pct(entry: float, exit_p: float, direction: str) -> float:
+    if entry == 0: return 0.0
+    mult = -1 if "short" in str(direction).lower() else 1
+    return round((exit_p - entry) / entry * 100 * mult, 2)
+
+# Percentage is relative to entry price, not total investment</code></pre>
+
+<h3>3.3 Open Position Current Price Fallback Chain</h3>
+<pre><code># For active positions, current price resolved in this order:
+1. live_prices.get(symbol)         # Yahoo Finance (cached 5 min)
+2. float(row["Current price"])     # Excel column if non-NaN
+3. entry_price                     # last resort — no P&L shown</code></pre>
+
+<hr>
+
+<h2>4. Live Price Fetching</h2>
+
+<h3>4.1 Ticker Symbol Rules</h3>
+<table>
+  <tr><th>Symbol type</th><th>Detection rule</th><th>Yahoo Finance ticker</th></tr>
+  <tr><td>Thai SET stock</td><td>No digits in ticker, does not end in <code>.BK</code></td><td><code>SYMBOL + ".BK"</code> (e.g. <code>PTT.BK</code>)</td></tr>
+  <tr><td>Thai DR (Depositary Receipt)</td><td>Regex <code>^[A-Z]+\d+$</code> matches (e.g. <code>AAPL01</code>, <code>NVDA06</code>)</td><td>Passed as-is — DR tickers don't use <code>.BK</code></td></tr>
+  <tr><td>Already qualified</td><td>Ends in <code>.BK</code></td><td>Passed as-is</td></tr>
+</table>
+
+<h3>4.2 Request Strategy — Two-Level Fallback</h3>
+<pre><code>Primary:  Yahoo Finance v7 batch API
+          GET https://query1.finance.yahoo.com/v7/finance/quote
+          ?symbols=PTT.BK,GULF.BK,...
+          &fields=regularMarketPrice,regularMarketChangePercent,...
+
+Fallback: Yahoo Finance v8 chart API (per-symbol, sequential)
+          GET https://query1.finance.yahoo.com/v8/finance/chart/{symbol}
+          ?interval=1d&range=5d
+          (Used when v7 returns 401 or 429)
+
+Last resort: yfinance.download() library (used in fetch_live_prices only)
+             yf.download(symbols, period="5d", interval="1d")</code></pre>
+
+<h4>Request headers sent to Yahoo Finance</h4>
+<pre><code>User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ...
+Accept: application/json, text/plain, */*
+Origin: https://finance.yahoo.com
+Referer: https://finance.yahoo.com/
+Timeout: 15 seconds (httpx.Client)</code></pre>
+
+<div class="callout warn">Yahoo Finance data for Thai SET stocks is typically <strong>15–20 minutes delayed</strong> during market hours. Real-time data requires a paid data feed.</div>
+
+<h3>4.3 SET Index Tickers</h3>
+<p><code>^SETI</code> (the Thai SET composite index) maps to a US fund on Yahoo Finance and cannot be used. The application uses these proxy tickers instead:</p>
+<table>
+  <tr><th>Display name</th><th>Yahoo ticker</th></tr>
+  <tr><td>SET50</td><td><code>^SET50.BK</code></td></tr>
+  <tr><td>SET100</td><td><code>^SET100.BK</code></td></tr>
+  <tr><td>sSET</td><td><code>^sSET.BK</code></td></tr>
+</table>
+
+<h3>4.4 Global Index Tickers</h3>
+<table>
+  <tr><th>Display name</th><th>Yahoo ticker</th></tr>
+  <tr><td>S&amp;P 500</td><td><code>^GSPC</code></td></tr>
+  <tr><td>NASDAQ</td><td><code>^IXIC</code></td></tr>
+  <tr><td>DOW</td><td><code>^DJI</code></td></tr>
+  <tr><td>BTC</td><td><code>BTC-USD</code></td></tr>
+  <tr><td>XAUUSD (Gold)</td><td><code>GC=F</code></td></tr>
+</table>
+
+<hr>
+
+<h2>5. In-Memory Cache</h2>
+
+<h3>5.1 Cache Structure</h3>
+<pre><code># Module-level dict — one instance per Uvicorn worker process
+_CACHE: dict[str, tuple[float, Any]] = {}
+# Key   → string cache key
+# Value → (timestamp_written: float, data: Any)</code></pre>
+
+<h3>5.2 Cache Keys and TTLs</h3>
+<table>
+  <tr><th>Cache key pattern</th><th>TTL</th><th>Data</th></tr>
+  <tr><td><code>live_prices:{sym1|sym2|...}</code></td><td>300 s</td><td>dict[symbol → price]  (symbols sorted)</td></tr>
+  <tr><td><code>set_indices</code></td><td>300 s</td><td>list of SET50/SET100/sSET quotes</td></tr>
+  <tr><td><code>global_indices</code></td><td>300 s</td><td>list of S&amp;P 500/NASDAQ/DOW/BTC/Gold quotes</td></tr>
+</table>
+
+<h3>5.3 Multi-Worker Cache Invalidation</h3>
+<p>Uvicorn can run multiple worker processes. Each has its own <code>_CACHE</code> dict. A shared file at <code>/app/uploads/.cache_bust</code> acts as an invalidation signal.</p>
+<pre><code># Validity check (runs on every cache lookup)
+entry_valid = (
+    entry exists
+    AND (now - entry.timestamp) &lt; ttl      # not expired
+    AND entry.timestamp &gt; bust_file.mtime   # written after last bust
+)
+
+# Bust trigger (called by copy_excel_from_source())
+_CACHE_BUST_FILE.write_text(str(time.time()))
+_CACHE.clear()   # also clears this worker's dict immediately</code></pre>
+
+<div class="callout tip">When running a single worker (default Docker Compose setup), the bust file mechanism is still used but provides no additional benefit. It becomes important only when <code>--workers N</code> is passed to Uvicorn.</div>
+
+<hr>
+
+<h2>6. Position Output Schema</h2>
+<p>The <code>get_positions()</code> function returns a list of dicts. This is the canonical shape used by all API endpoints and the AI copilot tool.</p>
+<pre><code>{
+  "id":           int,           # row index + 1 (1-based)
+  "symbol":       str,           # stripped ticker
+  "direction":    str,           # "Long" or "Short" (raw cell value)
+  "entryDate":    str | None,    # ISO 8601 date, e.g. "2025-11-03"
+  "exitDate":     str | None,    # ISO 8601 date, None if open
+  "entryPrice":   float,
+  "currentPrice": float,         # live price (open) or exit price (closed)
+  "exitPrice":    float | None,  # None if open position
+  "positionSize": int,           # shares
+  "netPnl":       float,         # rounded to 0 decimal places
+  "pnlPct":       float,         # rounded to 2 decimal places
+  "sl":           float | None,
+  "tp":           float | None,
+  "status":       "active" | "closed"
+}</code></pre>
+
+<hr>
+
+<h2>7. Performance History Output Schema</h2>
+
+<h3>7.1 get_daily_performance() — period buckets</h3>
+<pre><code>{
+  "date":          str,    # sort key — "YYYY-MM-DD" (daily), "YYYY-MM-DD" (weekly Mon), "YYYY-MM" (monthly)
+  "label":         str,    # display string — "03/06/2025" | "02/06/2025 – 06/06/2025" | "Jun 2025"
+  "dailyPnl":      float,  # net P&amp;L for this period (closed trades only)
+  "cumulativePnl": float   # running total from earliest to this period
+}</code></pre>
+
+<h3>7.2 get_performance_by_stock() — per-symbol aggregation</h3>
+<pre><code>{
+  "symbol":       str,
+  "net":          float,   # total realized + unrealized P&amp;L
+  "investment":   float,   # sum of (entryPrice * positionSize)
+  "currentValue": float,   # sum of (currentPrice * positionSize)
+  "pnlPct":       float,   # net / investment * 100 (0 if no investment)
+  "wins":         int,
+  "losses":       int,
+  "total":        int,     # wins + losses
+  "winRate":      float    # rounded to 1 decimal
+}</code></pre>
+
+<div class="callout">Performance history only counts <strong>closed (realized) trades</strong>. Open positions are included in <code>get_performance_by_stock()</code> but are excluded from <code>get_daily_performance()</code>.</div>
+
+<hr>
+
+<h2>8. Edge Case Reference</h2>
+
+<table>
+  <tr><th>Scenario</th><th>Behaviour</th></tr>
+  <tr><td>Exit Price cell contains formula returning <code>"NOT SELL"</code> text</td><td><code>pd.to_numeric(errors="coerce")</code> → <code>NaN</code> → position treated as <strong>active</strong></td></tr>
+  <tr><td>Exit Price cell is blank</td><td><code>NaN</code> → position treated as <strong>active</strong></td></tr>
+  <tr><td>Entry Date is blank or unparseable</td><td><code>NaT</code> → <code>entryDate: null</code> in output; date-range filtering treats it as in-range</td></tr>
+  <tr><td>Symbol has trailing/leading spaces</td><td>Stripped with <code>.strip()</code> before yfinance lookup</td></tr>
+  <tr><td>Position Size is blank or text</td><td><code>NaN</code> → cast to <code>0</code> → P&amp;L calculated as zero</td></tr>
+  <tr><td>Entry Price is zero</td><td>P&amp;L% returns <code>0.0</code> (division-by-zero guard)</td></tr>
+  <tr><td>Yahoo Finance returns no price</td><td>Falls back to <code>Current price</code> column, then <code>entryPrice</code></td></tr>
+  <tr><td>Excel file missing entirely</td><td><code>_ensure_working_copy()</code> attempts copy from source; raises <code>FileNotFoundError</code> if source also missing</td></tr>
+  <tr><td>Extra columns in the workbook</td><td>Silently ignored — pandas loads all columns but only named ones are accessed</td></tr>
+  <tr><td>Multiple sheets in the workbook</td><td>Only <code>Sheet1</code> is loaded; other sheets are ignored</td></tr>
+</table>
+
+</body>
+</html>

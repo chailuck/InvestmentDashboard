@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frontend Internals — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 1000px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 }
+.yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+
+<h1>Frontend Internals — Technical Reference</h1>
+
+<p>This document covers the TypeScript type system, service layer, Axios client configuration, Zustand state management, and WebSocket integration. A developer can rebuild the entire frontend layer from this reference without reading source files.</p>
+
+<hr>
+
+<h2>1. TypeScript Type Definitions</h2>
+<p>All shared types live in <code>frontend/src/types/index.ts</code>. Import from <code>@/types</code>.</p>
+
+<h3>1.1 Auth</h3>
+<pre><code>interface User {
+  id: string
+  email: string
+  name: string
+  role: 'admin' | 'analyst' | 'viewer'
+  avatar?: string
+  createdAt: string
+}
+
+interface AuthTokens {
+  accessToken: string
+  refreshToken: string
+  expiresIn: number        // seconds until access token expiry
+}
+
+interface UserDetail {
+  id: string
+  email: string
+  name: string
+  role: 'admin' | 'analyst' | 'viewer'
+  is_active: boolean
+  created_at: string       // ISO 8601
+  updated_at: string
+  last_login_at: string | null
+}
+
+interface UserListResponse {
+  users: UserDetail[]
+  total: number
+}</code></pre>
+
+<h3>1.2 Portfolio</h3>
+<pre><code>type AssetClass = 'equity' | 'fixed_income' | 'crypto' | 'commodity' | 'cash' | 'alternative'
+
+interface Holding {
+  id: string
+  portfolioId: string
+  symbol: string
+  name: string
+  quantity: number
+  avgCost: number
+  currentPrice: number
+  marketValue: number
+  unrealizedPnl: number
+  unrealizedPnlPct: number
+  weight: number           // portfolio weight 0–1
+  sector: string
+  assetClass: AssetClass
+  dayChange: number
+  dayChangePct: number
+}
+
+interface Portfolio {
+  id: string
+  name: string
+  totalValue: number
+  dailyPnl: number
+  dailyPnlPct: number
+  totalReturn: number
+  totalReturnPct: number
+  cash: number
+  holdings: Holding[]
+  lastUpdated: string      // ISO 8601
+}</code></pre>
+
+<h3>1.3 Market Data</h3>
+<pre><code>interface Quote {
+  symbol: string
+  price: number
+  change: number
+  changePct: number
+  volume: number
+  high: number
+  low: number
+  open: number
+  prevClose: number
+  timestamp: string
+}
+
+interface OHLCV {
+  timestamp: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+interface MarketIndex {
+  symbol: string
+  name: string
+  value: number
+  change: number
+  changePct: number
+}</code></pre>
+
+<h3>1.4 Analytics</h3>
+<pre><code>interface PortfolioMetrics {
+  sharpeRatio: number
+  sortinoRatio: number
+  maxDrawdown: number
+  volatility: number
+  beta: number
+  alpha: number
+  var95: number            // Value at Risk 95%
+  var99: number
+  calmarRatio: number
+  informationRatio: number
+}
+
+interface PerformanceSeries {
+  date: string
+  portfolioValue: number
+  benchmarkValue: number
+  return: number
+  benchmarkReturn: number
+}
+
+interface AllocationData {
+  name: string
+  value: number
+  pct: number
+  color?: string
+}</code></pre>
+
+<h3>1.5 AI Copilot</h3>
+<pre><code>interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp: string
+  isStreaming?: boolean
+  metadata?: {
+    sources?: string[]
+    confidence?: number
+    tokens?: number
+  }
+}
+
+interface CopilotSession {
+  sessionId: string
+  messages: ChatMessage[]
+  createdAt: string
+  portfolioContext?: string
+}</code></pre>
+
+<h3>1.6 WebSocket Events</h3>
+<pre><code>type WSEventType =
+  | 'quote_update'
+  | 'portfolio_update'
+  | 'notification'
+  | 'market_status'
+  | 'ai_stream_token'
+  | 'ai_stream_end'
+  | 'ai_stream_error'
+
+interface WSEvent&lt;T = unknown&gt; {
+  type: WSEventType
+  payload: T
+  timestamp: string
+}</code></pre>
+
+<table>
+  <tr><th>Event</th><th>Payload shape</th><th>Who emits</th></tr>
+  <tr><td><code>quote_update</code></td><td><code>{ symbol: string, price: number, change: number, changePct: number }</code></td><td>Backend broadcast (global)</td></tr>
+  <tr><td><code>portfolio_update</code></td><td><code>{ portfolioId: string, totalValue: number, dailyPnl: number }</code></td><td>Backend broadcast (room <code>portfolio:{id}</code>)</td></tr>
+  <tr><td><code>notification</code></td><td><code>Notification</code> object (see 1.7)</td><td>Backend → specific user</td></tr>
+  <tr><td><code>market_status</code></td><td><code>{ status: 'open' | 'closed', message?: string }</code></td><td>Backend broadcast (global)</td></tr>
+  <tr><td><code>ai_stream_token</code></td><td><code>{ session_id: string, token: string }</code></td><td>Backend → specific socket ID</td></tr>
+  <tr><td><code>ai_stream_end</code></td><td><code>{ session_id: string }</code></td><td>Backend → specific socket ID</td></tr>
+  <tr><td><code>ai_stream_error</code></td><td><code>{ session_id: string, error: string }</code></td><td>Backend → specific socket ID</td></tr>
+</table>
+
+<h3>1.7 Dashboard Widgets</h3>
+<pre><code>type WidgetType =
+  | 'portfolio_summary' | 'portfolio_chart' | 'holdings_table'
+  | 'market_ticker'     | 'ai_insights'     | 'allocation_chart'
+  | 'risk_metrics'      | 'performance_chart'| 'watchlist'
+  | 'news_feed'         | 'market_pulse'    | 'scan_heat_tile'
+  | 'pnl_waterfall'
+
+interface WidgetConfig {
+  id: string
+  type: WidgetType
+  title: string
+  x: number            // grid column (react-grid-layout)
+  y: number            // grid row
+  w: number            // width in grid units
+  h: number            // height in grid units
+  minW?: number
+  minH?: number
+  settings?: Record&lt;string, unknown&gt;
+}</code></pre>
+
+<h3>1.8 API Utilities</h3>
+<pre><code>interface ApiError {
+  type: string
+  title: string
+  status: number
+  detail: string
+  instance?: string    // request path for tracing
+}
+
+interface PaginatedResponse&lt;T&gt; {
+  items: T[]
+  total: number
+  page: number
+  size: number
+  pages: number
+}
+
+interface Notification {
+  id: string
+  type: 'info' | 'success' | 'warning' | 'error' | 'alert'
+  title: string
+  message: string
+  timestamp: string
+  read: boolean
+  actionUrl?: string
+}
+
+interface UploadedFile {
+  id: string
+  filename: string
+  size: number
+  status: 'processing' | 'completed' | 'failed'
+  portfolioId?: string
+  rowsImported?: number
+  errors?: string[]
+  createdAt: string
+}</code></pre>
+
+<hr>
+
+<h2>2. Axios API Client</h2>
+<p>Source: <code>frontend/src/services/api.ts</code></p>
+
+<h3>2.1 Configuration</h3>
+<pre><code>import axios from 'axios'
+
+// All requests go through the Next.js server-side proxy.
+// This avoids CORS and keeps the backend URL off the client entirely.
+const BASE_URL = '/api/proxy'
+
+export const apiClient = axios.create({
+  baseURL: `${BASE_URL}/api/v1`,
+  headers: { 'Content-Type': 'application/json' },
+  timeout: 30_000,          // 30 s hard timeout
+})</code></pre>
+
+<div class="callout tip">The Next.js proxy route lives at <code>src/app/api/proxy/[...path]/route.ts</code>. It forwards every request to the backend's internal Docker hostname (<code>http://backend:8000</code>), adding no extra headers.</div>
+
+<h3>2.2 Request Interceptor — Attach Bearer Token</h3>
+<pre><code>apiClient.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().accessToken
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})</code></pre>
+
+<h3>2.3 Response Interceptor — Auto-Refresh on 401</h3>
+<pre><code>apiClient.interceptors.response.use(
+  (res) => res,
+  async (error) => {
+    const original = error.config
+    if (error.response?.status === 401 && !original._retry) {
+      original._retry = true          // prevent infinite loop
+      try {
+        const { refreshToken, setTokens } = useAuthStore.getState()
+        const { data } = await axios.post('/api/proxy/api/v1/auth/refresh', { refreshToken })
+        setTokens(data)               // update Zustand store
+        original.headers.Authorization = `Bearer ${data.accessToken}`
+        return apiClient(original)    // retry original request
+      } catch {
+        useAuthStore.getState().clearAuth()   // logout on refresh failure
+      }
+    }
+    return Promise.reject(error)
+  }
+)</code></pre>
+
+<h3>2.4 Error Extraction Helper</h3>
+<pre><code>export function extractApiError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const data = err.response?.data
+    return data?.detail ?? data?.message ?? err.message ?? 'Request failed'
+  }
+  return 'An unexpected error occurred'
+}</code></pre>
+
+<hr>
+
+<h2>3. State Management</h2>
+<p>The frontend uses <strong>Zustand</strong> for global client state and <strong>TanStack Query (React Query)</strong> for server data. They serve distinct roles.</p>
+
+<table>
+  <tr><th>Store / Layer</th><th>What it owns</th><th>When to use</th></tr>
+  <tr><td>Zustand <code>auth</code></td><td>accessToken, refreshToken, current User, isAuthenticated</td><td>Any component that needs auth state or token manipulation</td></tr>
+  <tr><td>Zustand <code>dashboard</code></td><td>widget layout (WidgetConfig[]), sidebar open/closed</td><td>Persisted UI state that survives page navigation</td></tr>
+  <tr><td>Zustand <code>notifications</code></td><td>Notification[], unread count</td><td>Toast queue and notification bell</td></tr>
+  <tr><td>TanStack Query</td><td>All server data (positions, indices, action plans, scan items)</td><td>Any data fetched from the API — handles caching, refetch, loading/error states</td></tr>
+  <tr><td>React <code>useState</code></td><td>Local ephemeral UI state (modal open, form values)</td><td>Component-local state with no sharing requirement</td></tr>
+</table>
+
+<h3>3.1 Auth Store Shape</h3>
+<pre><code>// src/store/auth.ts
+interface AuthState {
+  accessToken: string | null
+  refreshToken: string | null
+  user: User | null
+  isAuthenticated: boolean
+
+  setTokens: (tokens: AuthTokens) => void
+  setUser: (user: User) => void
+  clearAuth: () => void
+}</code></pre>
+
+<h3>3.2 TanStack Query Conventions</h3>
+<pre><code>// Standard query key structure
+['resource-name', param1, param2, ...]
+
+// Examples used in the codebase
+['portfolio-positions', undefined, undefined, 'active']   // PortfolioSummaryWidget
+['set-indices']                                            // MarketPulseWidget
+['scan-items', weekLabel]                                  // ScanHeatTileWidget
+
+// Polling intervals
+refetchInterval: 60_000   // positions — 1 minute
+refetchInterval: 300_000  // indices   — 5 minutes (matches backend TTL)</code></pre>
+
+<hr>
+
+<h2>4. WebSocket / Socket.IO Integration</h2>
+<p>Source files: <code>frontend/src/websocket/client.ts</code>, <code>frontend/src/websocket/hooks.ts</code></p>
+
+<h3>4.1 WebSocketClient Class</h3>
+<pre><code>// Singleton exported as wsClient
+export const wsClient = new WebSocketClient()
+
+class WebSocketClient {
+  // Connection
+  connect(): void       // idempotent — no-op if already connected
+  disconnect(): void    // disconnects and nulls the socket
+
+  // Room subscriptions
+  subscribe(portfolioId: string): void   // emits 'subscribe' with channel 'portfolio:{id}'
+  unsubscribe(portfolioId: string): void // emits 'unsubscribe'
+
+  // Event handlers (returns unsubscribe fn)
+  on&lt;T&gt;(event: WSEventType, handler: (payload: T) => void): () => void
+
+  // Accessors
+  get isConnected(): boolean
+  get id(): string | undefined
+}</code></pre>
+
+<h3>4.2 Connection Configuration</h3>
+<pre><code>// WS_URL from env (default: ws://localhost:8000)
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
+
+io(WS_URL, {
+  auth: { token: accessToken },       // JWT sent in Socket.IO handshake auth
+  transports: ['websocket'],          // skip long-polling upgrade
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1_000,           // 1 s initial
+  reconnectionDelayMax: 10_000,       // 10 s max
+})</code></pre>
+
+<div class="callout warn">The backend's Socket.IO <code>connect</code> handler logs the connection but does NOT currently validate the JWT. The <code>auth.token</code> is available in the <code>auth</code> dict but the TODO has not been implemented. Treat the WS connection as <em>unauthenticated</em> at the transport level until that TODO is resolved.</div>
+
+<h3>4.3 React Hooks</h3>
+
+<h4>useWebSocket — global connection lifecycle</h4>
+<pre><code>const { isConnected, wsClient } = useWebSocket()
+// Calls wsClient.connect() on mount.
+// Polls wsClient.isConnected every 2 s to keep state in sync.
+// Does NOT disconnect on unmount (connection is shared).</code></pre>
+
+<h4>useWSEvent — subscribe to a single event type</h4>
+<pre><code>useWSEvent&lt;QuotePayload&gt;('quote_update', (payload) => {
+  // handler is stable via useRef — no re-subscription on re-render
+  console.log(payload.symbol, payload.price)
+})
+// Unsubscribes automatically on component unmount.</code></pre>
+
+<h4>useRealtimeQuote — live price with flash animation</h4>
+<pre><code>const { quote, flash } = useRealtimeQuote('PTT')
+// quote: { price, change, changePct } | null
+// flash: 'up' | 'down' | null  (cleared after 400 ms)
+// Only updates if payload.symbol matches the requested symbol.</code></pre>
+
+<hr>
+
+<h2>5. Component Patterns</h2>
+
+<h3>5.1 Widget Component API</h3>
+<p>All dashboard widgets accept a single <code>config</code> prop of type <code>WidgetConfig</code>. They do not receive data as props — they fetch their own data internally using TanStack Query.</p>
+<pre><code>// Standard widget signature
+export function PortfolioSummaryWidget({ config }: { config: WidgetConfig }) { ... }
+export function MarketPulseWidget({ config }: { config: WidgetConfig }) { ... }
+export function AllocationChartWidget({ config }: { config: WidgetConfig }) { ... }
+export function PnlWaterfallWidget({ config }: { config: WidgetConfig }) { ... }
+export function ScanHeatTileWidget({ config }: { config: WidgetConfig }) { ... }
+export function HoldingsTableWidget({ config }: { config: WidgetConfig }) { ... }
+export function PortfolioChartWidget({ config }: { config: WidgetConfig }) { ... }
+export function RiskMetricsWidget({ config }: { config: WidgetConfig }) { ... }
+export function AIInsightsWidget({ config }: { config: WidgetConfig }) { ... }</code></pre>
+
+<h3>5.2 Loading State Pattern</h3>
+<pre><code>if (isLoading) {
+  return (
+    &lt;div className="grid grid-cols-2 lg:grid-cols-4 gap-2 p-3 h-full"&gt;
+      {[...Array(4)].map((_, i) =&gt; (
+        &lt;div key={i} className="skeleton h-16 sm:h-20 rounded-lg" /&gt;
+      ))}
+    &lt;/div&gt;
+  )
+}
+// 'skeleton' is a Tailwind CSS utility class with pulse animation</code></pre>
+
+<h3>5.3 Conditional Class Utility</h3>
+<pre><code>import { cn } from '@/lib/utils'
+
+// cn() merges Tailwind class strings — wrapper around clsx + tailwind-merge
+cn('base-class', condition && 'conditional-class', 'another-class')
+
+// Example from PortfolioSummaryWidget
+cn(
+  'card-elevated rounded-xl flex flex-col gap-0.5',
+  'p-2.5 sm:p-4',
+  highlight &amp;&amp; 'border-brand-500/20 bg-brand-500/5',
+)</code></pre>
+
+<h3>5.4 CSS Token Conventions</h3>
+<table>
+  <tr><th>Class token</th><th>Meaning</th></tr>
+  <tr><td><code>text-gain</code></td><td>Green — positive P&amp;L</td></tr>
+  <tr><td><code>text-loss</code></td><td>Red — negative P&amp;L</td></tr>
+  <tr><td><code>text-ink-primary</code></td><td>Primary text colour</td></tr>
+  <tr><td><code>text-ink-muted</code></td><td>Secondary / label text</td></tr>
+  <tr><td><code>text-brand-400</code></td><td>Accent / highlight colour</td></tr>
+  <tr><td><code>card-elevated</code></td><td>Elevated card background with subtle border</td></tr>
+  <tr><td><code>metric-label</code></td><td>Uppercase label styling for metric cards</td></tr>
+</table>
+
+<h3>5.5 Animation Pattern (framer-motion)</h3>
+<pre><code>import { motion, AnimatePresence } from 'framer-motion'
+
+// Standard fade-in entry
+&lt;motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}&gt;
+  ...
+&lt;/motion.div&gt;
+
+// Animated value change (e.g., live price update)
+&lt;AnimatePresence mode="wait"&gt;
+  &lt;motion.span
+    key={value}                // key change triggers animation
+    initial={{ opacity: 0, y: 4 }}
+    animate={{ opacity: 1, y: 0 }}
+    exit={{ opacity: 0, y: -4 }}
+  &gt;
+    {value}
+  &lt;/motion.span&gt;
+&lt;/AnimatePresence&gt;</code></pre>
+
+<hr>
+
+<h2>6. THB Number Formatting</h2>
+<p>Thai Baht values are formatted with compact notation for large numbers. Use this helper pattern in any component that displays P&amp;L or monetary values:</p>
+<pre><code>function fmtTHB(n: number): string {
+  const sign = n >= 0 ? '+' : ''
+  if (Math.abs(n) >= 1_000_000) return `${sign}${(n / 1_000_000).toFixed(2)}M ฿`
+  if (Math.abs(n) >= 1_000)     return `${sign}${(n / 1_000).toFixed(1)}K ฿`
+  return `${sign}${n.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ฿`
+}
+// Examples: +1.23M ฿  |  -45.6K ฿  |  +3,200 ฿</code></pre>
+
+<hr>
+
+<h2>7. Project File Structure</h2>
+<pre><code>frontend/src/
+├── app/
+│   ├── api/
+│   │   ├── health/route.ts          — liveness probe for the Next.js container
+│   │   └── proxy/[...path]/route.ts — server-side reverse proxy to backend
+│   └── (pages)...
+├── components/
+│   ├── analytics/
+│   │   ├── AnalyticsModal.tsx
+│   │   └── EChartsChart.tsx         — thin wrapper around Apache ECharts
+│   ├── dashboard/                   — all dashboard widget components
+│   ├── layouts/
+│   │   ├── DashboardShell.tsx       — top-level layout with sidebar + header
+│   │   ├── Header.tsx
+│   │   └── Sidebar.tsx
+│   └── ui/
+│       └── RoleGuard.tsx            — renders children only when role matches
+├── services/                        — one file per API resource
+│   ├── api.ts                       — Axios client + extractApiError
+│   ├── auth.ts
+│   ├── portfolio.ts
+│   ├── portfolioTracker.ts          — Excel-based positions + live prices
+│   ├── portfolioDb.ts
+│   ├── actionPlan.ts
+│   ├── analytics.ts
+│   ├── weeklyScan.ts
+│   ├── appConfig.ts
+│   ├── users.ts
+│   └── drMapping.ts
+├── store/
+│   ├── auth.ts                      — Zustand auth store
+│   ├── dashboard.ts                 — Zustand widget layout store
+│   └── notifications.ts             — Zustand notification queue
+├── types/
+│   └── index.ts                     — all shared TypeScript interfaces
+├── websocket/
+│   ├── client.ts                    — WebSocketClient singleton
+│   └── hooks.ts                     — useWebSocket, useWSEvent, useRealtimeQuote
+└── lib/
+    └── utils.ts                     — cn() and other utilities</code></pre>
+
+</body>
+</html>

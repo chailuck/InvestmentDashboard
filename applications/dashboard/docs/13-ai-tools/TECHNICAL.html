@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Copilot Tool Reference — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 1000px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 }
+.yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+
+<h1>AI Copilot — Tool Reference &amp; Technical Design</h1>
+
+<p>This document covers the AI copilot's tool definitions, execution logic, SSE streaming format, session management, and system prompt construction. Source: <code>backend/app/api/v1/endpoints/ai.py</code>.</p>
+
+<hr>
+
+<h2>1. Architecture Overview</h2>
+
+<table>
+  <tr><th>Aspect</th><th>Detail</th></tr>
+  <tr><td>LLM provider</td><td>Anthropic API — <code>client.messages.create()</code></td></tr>
+  <tr><td>Model</td><td>Configurable via <code>AI_DEFAULT_MODEL</code> env var (default: <code>claude-sonnet-4-6</code>)</td></tr>
+  <tr><td>API key env var</td><td><code>ANTHROPIC_API_KEY</code> — must be set or the copilot returns an error message</td></tr>
+  <tr><td>Streaming</td><td>Server-Sent Events (SSE) — <code>text/event-stream</code> response. The Anthropic SDK call is synchronous and run in a thread pool via <code>asyncio.to_thread()</code>; text is then chunked word-by-word into the SSE stream.</td></tr>
+  <tr><td>Max loop iterations</td><td>6 — prevents runaway tool-call chains</td></tr>
+  <tr><td>Session storage</td><td>In-process Python dict <code>_SESSIONS</code> — not shared across workers, not persisted on restart</td></tr>
+  <tr><td>Session history limit</td><td>Last 20 messages retained per session</td></tr>
+  <tr><td>Agent directory</td><td><code>/app/investment_agent</code> (Docker volume mount)</td></tr>
+</table>
+
+<div class="callout warn">Sessions are stored in-memory per worker. If Uvicorn runs multiple workers, a user's conversation may hit different workers on different requests, resetting context. For multi-worker deployments, session state must be externalised to Redis.</div>
+
+<hr>
+
+<h2>2. API Endpoints</h2>
+
+<h3>POST /api/v1/ai/copilot/stream</h3>
+<table>
+  <tr><th>Field</th><th>Value</th></tr>
+  <tr><td>Auth required</td><td>Yes — JWT Bearer token</td></tr>
+  <tr><td>Request body</td><td><code>{ "message": string, "session_id": string | null }</code></td></tr>
+  <tr><td>Response content-type</td><td><code>text/event-stream</code></td></tr>
+  <tr><td>Response header</td><td><code>X-Session-Id: {uuid}</code> — the session ID assigned (new or reused)</td></tr>
+  <tr><td>Other headers</td><td><code>Cache-Control: no-cache</code>, <code>X-Accel-Buffering: no</code></td></tr>
+</table>
+
+<pre><code># Request example
+POST /api/v1/ai/copilot/stream
+Authorization: Bearer &lt;access_token&gt;
+Content-Type: application/json
+
+{
+  "message": "/portList",
+  "session_id": "3f9a1c2e-..."   // omit to start a new session
+}</code></pre>
+
+<h3>DELETE /api/v1/ai/copilot/session/{session_id}</h3>
+<pre><code># Clears conversation history for the given session
+# Response: { "status": "cleared", "session_id": "..." }</code></pre>
+
+<hr>
+
+<h2>3. SSE Stream Event Format</h2>
+<p>Each event is a line of the form <code>data: {JSON}\n\n</code>. The frontend reads this via <code>EventSource</code> or a streaming <code>fetch</code> and processes each <code>data:</code> payload.</p>
+
+<table>
+  <tr><th>Event <code>type</code></th><th>Additional fields</th><th>When emitted</th></tr>
+  <tr><td><code>text</code></td><td><code>content: string</code></td><td>Each word of LLM response text, space-separated</td></tr>
+  <tr><td><code>tool_start</code></td><td><code>name: string</code></td><td>Immediately before a tool is called</td></tr>
+  <tr><td><code>tool_end</code></td><td><code>name: string</code></td><td>Immediately after a tool returns</td></tr>
+  <tr><td><code>error</code></td><td><code>content: string</code></td><td>Anthropic API error or missing API key; stream ends after this</td></tr>
+  <tr><td><code>done</code></td><td><code>session_id: string</code></td><td>Stream complete — final event, always present</td></tr>
+</table>
+
+<pre><code># Example event stream for "/portList"
+data: {"type": "tool_start", "name": "get_portfolio_positions"}
+
+data: {"type": "tool_end", "name": "get_portfolio_positions"}
+
+data: {"type": "text", "content": "Here "}
+data: {"type": "text", "content": "are "}
+data: {"type": "text", "content": "your "}
+data: {"type": "text", "content": "active "}
+data: {"type": "text", "content": "positions:\n\n"}
+...
+data: {"type": "done", "session_id": "3f9a1c2e-..."}</code></pre>
+
+<hr>
+
+<h2>4. System Prompt Construction</h2>
+<p>The system prompt is built dynamically on each request by <code>_system_prompt()</code>. Parts are concatenated with <code>\n\n---\n</code> separators.</p>
+
+<ol>
+  <li><strong>Agent identity</strong> — reads <code>/app/investment_agent/CLAUDE.md</code> if it exists; otherwise uses a hardcoded fallback: <em>"You are a personal stock investment assistant for Thai SET stocks and DRs…"</em></li>
+  <li><strong>Personal trading style</strong> — appends <code>/app/investment_agent/knowledge/personal-trading-style.md</code> if it exists (section header: <code># Personal Trading Style</code>)</li>
+  <li><strong>Dashboard instructions</strong> — hardcoded section that maps slash-commands to tools:
+    <ul>
+      <li><code>/portList</code> → call <code>get_portfolio_positions</code></li>
+      <li><code>/portAction</code>, <code>/portPlan</code> → call <code>get_portfolio_positions</code> + <code>get_performance_summary</code></li>
+      <li><code>/portHist</code> → call <code>get_performance_summary</code></li>
+      <li><code>/analyze TICKER</code> → call <code>get_live_price</code> then <code>read_knowledge_doc</code></li>
+    </ul>
+  </li>
+</ol>
+
+<div class="callout tip">To customise the copilot's personality or add new slash-command mappings, edit <code>/app/investment_agent/CLAUDE.md</code> (mounted volume). Changes take effect on the next request — no restart needed.</div>
+
+<hr>
+
+<h2>5. Tool Reference</h2>
+
+<h3>5.1 get_portfolio_positions</h3>
+<table>
+  <tr><th>Input parameter</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>status</code></td><td><code>"active" | "closed" | "all"</code></td><td>No</td><td><code>"active"</code></td><td>Filter by position status</td></tr>
+</table>
+
+<p><strong>Execution:</strong> Calls <code>get_positions(status=status)</code> from the portfolio Excel service.</p>
+
+<p><strong>Return format (plain text/markdown):</strong></p>
+<pre><code>## Positions (ACTIVE) — 5 total
+
+| Symbol | Dir | Entry | Current | Size | Net P&L | % |
+|--------|-----|------:|--------:|-----:|--------:|--:|
+| **PTT** | ↑L | 35.00 | 37.50 | 10,000 | +25,000 ฿ | +7.14% |
+| **GULF** | ↑L | 45.00 | 43.00 | 5,000 | -10,000 ฿ | -4.44% |
+...
+
+**Total P&L: +15,000 ฿**</code></pre>
+
+<p><strong>Error return:</strong> <code>"No active positions found."</code> (plain string, not an exception)</p>
+
+<hr>
+
+<h3>5.2 get_live_price</h3>
+<table>
+  <tr><th>Input parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+  <tr><td><code>ticker</code></td><td>string</td><td>Yes</td><td>Thai SET symbol, DR code, or fully qualified Yahoo ticker</td></tr>
+</table>
+
+<p><strong>Ticker normalisation:</strong></p>
+<pre><code>ticker = ticker.strip().upper()
+is_dr  = bool(re.match(r"^[A-Z]+\d+$", ticker))   # e.g. AAPL01, NVDA06
+is_bk  = ticker.endswith(".BK")
+yf_ticker = ticker if (is_dr or is_bk) else ticker + ".BK"</code></pre>
+
+<p><strong>Return format:</strong></p>
+<pre><code>**PTT** 📈
+- Price: **37.50 THB**
+- Change: +2.50 (+7.14%)
+- Source: Yahoo Finance (SET data may be 15 min delayed)</code></pre>
+
+<p><strong>Error return:</strong> <code>"Could not fetch price for **{ticker}** ({yf_ticker}). Market may be closed or ticker not found on Yahoo Finance."</code></p>
+
+<hr>
+
+<h3>5.3 get_performance_summary</h3>
+<table>
+  <tr><th>Input parameter</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>period</code></td><td><code>"daily" | "weekly" | "monthly"</code></td><td>No</td><td><code>"monthly"</code></td><td>Grouping granularity</td></tr>
+  <tr><td><code>months</code></td><td>integer</td><td>No</td><td><code>3</code></td><td>Look-back window (min 1, no max)</td></tr>
+</table>
+
+<p><strong>Execution:</strong> Calls both <code>get_daily_performance(from_date, period=period)</code> and <code>get_performance_by_stock(from_date)</code>. Only closed (realized) trades are included in the period buckets. The by-stock view includes open positions.</p>
+
+<p><strong>Return format:</strong></p>
+<pre><code>## Performance — Last 3 Month(s)
+
+**Cumulative P&L:** +45,000 ฿
+
+### By Stock
+| Symbol | Net P&L | Investment | Current Value | P&L% | Win Rate |
+|--------|--------:|-----------:|--------------:|-----:|---------:|
+| **PTT** | +25,000 ฿ | 350,000 | 375,000 | +7.1% | 75.0% |
+| **GULF** | -10,000 ฿ | 225,000 | 215,000 | -4.4% | 33.3% |
+...</code></pre>
+
+<p><strong>Empty return:</strong> <code>"## Performance — Last 3 Month(s)\n"</code> (no table rows if no trades)</p>
+
+<hr>
+
+<h3>5.4 read_knowledge_doc</h3>
+<table>
+  <tr><th>Input parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+  <tr><td><code>filename</code></td><td>string</td><td>Yes</td><td>Filename within <code>/app/investment_agent/knowledge/</code>, e.g. <code>knowledge_fibo.md</code></td></tr>
+</table>
+
+<p><strong>Path resolution:</strong> <code>/app/investment_agent/knowledge/{filename}</code></p>
+
+<p><strong>Return:</strong> First 6000 characters of the file content (UTF-8, encoding errors replaced).</p>
+
+<p><strong>Error return (file not found):</strong></p>
+<pre><code>"Document 'foo.md' not found. Available: knowledge_fibo.md, technical-analysis.md, personal-trading-style.md"</code></pre>
+
+<div class="callout tip">Knowledge documents must be <code>.md</code> files placed in the <code>knowledge/</code> subdirectory of the agent directory. The tool uses <code>glob("*.md")</code> to list available files — subdirectories are not searched.</div>
+
+<hr>
+
+<h3>5.5 run_analysis_script</h3>
+<table>
+  <tr><th>Input parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+  <tr><td><code>script</code></td><td><code>"port_hist" | "port_action" | "portfolio_tracker"</code></td><td>Yes</td><td>Script name (without .py extension)</td></tr>
+  <tr><td><code>args</code></td><td>string[]</td><td>No</td><td>CLI arguments passed to the script, e.g. <code>["-mode", "PL", "-m", "3"]</code></td></tr>
+</table>
+
+<p><strong>Script path:</strong> <code>/app/investment_agent/scripts/{script}.py</code></p>
+
+<p><strong>Execution:</strong></p>
+<pre><code>subprocess.run(
+    [sys.executable, script_path] + args,
+    capture_output=True,
+    text=True,
+    timeout=60,        # hard kill after 60 s
+    cwd=str(AGENT_DIR) # working directory = /app/investment_agent
+)</code></pre>
+
+<p><strong>Return (success):</strong> <code>stdout[:4000]</code> — first 4000 characters of stdout. If stdout is empty: <code>"Script completed with no output."</code></p>
+
+<p><strong>Return (failure):</strong></p>
+<pre><code>Script error (exit 1):
+{stderr[:500]}
+
+Output:
+{stdout[:4000]}</code></pre>
+
+<p><strong>Error return (script not found):</strong> <code>"Script 'foo.py' not found in /app/investment_agent/scripts/"</code></p>
+
+<hr>
+
+<h2>6. Tool Execution Loop</h2>
+<pre><code>for iteration in range(6):                           # max 6 rounds
+    response = client.messages.create(               # synchronous call in thread
+        model=settings.ai_default_model,
+        max_tokens=4096,
+        system=system_prompt,
+        messages=session_history,
+        tools=TOOLS,
+    )
+
+    # Stream text chunks word-by-word
+    for word in full_text.split(" "):
+        yield SSE text event
+
+    session_history.append(assistant_message)
+
+    if response.stop_reason != "tool_use":
+        break                                        # LLM finished, exit loop
+
+    # Execute all requested tools in sequence
+    for tool_use in tool_uses:
+        yield SSE tool_start
+        result = _execute_tool(tool.name, tool.input)
+        yield SSE tool_end
+
+    session_history.append(tool_results_message)
+    # → next iteration: LLM receives tool results and continues
+
+session_history = session_history[-20:]              # trim to last 20 messages
+yield SSE done</code></pre>
+
+<h2>7. Error Handling</h2>
+<table>
+  <tr><th>Failure mode</th><th>Behaviour</th></tr>
+  <tr><td><code>ANTHROPIC_API_KEY</code> not set or placeholder</td><td>Immediately yields <code>{ type: "error" }</code> + <code>{ type: "done" }</code> without calling the API</td></tr>
+  <tr><td>Anthropic <code>APIError</code></td><td>Yields <code>{ type: "error", content: str(exc) }</code> + <code>{ type: "done" }</code> and exits</td></tr>
+  <tr><td>Tool raises any exception</td><td><code>_execute_tool</code> catches all exceptions and returns <code>"Tool error [{name}]: {exc}"</code> as a string — loop continues</td></tr>
+  <tr><td>Script timeout (60 s)</td><td>Caught by the generic <code>except Exception</code> in <code>_execute_tool</code> — returns error string to LLM</td></tr>
+  <tr><td>Max iterations reached</td><td>Loop exits silently; final <code>done</code> event is emitted</td></tr>
+</table>
+
+<hr>
+
+<h2>8. Adding a New Tool</h2>
+<p>To expose a new capability to the AI copilot:</p>
+
+<ol>
+  <li><strong>Define the tool schema</strong> — add an entry to the <code>TOOLS</code> list in <code>ai.py</code>:
+<pre><code>{
+    "name": "my_new_tool",
+    "description": "What this tool does and when the LLM should call it.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "param": { "type": "string", "description": "..." }
+        },
+        "required": ["param"],
+    },
+}</code></pre>
+  </li>
+  <li><strong>Implement execution</strong> — add an <code>elif name == "my_new_tool":</code> branch inside <code>_execute_tool()</code>. Always return a plain string — the LLM reads this as a tool result.</li>
+  <li><strong>Update the system prompt</strong> — add a line to the Dashboard AI Instructions section so the LLM knows when to call the new tool.</li>
+  <li><strong>Document the tool</strong> — add an entry to this document (section 5) with input parameters and return format.</li>
+</ol>
+
+</body>
+</html>
