@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
-  Database, ShoppingCart, Briefcase, ArrowUpRight,
+  Database, ShoppingCart, Briefcase, ArrowUpRight, FlaskConical, HardDriveDownload, GitBranch,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
@@ -30,9 +30,12 @@ const NAV_TOP = [
 ] as const
 
 const SETTINGS_SUB = [
-  { href: '/settings',           label: 'My Profile', icon: Settings },
-  { href: '/admin/users',        label: 'Users',       icon: Users,    adminOnly: true },
-  { href: '/settings/documents', label: 'Documents',   icon: FileText },
+  { href: '/settings',              label: 'My Profile',  icon: Settings },
+  { href: '/admin/users',           label: 'Users',        icon: Users,            adminOnly: true },
+  { href: '/settings/documents',    label: 'Documents',    icon: FileText },
+  { href: '/settings/dr-mappings',  label: 'DR Mappings',  icon: GitBranch },
+  { href: '/settings/backup',       label: 'Backup',       icon: HardDriveDownload, adminOnly: true },
+  { href: '/settings/testing',      label: 'Testing',      icon: FlaskConical,      adminOnly: true },
 ] as const
 
 // ── Sidebar widgets ────────────────────────────────────────────────────────────

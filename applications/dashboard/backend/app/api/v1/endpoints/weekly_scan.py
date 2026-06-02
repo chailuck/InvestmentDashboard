@@ -201,7 +201,28 @@ def _fetch_sym_prices(symbol: str, monday: date, friday: date, market: str = 'SE
         if not sub.empty:
             fri_price = round(float(sub.iloc[-1]), 2)
 
-    return {"mon": mon_price, "fri": fri_price}
+    # Current price and daily change — always fetch latest 2 sessions regardless of scan week
+    current:    float | None = None
+    change_abs: float | None = None
+    change_pct: float | None = None
+    try:
+        df_live = yf.Ticker(_sym_to_ticker(symbol, market)).history(period="5d", interval="1d")
+        if not df_live.empty:
+            live_closes = df_live["Close"].dropna()
+            if len(live_closes) >= 2:
+                current    = round(float(live_closes.iloc[-1]), 2)
+                prev       = round(float(live_closes.iloc[-2]), 2)
+                change_abs = round(current - prev, 2)
+                change_pct = round((current - prev) / prev * 100, 2) if prev != 0 else None
+            elif len(live_closes) == 1:
+                current = round(float(live_closes.iloc[-1]), 2)
+    except Exception:
+        pass
+
+    return {
+        "mon": mon_price, "fri": fri_price,
+        "current": current, "change_abs": change_abs, "change_pct": change_pct,
+    }
 
 # ── Symbol-list endpoints ────────────────────────────────────────────────────
 
@@ -647,14 +668,18 @@ async def get_week_prices(scan_id: str, user_id: UserId, db: DB) -> dict[str, An
                     return round(usd / ratio * fx, 2)
 
                 return sym, {
-                    "mon":           parent_prices["mon"],
-                    "fri":           parent_prices["fri"],
-                    "parent_mon":    parent_prices["mon"],
-                    "parent_fri":    parent_prices["fri"],
-                    "dr_mon_thb":    _thb(parent_prices["mon"]),
-                    "dr_fri_thb":    _thb(parent_prices["fri"]),
-                    "parent_symbol": mapping.parent_symbol,
-                    "ratio":         ratio,
+                    "mon":            parent_prices["mon"],
+                    "fri":            parent_prices["fri"],
+                    "current":        parent_prices.get("current"),
+                    "change_abs":     parent_prices.get("change_abs"),
+                    "change_pct":     parent_prices.get("change_pct"),
+                    "parent_mon":     parent_prices["mon"],
+                    "parent_fri":     parent_prices["fri"],
+                    "dr_mon_thb":     _thb(parent_prices["mon"]),
+                    "dr_fri_thb":     _thb(parent_prices["fri"]),
+                    "dr_current_thb": _thb(parent_prices.get("current")),
+                    "parent_symbol":  mapping.parent_symbol,
+                    "ratio":          ratio,
                 }
             else:
                 result = await loop.run_in_executor(

@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Save, FileDown, Copy, CheckCircle2,
-  Loader2, X, RefreshCw, AlertCircle,
+  Loader2, X, RefreshCw, AlertCircle, Download, Upload,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -175,6 +175,7 @@ export default function PortfolioPlanEditor() {
   const [generateText, setGenerateText] = useState<string | null>(null)
   const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
+  const importRef = useRef<HTMLInputElement>(null)
 
   // ── Load plan + positions ─────────────────────────────────────────────────
 
@@ -271,6 +272,33 @@ export default function PortfolioPlanEditor() {
     }
   }
 
+  // ── Export / Restore ──────────────────────────────────────────────────────
+
+  const exportList = () => {
+    const text = rows.filter(r => r.symbol.trim()).map(r => r.symbol.trim().toUpperCase()).join('\n')
+    const blob = new Blob([text], { type: 'text/plain' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${planName.replace(/\s+/g, '_') || 'portfolio_plan'}.txt`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  const restoreList = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const symbols = (ev.target?.result as string ?? '')
+        .split('\n').map(s => s.trim().toUpperCase()).filter(Boolean)
+      if (symbols.length === 0) return
+      if (!confirm(`Replace all ${rows.length} item(s) with ${symbols.length} symbols from file?`)) return
+      setRows(symbols.map(s => ({ symbol: s, current_price: null, size: null, entry_price: null, tp: null, sl: null, order_size: null })))
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
   // ── Generate ──────────────────────────────────────────────────────────────
 
   const generate = () => {
@@ -333,6 +361,16 @@ export default function PortfolioPlanEditor() {
           >
             <RefreshCw className={cn('w-3.5 h-3.5', refreshing && 'animate-spin')} />
             Refresh
+          </button>
+
+          <input ref={importRef} type="file" accept=".txt" className="hidden" onChange={restoreList} />
+          <button onClick={exportList}
+            className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5">
+            <Download className="w-3.5 h-3.5" /> Export
+          </button>
+          <button onClick={() => importRef.current?.click()}
+            className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5">
+            <Upload className="w-3.5 h-3.5" /> Restore
           </button>
 
           <button

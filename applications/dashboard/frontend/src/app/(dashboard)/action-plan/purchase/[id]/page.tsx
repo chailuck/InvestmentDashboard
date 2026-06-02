@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Plus, Trash2, Save, FileDown, Copy, CheckCircle2,
-  Loader2, AlertTriangle, XCircle, X, BarChart2,
+  Loader2, AlertTriangle, XCircle, X, BarChart2, Download, Upload,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -217,6 +217,7 @@ export default function PurchasePlanEditor() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<'ok' | 'err' | null>(null)
+  const importRef = useRef<HTMLInputElement>(null)
   const [generateText, setGenerateText] = useState<string | null>(null)
   const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
@@ -307,6 +308,33 @@ export default function PurchasePlanEditor() {
     }
   }
 
+  // ── Export / Restore ──────────────────────────────────────────────────────
+
+  const exportList = () => {
+    const text = rows.filter(r => r.stock.trim()).map(r => r.stock.trim().toUpperCase()).join('\n')
+    const blob = new Blob([text], { type: 'text/plain' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${planName.replace(/\s+/g, '_') || 'purchase_plan'}.txt`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  const restoreList = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const symbols = (ev.target?.result as string ?? '')
+        .split('\n').map(s => s.trim().toUpperCase()).filter(Boolean)
+      if (symbols.length === 0) return
+      if (!confirm(`Replace all ${rows.length} item(s) with ${symbols.length} symbols from file?`)) return
+      setRows(symbols.map(s => ({ ...newRow(), stock: s })))
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
   // ── Generate ──────────────────────────────────────────────────────────────
 
   const generate = () => {
@@ -345,7 +373,16 @@ export default function PurchasePlanEditor() {
           />
           <p className="text-[11px] text-ink-muted mt-0.5">Purchase Action Plan</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <input ref={importRef} type="file" accept=".txt" className="hidden" onChange={restoreList} />
+          <button onClick={exportList}
+            className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5">
+            <Download className="w-3.5 h-3.5" /> Export
+          </button>
+          <button onClick={() => importRef.current?.click()}
+            className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5">
+            <Upload className="w-3.5 h-3.5" /> Restore
+          </button>
           <button
             onClick={generate}
             className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5"

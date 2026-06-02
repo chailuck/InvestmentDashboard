@@ -103,19 +103,66 @@ function ColorPicker({ value, onChange }: { value: ColorMark | null; onChange: (
 
 // ── Week price display cells ──────────────────────────────────────────────────
 
-function WeekPriceCell({ entry, loading, field }: {
-  entry: WeekPriceEntry | undefined
-  loading: boolean
-  field: 'mon' | 'fri'
-}) {
-  if (loading) return <span className="text-ink-disabled text-[10px]">…</span>
+function MonFriCell({ entry, loading }: { entry: WeekPriceEntry | undefined; loading: boolean }) {
+  if (loading) return (
+    <div className="flex flex-col items-end gap-1">
+      <span className="text-[10px] text-ink-disabled">…</span>
+      <span className="text-[10px] text-ink-disabled">…</span>
+    </div>
+  )
   const isDr = entry?.parent_symbol != null
-  const val = entry?.[field]
+  const fmt = (v: number | null | undefined) => {
+    if (v == null) return <span className="text-ink-disabled">—</span>
+    return (
+      <span className={cn('text-xs tabular-nums', isDr ? 'text-amber-300' : 'text-ink-secondary')}>
+        {isDr ? '$' : ''}{v.toLocaleString('en', { maximumFractionDigits: 2 })}
+      </span>
+    )
+  }
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <div className="flex items-center gap-1">
+        <span className="text-[9px] text-ink-disabled">M</span>{fmt(entry?.mon)}
+      </div>
+      {isDr && <DrThbNote val={entry?.dr_mon_thb} />}
+      <div className="flex items-center gap-1">
+        <span className="text-[9px] text-ink-disabled">F</span>{fmt(entry?.fri)}
+      </div>
+      {isDr && <DrThbNote val={entry?.dr_fri_thb} />}
+    </div>
+  )
+}
+
+function CurrentPriceCell({ entry, loading }: { entry: WeekPriceEntry | undefined; loading: boolean }) {
+  if (loading) return <span className="text-[10px] text-ink-disabled">…</span>
+  const isDr = entry?.parent_symbol != null
+  const val = entry?.current
   if (val == null) return <span className="text-ink-disabled">—</span>
   return (
-    <span className={cn('text-xs tabular-nums', isDr ? 'text-amber-300' : 'text-ink-secondary')}>
-      {isDr ? '$' : ''}{val.toLocaleString('en', { maximumFractionDigits: 2 })}
-    </span>
+    <div className="flex flex-col items-end gap-0.5">
+      <span className={cn('text-xs tabular-nums font-semibold', isDr ? 'text-amber-300' : 'text-ink-primary')}>
+        {isDr ? '$' : ''}{val.toLocaleString('en', { maximumFractionDigits: 2 })}
+      </span>
+      {isDr && <DrThbNote val={entry?.dr_current_thb} />}
+    </div>
+  )
+}
+
+function ChangePctCell({ entry, loading }: { entry: WeekPriceEntry | undefined; loading: boolean }) {
+  if (loading) return <span className="text-[10px] text-ink-disabled">…</span>
+  const abs = entry?.change_abs
+  const pct = entry?.change_pct
+  if (abs == null || pct == null) return <span className="text-ink-disabled">—</span>
+  const up = pct >= 0
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <span className={cn('text-xs font-semibold tabular-nums', up ? 'text-gain' : 'text-loss')}>
+        {up ? '+' : ''}{abs.toFixed(2)}
+      </span>
+      <span className={cn('text-[10px] tabular-nums', up ? 'text-gain/70' : 'text-loss/70')}>
+        {up ? '+' : ''}{pct.toFixed(2)}%
+      </span>
+    </div>
   )
 }
 
@@ -131,18 +178,30 @@ function WeekPnlCell({ entry, loading }: { entry: WeekPriceEntry | undefined; lo
   )
 }
 
-function DrPriceCell({ entry, loading, field }: {
-  entry: WeekPriceEntry | undefined
-  loading: boolean
-  field: 'dr_mon_thb' | 'dr_fri_thb'
-}) {
-  if (loading) return <span className="text-ink-disabled text-[10px]">…</span>
-  if (!entry?.parent_symbol) return <span className="text-ink-disabled text-[10px]">—</span>
-  const val = entry[field]
-  if (val == null) return <span className="text-ink-disabled">—</span>
+/** Small cyan sub-note showing estimated DR THB price below Mon/Fri parent USD price. */
+function DrThbNote({ val }: { val: number | null | undefined }) {
+  if (val == null) return null
   return (
-    <span className="text-xs tabular-nums text-cyan-400 font-mono">
+    <span className="text-[9px] text-cyan-400 font-mono leading-none tabular-nums">
       ฿{val.toLocaleString('en', { maximumFractionDigits: 0 })}
+    </span>
+  )
+}
+
+/** Small amber sub-note showing parent USD equivalent of a user-entered THB value. */
+function DrParentNote({ thbValue, ratio, usdThb }: {
+  thbValue: number | null
+  ratio: number | null | undefined
+  usdThb: number | null | undefined
+}) {
+  if (thbValue == null || !ratio || !usdThb) return null
+  const parentUsd = thbValue * ratio / usdThb
+  const fmt = parentUsd >= 1000
+    ? `$${(parentUsd / 1000).toFixed(1)}K`
+    : `$${parentUsd.toFixed(1)}`
+  return (
+    <span className="text-[9px] text-amber-400/70 font-mono leading-none tabular-nums">
+      {fmt}
     </span>
   )
 }
@@ -692,42 +751,26 @@ export default function WeeklyScanPage() {
             <thead className="sticky top-0 z-10">
               <tr className="border-b border-border/50 bg-surface-elevated text-ink-muted">
                 <th className="px-3 py-2.5 text-left font-medium w-8">#</th>
-                <th className="px-3 py-2.5 text-left font-medium">Symbol</th>
+                <th className="px-3 py-2.5 text-left font-medium w-[84px]">Symbol</th>
                 <th className="px-3 py-2.5 text-left font-medium">Color</th>
-                <th className="px-3 py-2.5 text-left font-medium">Strategy</th>
-                <th className="px-3 py-2.5 text-right font-medium min-w-[72px]">
+                <th className="px-3 py-2.5 text-left font-medium min-w-[220px]">Strategy</th>
+                <th className="px-3 py-2.5 text-right font-medium min-w-[80px]">Current</th>
+                <th className="px-3 py-2.5 text-right font-medium min-w-[72px]">Chg</th>
+                <th className="px-3 py-2.5 text-right font-medium min-w-[90px]">
                   <div className="flex flex-col items-end leading-tight">
-                    <span>Mon</span>
+                    <span>Mon / Fri</span>
                     <span className="text-[10px] font-normal text-ink-disabled">
-                      {weekPrices?.mon_date ? format(new Date(weekPrices.mon_date), 'dd MMM') : '—'}
-                    </span>
-                  </div>
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium min-w-[72px]">
-                  <div className="flex flex-col items-end leading-tight">
-                    <span>Fri</span>
-                    <span className="text-[10px] font-normal text-ink-disabled">
-                      {weekPrices?.fri_date ? format(new Date(weekPrices.fri_date), 'dd MMM') : '—'}
+                      {weekPrices?.mon_date && weekPrices?.fri_date
+                        ? `${format(new Date(weekPrices.mon_date), 'dd')}-${format(new Date(weekPrices.fri_date), 'dd MMM')}`
+                        : '—'}
                     </span>
                   </div>
                 </th>
                 <th className="px-3 py-2.5 text-right font-medium min-w-[60px]">W-P&L</th>
-                <th className="px-3 py-2.5 text-right font-medium min-w-[80px]">
-                  <div className="flex flex-col items-end leading-tight">
-                    <span className="text-cyan-500">DR Mon</span>
-                    <span className="text-[10px] font-normal text-ink-disabled">est. ฿</span>
-                  </div>
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium min-w-[80px]">
-                  <div className="flex flex-col items-end leading-tight">
-                    <span className="text-cyan-500">DR Fri</span>
-                    <span className="text-[10px] font-normal text-ink-disabled">est. ฿</span>
-                  </div>
-                </th>
-                <th className="px-3 py-2.5 text-left font-medium">Buy</th>
+                <th className="px-3 py-2.5 text-left font-medium min-w-[72px]">Buy</th>
                 <th className="px-3 py-2.5 text-left font-medium">Size</th>
-                <th className="px-3 py-2.5 text-left font-medium">TP</th>
-                <th className="px-3 py-2.5 text-left font-medium">SL</th>
+                <th className="px-3 py-2.5 text-left font-medium min-w-[72px]">TP</th>
+                <th className="px-3 py-2.5 text-left font-medium min-w-[72px]">SL</th>
                 <th className="px-3 py-2.5 text-left font-medium">Remark</th>
                 <th className="px-3 py-2.5 text-left font-medium">
                   <div className="flex items-center gap-1">
@@ -776,7 +819,6 @@ export default function WeeklyScanPage() {
                 <td className="px-3 py-1.5"></td>
                 <td className="px-3 py-1.5"></td>
                 <td className="px-3 py-1.5"></td>
-                <td className="px-3 py-1.5"></td>
                 <td colSpan={6} className="px-3 py-1.5">
                   <div className="flex items-center gap-2">
                     {hasFilters && (
@@ -808,7 +850,7 @@ export default function WeeklyScanPage() {
             <tbody>
               {sortedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={15} className="px-4 py-10 text-center text-ink-muted">
+                  <td colSpan={14} className="px-4 py-10 text-center text-ink-muted">
                     No symbols yet. Add symbols or click <strong>Refresh config</strong>.
                   </td>
                 </tr>
@@ -819,9 +861,10 @@ export default function WeeklyScanPage() {
                     className={cn('border-b border-border/20 transition-colors',
                       meta ? `${meta.bg.replace('/20', '/5')} hover:${meta.bg.replace('/20', '/10')}` : 'hover:bg-surface-elevated/40')}>
                     <td className="px-3 py-2 text-ink-disabled">{idx + 1}</td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 w-[84px] max-w-[84px]">
                       <button onClick={() => setAnalyticsSymbol({ symbol: item.symbol, market: item.market ?? 'SET' })}
-                        className="font-bold font-mono text-ink-primary hover:text-brand-400 transition-colors">
+                        title={item.symbol}
+                        className="font-bold font-mono text-ink-primary hover:text-brand-400 transition-colors block w-full truncate text-left">
                         {item.symbol}
                       </button>
                     </td>
@@ -833,37 +876,53 @@ export default function WeeklyScanPage() {
                       <StrategyCell value={item.strategy}
                         onChange={v => updateField(item.symbol, { strategy: v })} />
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <WeekPriceCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} field="mon" />
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <WeekPriceCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} field="fri" />
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <WeekPnlCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} />
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <DrPriceCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} field="dr_mon_thb" />
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <DrPriceCell entry={weekPrices?.prices[item.symbol]} loading={pricesLoading} field="dr_fri_thb" />
-                    </td>
-                    <td className="px-3 py-2">
-                      <NumCell value={item.buy_price}
-                        onBlur={v => updateField(item.symbol, { buy_price: v })} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <NumCell value={item.size}
-                        onBlur={v => updateField(item.symbol, { size: v != null ? Math.round(v) : null })} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <NumCell value={item.tp}
-                        onBlur={v => updateField(item.symbol, { tp: v })} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <NumCell value={item.sl}
-                        onBlur={v => updateField(item.symbol, { sl: v })} />
-                    </td>
+                    {(() => {
+                      const priceEntry = weekPrices?.prices[item.symbol]
+                      const isDr = priceEntry?.parent_symbol != null
+                      const ratio = priceEntry?.ratio
+                      const usdThb = weekPrices?.usd_thb
+                      return (
+                        <>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            <CurrentPriceCell entry={priceEntry} loading={pricesLoading} />
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            <ChangePctCell entry={priceEntry} loading={pricesLoading} />
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            <MonFriCell entry={priceEntry} loading={pricesLoading} />
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            <WeekPnlCell entry={priceEntry} loading={pricesLoading} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-col gap-0.5">
+                              <NumCell value={item.buy_price}
+                                onBlur={v => updateField(item.symbol, { buy_price: v })} />
+                              {isDr && <DrParentNote thbValue={item.buy_price} ratio={ratio} usdThb={usdThb} />}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            <NumCell value={item.size}
+                              onBlur={v => updateField(item.symbol, { size: v != null ? Math.round(v) : null })} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-col gap-0.5">
+                              <NumCell value={item.tp}
+                                onBlur={v => updateField(item.symbol, { tp: v })} />
+                              {isDr && <DrParentNote thbValue={item.tp} ratio={ratio} usdThb={usdThb} />}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-col gap-0.5">
+                              <NumCell value={item.sl}
+                                onBlur={v => updateField(item.symbol, { sl: v })} />
+                              {isDr && <DrParentNote thbValue={item.sl} ratio={ratio} usdThb={usdThb} />}
+                            </div>
+                          </td>
+                        </>
+                      )
+                    })()}
                     <td className="px-3 py-2">
                       <TextCell value={item.remark}
                         onBlur={v => updateField(item.symbol, { remark: v })} />
