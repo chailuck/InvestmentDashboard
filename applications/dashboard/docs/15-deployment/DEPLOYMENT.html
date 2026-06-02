@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment Guide — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 1000px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 }
+.yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+
+<h1>Deployment Guide</h1>
+
+<p>This document is the operational reference for deploying, updating, and rolling back InvestmentDashboard. The stack runs as five Docker containers managed by Docker Compose.</p>
+
+<hr>
+
+<h2>1. Service Architecture</h2>
+
+<table>
+  <tr><th>Container</th><th>Image</th><th>Port</th><th>Restart policy</th><th>Deploy strategy</th></tr>
+  <tr><td><code>inv_postgres</code></td><td><code>postgres:16-alpine</code> (pull)</td><td>5432</td><td>unless-stopped</td><td>No rebuild needed — stateless image, data in named volume</td></tr>
+  <tr><td><code>inv_redis</code></td><td><code>redis:7-alpine</code> (pull)</td><td>6379</td><td>unless-stopped</td><td>No rebuild needed</td></tr>
+  <tr><td><code>inv_backend</code></td><td><code>dashboard-backend</code> (local build)</td><td>8000</td><td>unless-stopped</td><td><strong>Live volume mount</strong> — changes apply on save</td></tr>
+  <tr><td><code>inv_frontend</code></td><td><code>dashboard-frontend</code> (local build)</td><td>3000</td><td>unless-stopped</td><td><strong>Baked image</strong> — rebuild required on source change</td></tr>
+  <tr><td><code>inv_adminer</code></td><td><code>adminer:latest</code> (pull)</td><td>8080</td><td>unless-stopped</td><td>Dev profile only (<code>--profile dev</code>)</td></tr>
+</table>
+
+<div class="callout tip">The backend uses a live volume mount (<code>./backend:/app:cached</code>), so Python source changes take effect after Uvicorn hot-reloads — typically within 1–2 seconds, with no container restart needed. The frontend is a compiled Next.js standalone image — every source change requires a rebuild.</div>
+
+<hr>
+
+<h2>2. First-Time Setup</h2>
+
+<pre><code># 1. Clone / navigate to project root
+cd applications/dashboard
+
+# 2. Create backend environment file
+cp backend/.env.example backend/.env
+# Edit backend/.env — set ANTHROPIC_API_KEY, ADMIN_EMAIL, ADMIN_PASSWORD, SECRET_KEY
+
+# 3. Build both service images (first run only — takes ~3 min)
+docker compose build
+
+# 4. Start all services
+docker compose up -d
+
+# 5. Verify all containers are healthy
+docker compose ps</code></pre>
+
+<div class="callout warn">The first startup runs database migrations and seeds the admin user. Check <code>docker compose logs backend --tail 30</code> if the backend fails its health check on first boot.</div>
+
+<hr>
+
+<h2>3. Deploying Changes — Decision Table</h2>
+
+<table>
+  <tr><th>What changed</th><th>Command(s) required</th><th>Downtime</th></tr>
+  <tr><td>Backend Python source (<code>backend/app/**</code>)</td><td>None — Uvicorn auto-reloads within ~2 s</td><td>Zero</td></tr>
+  <tr><td>Backend <code>.env</code> (environment variables)</td><td><code>docker compose up -d --no-deps backend</code></td><td>~5 s backend restart</td></tr>
+  <tr><td>Backend <code>requirements.txt</code> (new packages)</td><td><code>docker compose build backend &amp;&amp; docker compose up -d --no-deps backend</code></td><td>~1 min build + ~5 s restart</td></tr>
+  <tr><td>Frontend source (<code>frontend/src/**</code>, <code>package.json</code>)</td><td><code>docker compose build frontend &amp;&amp; docker compose up -d --no-deps frontend</code></td><td>~2 min build + ~10 s restart</td></tr>
+  <tr><td>New npm package in <code>package.json</code></td><td><code>docker compose build frontend &amp;&amp; docker compose up -d --no-deps frontend</code></td><td>~3 min build + ~10 s restart</td></tr>
+  <tr><td>Database migration (<code>alembic/versions/</code>)</td><td><code>docker exec inv_backend alembic upgrade head</code></td><td>Zero (online migration)</td></tr>
+  <tr><td><code>docker-compose.yml</code> (service config)</td><td><code>docker compose up -d</code></td><td>Affected services restart</td></tr>
+  <tr><td>Docs (<code>docs/**/*.html</code>)</td><td>None — docs are served from the backend volume mount</td><td>Zero</td></tr>
+  <tr><td>Investment Excel source file</td><td>Click <strong>Refresh from Source</strong> in Settings → Portfolio, or <code>POST /api/v1/portfolio-tracker/refresh</code></td><td>Zero</td></tr>
+</table>
+
+<hr>
+
+<h2>4. Standard Frontend Rebuild Procedure</h2>
+
+<p>Run these two commands from the <code>applications/dashboard/</code> directory every time frontend source files change:</p>
+
+<pre><code># Build new image (runs Next.js production build inside Docker)
+docker compose build frontend
+
+# Recreate the container from the new image (other containers unaffected)
+docker compose up -d --no-deps frontend</code></pre>
+
+<p>The build output includes TypeScript type checking and ESLint. If either fails, the image is not produced and the old container keeps running.</p>
+
+<h3>Verify the new image is live</h3>
+<pre><code>docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep frontend
+# Expected: inv_frontend   Up N seconds (healthy)   0.0.0.0:3000->3000/tcp</code></pre>
+
+<div class="callout tip">The <code>--no-deps</code> flag prevents Docker Compose from also restarting postgres, redis, and backend when only the frontend changed.</div>
+
+<hr>
+
+<h2>5. Standard Backend Rebuild Procedure</h2>
+
+<pre><code># Only needed when requirements.txt changes or Dockerfile.backend is modified.
+# Normal Python source changes DO NOT need a rebuild.
+
+docker compose build backend
+docker compose up -d --no-deps backend</code></pre>
+
+<h3>Apply database migrations</h3>
+<pre><code># Always run after pulling changes that include new Alembic versions
+docker exec inv_backend alembic upgrade head
+
+# Verify
+docker exec inv_backend alembic current</code></pre>
+
+<hr>
+
+<h2>6. Rolling Back a Bad Frontend Deploy</h2>
+
+<p>Docker keeps the previous image layer in cache. To roll back:</p>
+
+<pre><code># Option A — Revert source, rebuild
+git revert HEAD
+docker compose build frontend
+docker compose up -d --no-deps frontend
+
+# Option B — Tag images before deploying (recommended for production)
+docker tag dashboard-frontend dashboard-frontend:backup-$(date +%Y%m%d)
+# ... then if needed:
+docker tag dashboard-frontend:backup-20260602 dashboard-frontend:latest
+docker compose up -d --no-deps frontend</code></pre>
+
+<hr>
+
+<h2>7. Viewing Logs</h2>
+
+<pre><code># Tail all services
+docker compose logs -f
+
+# Tail a specific service
+docker compose logs -f backend
+docker compose logs -f frontend
+
+# Last 50 lines from backend
+docker compose logs backend --tail 50
+
+# Show container health status
+docker inspect inv_backend --format "{{.State.Health.Status}}: {{(index .State.Health.Log 0).Output}}"</code></pre>
+
+<hr>
+
+<h2>8. Stopping and Restarting</h2>
+
+<pre><code># Stop all (data preserved in volumes)
+docker compose down
+
+# Stop and remove volumes (DESTRUCTIVE — wipes database)
+docker compose down -v
+
+# Restart a single service
+docker compose restart backend
+
+# Force-recreate all containers from current images (no rebuild)
+docker compose up -d --force-recreate</code></pre>
+
+<hr>
+
+<h2>9. Build Time Reference</h2>
+
+<table>
+  <tr><th>Scenario</th><th>Typical duration</th><th>Notes</th></tr>
+  <tr><td>Frontend full build (cold — no cache)</td><td>~3 min</td><td>npm install + Next.js build</td></tr>
+  <tr><td>Frontend incremental (deps cached)</td><td>~2 min</td><td>Only Next.js build re-runs if <code>package.json</code> unchanged</td></tr>
+  <tr><td>Backend build (cold)</td><td>~2 min</td><td>pip install</td></tr>
+  <tr><td>Backend incremental (deps cached)</td><td>~15 s</td><td>Only copies new source files</td></tr>
+  <tr><td>Frontend container start (healthy)</td><td>~10 s</td><td>Health check on <code>/api/health</code></td></tr>
+  <tr><td>Backend container start (healthy)</td><td>~20–30 s</td><td>Health check on <code>/api/v1/health/live</code></td></tr>
+</table>
+
+<hr>
+
+<h2>10. Environment Variables Reference</h2>
+
+<h3>Backend (<code>backend/.env</code>)</h3>
+<table>
+  <tr><th>Variable</th><th>Required</th><th>Example</th><th>Notes</th></tr>
+  <tr><td><code>SECRET_KEY</code></td><td>Yes</td><td><code>change-me-64-chars</code></td><td>JWT signing key — change before production</td></tr>
+  <tr><td><code>ADMIN_EMAIL</code></td><td>Yes</td><td><code>admin@example.com</code></td><td>Seeded on first startup via <code>ON CONFLICT DO NOTHING</code></td></tr>
+  <tr><td><code>ADMIN_PASSWORD</code></td><td>Yes</td><td><code>Admin123!</code></td><td>Minimum 8 characters</td></tr>
+  <tr><td><code>ANTHROPIC_API_KEY</code></td><td>No</td><td><code>sk-ant-...</code></td><td>AI Copilot disabled if unset</td></tr>
+  <tr><td><code>INVESTMENT_EXCEL_PATH</code></td><td>No</td><td><code>/app/uploads/portfolio.xlsx</code></td><td>Working copy path (writable)</td></tr>
+  <tr><td><code>INVESTMENT_EXCEL_SOURCE_PATH</code></td><td>No</td><td><code>/app/investment_data/tracking.xlsx</code></td><td>Read-only source on host volume</td></tr>
+  <tr><td><code>AI_DEFAULT_MODEL</code></td><td>No</td><td><code>claude-sonnet-4-6</code></td><td>Anthropic model ID</td></tr>
+  <tr><td><code>DATABASE_URL</code></td><td>Set in compose</td><td><code>postgresql+asyncpg://...</code></td><td>Overridden by docker-compose.yml</td></tr>
+  <tr><td><code>REDIS_URL</code></td><td>Set in compose</td><td><code>redis://redis:6379/0</code></td><td>Overridden by docker-compose.yml</td></tr>
+</table>
+
+<h3>Frontend (set in <code>docker-compose.yml</code>)</h3>
+<table>
+  <tr><th>Variable</th><th>Value</th><th>Notes</th></tr>
+  <tr><td><code>BACKEND_URL</code></td><td><code>http://backend:8000</code></td><td>Internal Docker hostname used by the Next.js server-side proxy route. Never exposed to the browser.</td></tr>
+  <tr><td><code>NODE_ENV</code></td><td><code>production</code></td><td>Set at runtime; build already uses production mode via Dockerfile.</td></tr>
+  <tr><td><code>NEXT_PUBLIC_WS_URL</code></td><td>(optional)</td><td>WebSocket URL visible to the browser. Defaults to <code>ws://localhost:8000</code> in code.</td></tr>
+</table>
+
+<hr>
+
+<h2>11. Volume Mounts Summary</h2>
+
+<table>
+  <tr><th>Container</th><th>Host path</th><th>Container path</th><th>Mode</th><th>Purpose</th></tr>
+  <tr><td>backend</td><td><code>./backend</code></td><td><code>/app</code></td><td>rw (cached)</td><td>Live source mount — hot-reload</td></tr>
+  <tr><td>backend</td><td><code>uploads_data</code> (named vol)</td><td><code>/app/uploads</code></td><td>rw</td><td>Uploaded Excel working copies, cache bust file</td></tr>
+  <tr><td>backend</td><td><code>${INVESTMENT_DATA_PATH}</code></td><td><code>/app/investment_data</code></td><td>ro</td><td>Read-only Excel source file</td></tr>
+  <tr><td>backend</td><td><code>${INVESTMENT_AGENT_PATH}</code></td><td><code>/app/investment_agent</code></td><td>ro</td><td>AI agent directory (CLAUDE.md, knowledge/, scripts/)</td></tr>
+  <tr><td>backend</td><td><code>./docs</code></td><td><code>/app/docs</code></td><td>ro</td><td>Documentation HTML served by the docs endpoint</td></tr>
+  <tr><td>postgres</td><td><code>postgres_data</code> (named vol)</td><td><code>/var/lib/postgresql/data</code></td><td>rw</td><td>Persistent database storage</td></tr>
+  <tr><td>redis</td><td><code>redis_data</code> (named vol)</td><td><code>/data</code></td><td>rw</td><td>Persistent Redis AOF log</td></tr>
+</table>
+
+<div class="callout warn">The <code>INVESTMENT_DATA_PATH</code> and <code>INVESTMENT_AGENT_PATH</code> env vars default to <code>./data/investmentPlan</code> and <code>./data/investmentAgent</code> if not set. These directories must exist on the host before running <code>docker compose up</code> or the container will fail to start.</div>
+
+<hr>
+
+<h2>12. Health Check Endpoints</h2>
+
+<table>
+  <tr><th>Service</th><th>URL</th><th>Expected response</th></tr>
+  <tr><td>Frontend</td><td><code>http://localhost:3000/api/health</code></td><td><code>{"status":"ok"}</code></td></tr>
+  <tr><td>Backend (liveness)</td><td><code>http://localhost:8000/api/v1/health/live</code></td><td><code>{"status":"ok"}</code></td></tr>
+  <tr><td>Backend (readiness)</td><td><code>http://localhost:8000/api/v1/health/ready</code></td><td><code>{"status":"ok","db":"ok","redis":"ok"}</code></td></tr>
+  <tr><td>Postgres</td><td><code>pg_isready -U postgres -d investment_db</code></td><td><code>accepting connections</code></td></tr>
+  <tr><td>Redis</td><td><code>redis-cli ping</code></td><td><code>PONG</code></td></tr>
+</table>
+
+</body>
+</html>

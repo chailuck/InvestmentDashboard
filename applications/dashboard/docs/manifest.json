@@ -105,6 +105,13 @@
       "children": [
         { "id": "migrations-technical", "label": "Alembic Workflow & Redis Keys", "file": "14-migrations/TECHNICAL.html" }
       ]
+    },
+    {
+      "id": "deployment",
+      "label": "Deployment",
+      "children": [
+        { "id": "deployment-guide", "label": "Deployment Guide", "file": "15-deployment/DEPLOYMENT.html" }
+      ]
     }
   ]
 }
