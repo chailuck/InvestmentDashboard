@@ -190,26 +190,32 @@ export default function PortfolioPlanEditor() {
       setAiRecommend(plan.ai_recommend ?? '')
       setNotes(plan.notes ?? '')
 
-      // Build a lookup map from saved plan items: symbol → { tp, sl, order_size }
-      const savedMap = new Map(
-        plan.portfolio_items.map(i => [i.symbol.toUpperCase(), i])
-      )
-
-      // Merge: positions drive the base data; saved items supply TP/SL/order_size
-      const merged: Row[] = (posData.positions ?? []).map((pos: any) => {
-        const sym = (pos.symbol ?? '').toUpperCase()
-        const saved = savedMap.get(sym)
-        return {
-          symbol: sym,
+      if (plan.portfolio_items.length === 0) {
+        // New plan — seed from current active positions
+        setRows((posData.positions ?? []).map((pos: any) => ({
+          symbol: (pos.symbol ?? '').toUpperCase(),
           current_price: pos.currentPrice ?? null,
           size: pos.positionSize ?? null,
           entry_price: pos.entryPrice ?? null,
-          tp: saved?.tp ?? null,
-          sl: saved?.sl ?? null,
-          order_size: saved?.order_size ?? null,
-        }
-      })
-      setRows(merged)
+          tp: null,
+          sl: null,
+          order_size: null,
+        })))
+      } else {
+        // Existing plan — keep saved stock list; only refresh current_price from live data
+        const priceMap = new Map(
+          (posData.positions ?? []).map((p: any) => [(p.symbol ?? '').toUpperCase(), p.currentPrice ?? null])
+        )
+        setRows(plan.portfolio_items.map(i => ({
+          symbol: i.symbol.toUpperCase(),
+          current_price: priceMap.get(i.symbol.toUpperCase()) ?? i.current_price ?? null,
+          size: i.size ?? null,
+          entry_price: i.entry_price ?? null,
+          tp: i.tp ?? null,
+          sl: i.sl ?? null,
+          order_size: i.order_size ?? null,
+        })))
+      }
     } catch (e) {
       console.error('Failed to load portfolio plan', e)
     } finally {

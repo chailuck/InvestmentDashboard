@@ -133,6 +133,49 @@ function DeleteModal({
   )
 }
 
+// ── Symbol badges with hover tooltip ─────────────────────────────────────────
+
+const MAX_VISIBLE = 6
+
+function SymbolBadges({ symbols }: { symbols: string }) {
+  if (!symbols) return <span className="text-ink-disabled italic">—</span>
+
+  const all = symbols.split(', ').filter(Boolean)
+  const visible = all.slice(0, MAX_VISIBLE)
+  const hidden = all.slice(MAX_VISIBLE)
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {visible.map(sym => (
+        <span
+          key={sym}
+          className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface-elevated border border-border/50 text-ink-secondary"
+        >
+          {sym}
+        </span>
+      ))}
+      {hidden.length > 0 && (
+        <span className="relative group cursor-default">
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-brand-500/10 border border-brand-500/20 text-brand-400">
+            +{hidden.length} more
+          </span>
+          {/* Tooltip balloon */}
+          <div className="absolute bottom-full right-0 mb-1.5 z-50 hidden group-hover:block">
+            <div className="bg-surface-card border border-border/60 rounded-lg shadow-xl px-3 py-2 whitespace-nowrap">
+              <p className="text-[10px] font-semibold text-ink-muted mb-0.5 uppercase tracking-wider">
+                All symbols ({all.length})
+              </p>
+              <p className="text-xs text-ink-primary">
+                {all.join(', ')}
+              </p>
+            </div>
+          </div>
+        </span>
+      )}
+    </div>
+  )
+}
+
 // ── Plan Section (one for purchase, one for portfolio) ────────────────────────
 
 function PlanSection({ type }: { type: PlanType }) {
@@ -287,8 +330,8 @@ function PlanSection({ type }: { type: PlanType }) {
                       {plan.name}
                     </Link>
                   </td>
-                  <td className="px-4 py-2.5 text-ink-secondary max-w-[200px] truncate" title={plan.symbols}>
-                    {plan.symbols || <span className="text-ink-disabled italic">—</span>}
+                  <td className="px-4 py-2.5 max-w-[280px]">
+                    <SymbolBadges symbols={plan.symbols} />
                   </td>
                   <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">{fmtDt(plan.updated_at)}</td>
                   <td className="px-4 py-2.5">

@@ -50,7 +50,7 @@ def _symbols(plan: ActionPlan) -> str:
         syms = [i.stock for i in plan.purchase_items if i.stock]
     else:
         syms = [i.symbol for i in plan.portfolio_items if i.symbol]
-    return ", ".join(syms[:7])
+    return ", ".join(syms)
 
 
 async def _get_or_404(plan_id: uuid.UUID, user_id: str, db: AsyncSession) -> ActionPlan:
