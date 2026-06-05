@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Authentication — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — Authentication</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Issue and rotate JWT tokens, authenticate users by email/password, blacklist tokens on logout, and provide a self-service password-reset flow. All tokens are HS256-signed JWTs. Access tokens expire in 30 minutes; refresh tokens in 7 days. The token blacklist is stored in Redis with auto-expiring TTLs.
+</div>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Auth</th><th>Rate limit</th><th>Purpose</th></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/auth/login</code></td><td>None</td><td>5/min per IP</td><td>Email + password → tokens + user</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/auth/refresh</code></td><td>None</td><td>—</td><td>Rotate expired access token</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/auth/logout</code></td><td>Bearer</td><td>—</td><td>Blacklist current access token</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/auth/me</code></td><td>Bearer</td><td>—</td><td>Return current user profile</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/auth/me</code></td><td>Bearer</td><td>—</td><td>Update own display name</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/auth/forgot-password</code></td><td>None</td><td>3/min per IP</td><td>Request a password-reset token</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/auth/reset-password</code></td><td>None</td><td>—</td><td>Set new password using reset token</td></tr>
+</table>
+
+<hr>
+
+<h2>POST /api/v1/auth/login</h2>
+<h4>Request body</h4>
+<pre><code>{ "email": "admin@example.com", "password": "ChangeMe123!" }</code></pre>
+<h4>Response 200</h4>
+<pre><code>{
+  "access_token":  "eyJhbGciOiJIUzI1NiJ9...",   // 30-minute JWT
+  "refresh_token": "eyJhbGciOiJIUzI1NiJ9...",  // 7-day JWT
+  "expires_in":    1800,                          // seconds
+  "user": {
+    "id":        "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "email":     "admin@example.com",
+    "name":      "Admin",
+    "role":      "admin",                         // "admin" | "analyst" | "viewer"
+    "createdAt": "2026-01-15T08:00:00+07:00"
+  }
+}</code></pre>
+<h4>JWT payload structure</h4>
+<pre><code>{
+  "sub":   "3fa85f64-...",    // user UUID — used by all auth dependencies
+  "role":  "admin",
+  "email": "admin@example.com",
+  "type":  "access",          // "access" | "refresh"
+  "jti":   "unique-uuid",     // blacklist key on logout
+  "iat":   1748000000,
+  "exp":   1748001800
+}</code></pre>
+<div class="err">
+<strong>401 Unauthorized</strong> — wrong email or password. Generic message to prevent user enumeration: <code>{"detail": "Invalid credentials"}</code><br>
+<strong>403 Forbidden</strong> — account exists but <code>is_active = false</code>: <code>{"detail": "Account disabled"}</code><br>
+<strong>429 Too Many Requests</strong> — exceeded 5 attempts per minute from this IP.
+</div>
+
+<hr>
+
+<h2>POST /api/v1/auth/refresh</h2>
+<h4>Request body</h4>
+<pre><code>{ "refresh_token": "eyJhbGciOiJIUzI1NiJ9..." }</code></pre>
+<h4>Response 200</h4>
+<p>Same shape as login — returns a new access token AND a new refresh token (token rotation). The old refresh token should be discarded.</p>
+<pre><code>{
+  "access_token":  "eyJ...",
+  "refresh_token": "eyJ...",   // NEW refresh token — replaces the submitted one
+  "expires_in":    1800,
+  "user": { ... }
+}</code></pre>
+<div class="err">
+<strong>401 Unauthorized</strong> — token expired, invalid signature, or wrong type (e.g. passing an access token): <code>{"detail": "..."}</code><br>
+<strong>401 Unauthorized</strong> — user deleted or deactivated since token was issued.
+</div>
+
+<hr>
+
+<h2>POST /api/v1/auth/logout</h2>
+<h4>Request</h4>
+<pre><code>POST /api/v1/auth/logout
+Authorization: Bearer &lt;access_token&gt;
+# No body</code></pre>
+<h4>Response 200</h4>
+<pre><code>{ "message": "Logged out successfully" }</code></pre>
+<p>The JTI from the access token is stored in Redis as <code>blacklist:{jti}</code> with a TTL equal to the token's remaining lifetime. Once blacklisted, the token cannot be used even if not expired.</p>
+<div class="tip">Calling logout with an already-invalid or expired token still returns 200 — the response is identical to a successful logout to avoid leaking information about token state.</div>
+
+<hr>
+
+<h2>GET /api/v1/auth/me</h2>
+<h4>Response 200</h4>
+<pre><code>Authorization: Bearer &lt;access_token&gt;
+
+{
+  "id":        "3fa85f64-...",
+  "email":     "admin@example.com",
+  "name":      "Admin",
+  "role":      "admin",
+  "createdAt": "2026-01-15T08:00:00+07:00"
+}</code></pre>
+
+<hr>
+
+<h2>PUT /api/v1/auth/me</h2>
+<p>Any authenticated user can update their own display name. Email and role changes require admin access (use <code>PUT /users/{id}</code> instead).</p>
+<h4>Request body</h4>
+<pre><code>Authorization: Bearer &lt;access_token&gt;
+
+{ "name": "Alice Smith" }</code></pre>
+<h4>Response 200</h4>
+<p>Same shape as <code>GET /auth/me</code> with updated name.</p>
+
+<hr>
+
+<h2>POST /api/v1/auth/forgot-password</h2>
+<h4>Request body</h4>
+<pre><code>{ "email": "user@example.com" }</code></pre>
+<h4>Response 200 — email not found (or inactive)</h4>
+<pre><code>{ "message": "If that email is registered, a reset link has been sent." }</code></pre>
+<h4>Response 200 — development mode only</h4>
+<pre><code>{
+  "message":     "Reset token generated (dev mode — token returned directly).",
+  "reset_token": "Bx7kP2qL..."     // 32-byte URL-safe token; use in reset-password
+}</code></pre>
+<div class="tip">The reset token is stored in Redis as <code>pwd_reset:{token} → user_id</code> with a 1-hour TTL. In production, this token would be emailed; in development (<code>APP_ENV=development</code>) it is returned directly in the response body so the frontend can use it without email infrastructure.</div>
+<div class="err">
+<strong>429 Too Many Requests</strong> — exceeded 3 requests per minute per IP.<br>
+The same <code>200</code> response is returned whether the email is found or not — this prevents attackers from enumerating registered emails.
+</div>
+
+<hr>
+
+<h2>POST /api/v1/auth/reset-password</h2>
+<h4>Request body</h4>
+<pre><code>{
+  "token":        "Bx7kP2qL...",   // token from forgot-password
+  "new_password": "NewPass456!"
+}</code></pre>
+<h4>Response 200</h4>
+<pre><code>{ "message": "Password has been reset successfully" }</code></pre>
+<p>On success the Redis key is deleted — the token is single-use.</p>
+<div class="err">
+<strong>400 Bad Request</strong> — token not found in Redis (expired or already used): <code>{"detail": "Invalid or expired reset token"}</code><br>
+<strong>400 Bad Request</strong> — user associated with the token has been deactivated.
+</div>
+
+<hr>
+
+<h2>Common Error Handling</h2>
+<table>
+  <tr><th>Status</th><th>Scenario</th><th>Response body</th></tr>
+  <tr><td>401</td><td>No <code>Authorization</code> header on a protected route</td><td><code>{"detail": "Not authenticated"}</code></td></tr>
+  <tr><td>401</td><td>Bearer token fails signature verification</td><td><code>{"detail": "Invalid token"}</code></td></tr>
+  <tr><td>401</td><td>Bearer token has expired</td><td><code>{"detail": "Token has expired"}</code></td></tr>
+  <tr><td>401</td><td>Bearer token JTI is in the Redis blacklist</td><td><code>{"detail": "Token has been revoked"}</code></td></tr>
+  <tr><td>422</td><td>Missing required field or wrong type</td><td><code>{"detail": [{"loc": ["body","email"], "msg": "field required", "type": "value_error.missing"}]}</code></td></tr>
+</table>
+
+</body>
+</html>

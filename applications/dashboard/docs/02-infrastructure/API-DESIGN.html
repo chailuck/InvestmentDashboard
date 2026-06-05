@@ -171,6 +171,46 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
   </tbody>
 </table>
 
+<h3>Analytics</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/analytics/search</code></td><td>Bearer</td><td>Lookup symbol — params: <code>q</code>, <code>asset_type</code> (SET|CRYPTO|DR|US|HK|OTHER)</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/analytics/chart</code></td><td>Bearer</td><td>OHLCV + RSI + Stochastic + VRVP — params: <code>symbol</code>, <code>asset_type</code>, <code>interval</code> (1h|4h|1d|1wk)</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/analytics/analysis-log</code></td><td>Bearer</td><td>Return HTML or MD analysis file for a symbol — param: <code>symbol</code></td></tr>
+    <tr><td>GET</td><td><code>/api/v1/analytics/fibo-chart</code></td><td>Bearer</td><td>Return Fibonacci chart image as Base64 data URI — param: <code>symbol</code></td></tr>
+    <tr><td>GET</td><td><code>/api/v1/analytics/note</code></td><td>Bearer</td><td>Get user's saved note for a symbol — param: <code>symbol</code></td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/analytics/note</code></td><td>Bearer</td><td>Upsert user's note — body: <code>{symbol, asset_type, note}</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Portfolio DB</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-db/mode</code></td><td>Bearer</td><td>Get current portfolio mode for this user (<code>excel</code> or <code>db</code>)</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/portfolio-db/mode</code></td><td>Bearer</td><td>Switch mode — query param: <code>?mode=excel</code> or <code>?mode=db</code></td></tr>
+    <tr><td>GET</td><td><code>/api/v1/portfolio-db/positions</code></td><td>Bearer</td><td>List DB positions — params: <code>status</code>, <code>from_date</code>, <code>to_date</code></td></tr>
+    <tr><td>POST</td><td><code>/api/v1/portfolio-db/positions</code></td><td>Bearer</td><td>Create a new position record (HTTP 201)</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/portfolio-db/positions/{id}</code></td><td>Bearer</td><td>Full replace of all position fields</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/portfolio-db/positions/{id}</code></td><td>Bearer</td><td>Hard delete (HTTP 204)</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/portfolio-db/positions/{id}/sell</code></td><td>Bearer</td><td>Full or partial sell — creates child record on partial sell</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/portfolio-db/positions/{id}/undo-sell</code></td><td>Bearer</td><td>Undo the most recent partial sell</td></tr>
+  </tbody>
+</table>
+
+<h3>DR Mappings</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/dr-mappings</code></td><td>Bearer</td><td>List all DR mappings ordered by DR symbol</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/dr-mappings/{dr_symbol}</code></td><td>Bearer</td><td>Get one mapping by DR symbol (uppercased)</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/dr-mappings</code></td><td>Admin</td><td>Create a new mapping (HTTP 201) — 409 if DR symbol already exists</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/dr-mappings/{id}</code></td><td>Admin</td><td>Update parent_symbol, parent_market, ratio, or is_active</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/dr-mappings/{id}</code></td><td>Admin</td><td>Hard delete (HTTP 204)</td></tr>
+  </tbody>
+</table>
+
 <h3>Documentation</h3>
 <table>
   <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
@@ -293,6 +333,258 @@ Authorization: Bearer eyJ...</code></pre>
   }
 }</code></pre>
 <p>A <code>null</code> value means Yahoo Finance returned no data for that symbol and date — no error is raised.</p>
+
+<h3>Create a user (admin)</h3>
+<pre><code>POST /api/v1/users
+Authorization: Bearer &lt;admin-token&gt;
+Content-Type: application/json
+
+{
+  "email":    "analyst@example.com",
+  "name":     "Alice",
+  "password": "SecurePass123",
+  "role":     "analyst"             // "admin" | "analyst" | "viewer"
+}</code></pre>
+<pre><code>{
+  "id":            "9f4c3a21-...",
+  "email":         "analyst@example.com",
+  "name":          "Alice",
+  "role":          "analyst",
+  "is_active":     true,
+  "created_at":    "2026-06-01T10:00:00+07:00",
+  "updated_at":    "2026-06-01T10:00:00+07:00",
+  "last_login_at": null
+}</code></pre>
+
+<h3>Create an action plan</h3>
+<pre><code>POST /api/v1/action-plans
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "name":      "2026-06-02",
+  "plan_type": "purchase"         // "purchase" | "portfolio"
+}</code></pre>
+<pre><code>{
+  "id":         "plan-uuid-...",
+  "name":       "2026-06-02",
+  "plan_type":  "purchase",
+  "created_at": "2026-06-02T08:00:00+07:00",
+  "updated_at": "2026-06-02T08:00:00+07:00"
+}</code></pre>
+
+<h3>Update an action plan with items</h3>
+<pre><code>PUT /api/v1/action-plans/plan-uuid-...
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "name": "2026-06-02",
+  "purchase_items": [
+    {
+      "sort_order":    0,
+      "stock":         "GULF",
+      "current_price": 64.0,
+      "size":          500,
+      "buy_price":     63.5,
+      "tp":            72.0,
+      "sl":            59.0,
+      "strategy":      "BREAK OUT",
+      "reason":        "Strong volume on weekly",
+      "triggered":     false
+    }
+  ]
+}</code></pre>
+
+<h3>DR mapping — create</h3>
+<pre><code>POST /api/v1/dr-mappings
+Authorization: Bearer &lt;admin-token&gt;
+Content-Type: application/json
+
+{
+  "dr_symbol":     "BTCUSD-DR",
+  "parent_symbol": "BTC-USD",
+  "parent_market": "CRYPTO",
+  "ratio":         1000,
+  "is_active":     true
+}</code></pre>
+<pre><code>{
+  "id":            1,
+  "dr_symbol":     "BTCUSD-DR",
+  "parent_symbol": "BTC-USD",
+  "parent_market": "CRYPTO",
+  "ratio":         1000.0,
+  "description":   "1 BTC-USD = 1000 BTCUSD-DR",   // auto-generated
+  "is_active":     true,
+  "created_at":    "2026-06-02T09:00:00+07:00",
+  "updated_at":    "2026-06-02T09:00:00+07:00"
+}</code></pre>
+
+<h3>DR mapping — list</h3>
+<pre><code>GET /api/v1/dr-mappings
+Authorization: Bearer eyJ...</code></pre>
+<pre><code>[
+  {
+    "id":            1,
+    "dr_symbol":     "BTCUSD-DR",
+    "parent_symbol": "BTC-USD",
+    "parent_market": "CRYPTO",
+    "ratio":         1000.0,
+    "description":   "1 BTC-USD = 1000 BTCUSD-DR",
+    "is_active":     true,
+    "created_at":    "2026-06-02T09:00:00+07:00",
+    "updated_at":    "2026-06-02T09:00:00+07:00"
+  },
+  {
+    "id":            2,
+    "dr_symbol":     "GOLUSD-DR",
+    "parent_symbol": "GC=F",
+    "parent_market": "COMMODITY",
+    "ratio":         10.0,
+    "description":   "1 GC=F = 10 GOLUSD-DR",
+    "is_active":     true,
+    "created_at":    "2026-06-02T09:05:00+07:00",
+    "updated_at":    "2026-06-02T09:05:00+07:00"
+  }
+]</code></pre>
+
+<h3>Analytics — symbol search</h3>
+<pre><code>GET /api/v1/analytics/search?q=GULF&asset_type=SET
+Authorization: Bearer eyJ...</code></pre>
+<pre><code>{
+  "symbol":     "GULF",
+  "ticker":     "GULF.BK",
+  "asset_type": "SET",
+  "exchange":   "SET",
+  "name":       "Gulf Energy Development Public Company Limited",
+  "price":      64.25,
+  "change_pct": 1.18,
+  "found":      true
+}</code></pre>
+
+<h3>Analytics — chart data (abbreviated)</h3>
+<pre><code>GET /api/v1/analytics/chart?symbol=GULF&asset_type=SET&interval=1d
+Authorization: Bearer eyJ...</code></pre>
+<pre><code>{
+  "symbol":   "GULF",
+  "ticker":   "GULF.BK",
+  "exchange": "SET",
+  "candles":  [
+    { "time": "2026-05-30", "open": 63.25, "high": 64.50, "low": 62.75, "close": 64.00 }
+  ],
+  "volume":   [
+    { "time": "2026-05-30", "value": 12500000, "color": "rgba(34,197,94,0.5)" }
+  ],
+  "rsi":      [{ "time": "2026-05-30", "value": 58.42 }],
+  "stoch_k":  [{ "time": "2026-05-30", "value": 72.34 }],
+  "stoch_d":  [{ "time": "2026-05-30", "value": 68.12 }],
+  "vrvp":     [
+    { "price_low": 55.00, "price_high": 55.46, "volume": 45200000 }
+  ]
+}</code></pre>
+
+<h3>Portfolio DB — create position</h3>
+<pre><code>POST /api/v1/portfolio-db/positions
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "symbol":        "KBANK",
+  "direction":     "LONG",
+  "entry_date":    "2026-05-15",
+  "entry_price":   145.0,
+  "position_size": 300,
+  "sl":            135.0,
+  "tp":            165.0
+}</code></pre>
+<pre><code>{
+  "id":           "7b3e1a2d-...",
+  "symbol":       "KBANK",
+  "direction":    "LONG",
+  "entryDate":    "2026-05-15",
+  "exitDate":     null,
+  "entryPrice":   145.0,
+  "exitPrice":    null,
+  "currentPrice": 148.5,
+  "positionSize": 300,
+  "netPnl":       1050.0,
+  "pnlPct":       2.41,
+  "sl":           135.0,
+  "tp":           165.0,
+  "status":       "active",
+  "remarks":      null,
+  "parentId":     null,
+  "hasChildren":  false,
+  "createdAt":    "2026-05-15T09:00:00+07:00",
+  "updatedAt":    "2026-05-15T09:00:00+07:00"
+}</code></pre>
+
+<h3>Portfolio DB — partial sell</h3>
+<pre><code>POST /api/v1/portfolio-db/positions/7b3e1a2d-.../sell
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "quantity":   100,
+  "exit_price": 155.0,
+  "exit_date":  "2026-06-02",
+  "remarks":    "Partial TP"
+}</code></pre>
+<pre><code>{
+  "type": "partial",
+  "remaining": {
+    "id":           "7b3e1a2d-...",
+    "symbol":       "KBANK",
+    "positionSize": 200,          // reduced from 300 to 200
+    "status":       "active",
+    "hasChildren":  true,
+    ...
+  },
+  "sold": {
+    "id":           "new-child-uuid-...",
+    "symbol":       "KBANK",
+    "positionSize": 100,
+    "exitPrice":    155.0,
+    "exitDate":     "2026-06-02",
+    "status":       "closed",
+    "parentId":     "7b3e1a2d-...",
+    ...
+  }
+}</code></pre>
+
+<h3>App configuration — get</h3>
+<pre><code>GET /api/v1/app-config
+Authorization: Bearer eyJ...</code></pre>
+<pre><code>{
+  "excel_source_path":   "/app/investment_data/Investment tracking.xlsx",
+  "excel_working_path":  "/app/uploads/portfolio.xlsx",
+  "analysis_log_path":   "/app/investment_agent/analysis_log",
+  "fibo_chart_path":     "/app/investment_agent/charts/Fibo"
+}</code></pre>
+
+<h3>App configuration — update</h3>
+<pre><code>PUT /api/v1/app-config
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "excel_source_path":  "/app/investment_data/MyPortfolio.xlsx",
+  "excel_working_path": "/app/uploads/working.xlsx"
+}
+// Only the provided keys are written; others are left unchanged</code></pre>
+<pre><code>{ "status": "ok", "config": { /* updated config object */ } }</code></pre>
+
+<h3>App configuration — test path</h3>
+<pre><code>POST /api/v1/app-config/test-path
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{ "path": "/app/investment_data/Investment tracking.xlsx" }</code></pre>
+<pre><code>// Path exists and is readable
+{ "exists": true, "readable": true, "path": "/app/investment_data/Investment tracking.xlsx" }
+
+// Path does not exist
+{ "exists": false, "readable": false, "path": "/app/investment_data/missing.xlsx" }</code></pre>
 
 <h2>4. CORS configuration</h2>
 <p>Since all browser requests go through the Next.js proxy (same-origin), the backend uses wildcard CORS. Wildcard with <code>allow_credentials=True</code> is rejected by browsers, so the implementation uses <code>allow_origin_regex</code> instead:</p>

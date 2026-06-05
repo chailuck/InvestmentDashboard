@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Portfolio DB — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — Portfolio DB</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Provide full CRUD for portfolio positions stored in PostgreSQL, as an alternative to the Excel-backed tracker. Supports full and partial sells (with parent-child record model), sell undo, and mode switching per user. Live prices are fetched from Yahoo Finance for active positions. The portfolio tracker endpoints (<code>/portfolio-tracker/*</code>) automatically route to these DB helpers when the user's <code>portfolio_mode</code> is <code>db</code>.
+</div>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-db/mode</code></td><td>Get current portfolio mode for this user</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/portfolio-db/mode</code></td><td>Switch between <code>excel</code> and <code>db</code> mode</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-db/positions</code></td><td>List positions with live P&amp;L</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/portfolio-db/positions</code></td><td>Create a new position (HTTP 201)</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/portfolio-db/positions/{id}</code></td><td>Full replace of all position fields</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/portfolio-db/positions/{id}</code></td><td>Hard delete (HTTP 204)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/portfolio-db/positions/{id}/sell</code></td><td>Full or partial sell (HTTP 201)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/portfolio-db/positions/{id}/undo-sell</code></td><td>Undo the most recent partial sell</td></tr>
+</table>
+
+<h4>Position response shape</h4>
+<pre><code>{
+  "id":           "7b3e1a2d-...",   // UUID string
+  "symbol":       "GULF",
+  "direction":    "LONG",           // "LONG" | "SHORT"
+  "entryDate":    "2026-03-15",
+  "exitDate":     null,             // null = active
+  "entryPrice":   57.50,
+  "exitPrice":    null,
+  "currentPrice": 64.00,           // live Yahoo Finance price (active) or exitPrice (closed)
+  "positionSize": 500,
+  "netPnl":       3250.0,
+  "pnlPct":       11.30,
+  "sl":           52.00,
+  "tp":           72.00,
+  "status":       "active",        // "active" | "closed"
+  "remarks":      null,
+  "parentId":     null,            // set on partial-sell child records
+  "hasChildren":  false,           // true if this position has been partially sold
+  "createdAt":    "2026-03-15T08:30:00+07:00",
+  "updatedAt":    "2026-06-01T14:00:00+07:00"
+}</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-db/mode</h2>
+<pre><code>GET /api/v1/portfolio-db/mode
+Authorization: Bearer eyJ...
+
+{ "mode": "excel" }     // or "db"</code></pre>
+
+<h2>PUT /api/v1/portfolio-db/mode</h2>
+<pre><code>PUT /api/v1/portfolio-db/mode?mode=db
+Authorization: Bearer eyJ...
+
+{ "mode": "db" }</code></pre>
+<div class="err"><strong>400 Bad Request</strong> — mode is not <code>excel</code> or <code>db</code>: <code>{"detail": "mode must be 'excel' or 'db'"}</code></div>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-db/positions</h2>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Default</th><th>Values</th></tr>
+  <tr><td><code>status</code></td><td><code>active</code></td><td><code>active</code> | <code>closed</code> | <code>all</code></td></tr>
+  <tr><td><code>from_date</code></td><td>—</td><td>ISO date — filters on <code>entry_date</code></td></tr>
+  <tr><td><code>to_date</code></td><td>—</td><td>ISO date — filters on <code>entry_date</code></td></tr>
+</table>
+
+<pre><code>{
+  "positions":   [ { /* Position shape */ }, ... ],
+  "total":       5,
+  "totalNetPnl": 12450.0
+}</code></pre>
+
+<hr>
+
+<h2>POST /api/v1/portfolio-db/positions</h2>
+<pre><code>// Request body (symbol is the only truly required field — all others optional)
+{
+  "symbol":        "KBANK",
+  "direction":     "LONG",        // default "LONG"
+  "entry_date":    "2026-05-15",
+  "entry_price":   145.0,
+  "position_size": 300,
+  "sl":            135.0,
+  "tp":            165.0,
+  "status":        "active",      // default "active"
+  "exit_date":     null,
+  "exit_price":    null,
+  "remarks":       "Entered on pullback to MA50"
+}
+
+// Response 201 — full position object</code></pre>
+
+<hr>
+
+<h2>PUT /api/v1/portfolio-db/positions/{id}</h2>
+<p>Full replace — same body as POST. All fields that are omitted default to <code>null</code>. Returns updated position object.</p>
+<div class="err"><strong>404 Not Found</strong> — position UUID not found or not owned by user.</div>
+
+<hr>
+
+<h2>DELETE /api/v1/portfolio-db/positions/{id}</h2>
+<p>Hard delete. Returns HTTP 204 No Content.</p>
+<div class="err"><strong>404 Not Found</strong> — position UUID not found or not owned by user.</div>
+
+<hr>
+
+<h2>POST /api/v1/portfolio-db/positions/{id}/sell</h2>
+
+<div class="obj">
+Sell all or part of an active position.
+<ul>
+<li><strong>Full sell</strong> (quantity = position_size): closes the position in-place.</li>
+<li><strong>Partial sell</strong> (quantity &lt; position_size): creates a new closed child record with <code>parent_id</code> pointing to the original, and reduces the parent's <code>position_size</code>.</li>
+</ul>
+</div>
+
+<h4>Request body</h4>
+<pre><code>{
+  "quantity":   200,              // shares to sell — must be > 0 and ≤ position_size
+  "exit_price": 68.50,
+  "exit_date":  "2026-06-02",
+  "remarks":    "TP hit"          // optional
+}</code></pre>
+
+<h4>Response 201 — full sell</h4>
+<pre><code>{
+  "type":     "full",
+  "position": { /* closed position object */ }
+}</code></pre>
+
+<h4>Response 201 — partial sell</h4>
+<pre><code>{
+  "type":      "partial",
+  "remaining": { /* active parent — positionSize reduced */ },
+  "sold":      { /* new closed child — parentId set */ }
+}</code></pre>
+
+<div class="err">
+<strong>400 Bad Request</strong> — position is not active: <code>{"detail": "Position is not active"}</code><br>
+<strong>400 Bad Request</strong> — quantity is zero or negative: <code>{"detail": "Sell quantity must be positive"}</code><br>
+<strong>400 Bad Request</strong> — selling more than owned: <code>{"detail": "Cannot sell more than 300 shares"}</code><br>
+<strong>404 Not Found</strong> — position not found.
+</div>
+
+<hr>
+
+<h2>POST /api/v1/portfolio-db/positions/{id}/undo-sell</h2>
+<div class="obj">Deletes the most recently created child sell record and restores the parent's position_size. Only the last partial sell can be undone — calling undo twice will undo the previous sell as well.</div>
+
+<pre><code>// Request: no body
+
+// Response 200
+{
+  "status":            "ok",
+  "restored_quantity": 200,
+  "position":          { /* updated parent position */ }
+}</code></pre>
+
+<div class="err"><strong>404 Not Found</strong> — no child sell record exists for this position: <code>{"detail": "No sell record found to undo"}</code></div>
+
+<hr>
+
+<h2>Common Error Handling</h2>
+<table>
+  <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
+  <tr><td>400</td><td>Invalid mode value, sell quantity error</td><td>Specific message per case</td></tr>
+  <tr><td>401</td><td>No or invalid Bearer token</td><td>"Not authenticated"</td></tr>
+  <tr><td>404</td><td>Position UUID not found or belongs to another user</td><td>"Position not found"</td></tr>
+  <tr><td>422</td><td>Missing required field or wrong type</td><td>Pydantic validation error array</td></tr>
+</table>
+
+</body>
+</html>

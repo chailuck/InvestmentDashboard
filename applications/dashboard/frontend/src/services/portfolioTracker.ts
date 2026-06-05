@@ -91,6 +91,7 @@ export const portfolioTrackerService = {
     destination: string
     source_size_kb: number
     destination_size_kb: number
+    synced_rows: number
     message: string
   }> {
     const { data } = await apiClient.post('/portfolio-tracker/refresh')
@@ -134,6 +135,19 @@ export const portfolioTrackerService = {
 
   async getRawData(): Promise<{ file: string; columns: string[]; rows: any[][]; total: number }> {
     const { data } = await apiClient.get('/portfolio-tracker/raw-data')
+    return data
+  },
+
+  async getRawSourceData(): Promise<{ file: string; columns: string[]; rows: any[][]; total: number }> {
+    const { data } = await apiClient.get('/portfolio-tracker/raw-source-data')
+    return data
+  },
+
+  async getSummary(params: { from_date?: string; to_date?: string }): Promise<{
+    accumulated_pnl: number; win_rate: number; avg_pnl: number
+    avg_pnl_pct: number; total_trades: number; wins: number; losses: number
+  }> {
+    const { data } = await apiClient.get('/portfolio-tracker/summary', { params })
     return data
   },
 

@@ -10,7 +10,7 @@ from typing import Annotated, Any, Optional
 import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user_id
@@ -305,6 +305,75 @@ async def get_period_transactions_db(user_id: str, db: AsyncSession,
             "remarks": r.remarks,
         })
     return result
+
+
+# ── Excel → DB sync ───────────────────────────────────────────────────────────────
+
+async def sync_excel_positions_to_db(user_id: str, db: AsyncSession) -> dict:
+    """Replace all portfolio_positions_db rows for the user with data from the working Excel copy.
+    Called automatically after each Excel refresh so the DB mirrors the source of truth.
+    """
+    import pandas as pd
+    from app.services.portfolio_excel import _ensure_working_copy
+
+    uid = uuid.UUID(user_id)
+    path = _ensure_working_copy()
+
+    df = pd.read_excel(str(path), sheet_name="Sheet1")
+    df["Entry Date"] = pd.to_datetime(df["Entry Date"], errors="coerce")
+    df["Exit Date"] = pd.to_datetime(df["Exit Date"], errors="coerce")
+    for col in ["Entry Price", "Exit Price", "Position Size", "SL", "TP"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    has_remark = "Remark" in df.columns
+    has_remark_sell = "Remark sell" in df.columns
+
+    # Full replace — delete all existing rows for this user then re-insert
+    await db.execute(sa_delete(PortfolioDbPosition).where(PortfolioDbPosition.user_id == uid))
+
+    count = 0
+    for _, row in df.iterrows():
+        symbol = str(row.get("Symbol", "")).strip().upper()
+        if not symbol or symbol == "NAN":
+            continue
+
+        direction_raw = str(row.get("Position (Long/Short)", "Long")).strip().lower()
+        direction = "SHORT" if "short" in direction_raw else "LONG"
+
+        entry_date = row["Entry Date"].date() if pd.notna(row["Entry Date"]) else None
+        exit_date = row["Exit Date"].date() if pd.notna(row["Exit Date"]) else None
+        entry_price = float(row["Entry Price"]) if pd.notna(row.get("Entry Price")) else None
+        exit_price = float(row["Exit Price"]) if pd.notna(row.get("Exit Price")) else None
+        position_size = int(row["Position Size"]) if pd.notna(row.get("Position Size")) else None
+        sl = float(row["SL"]) if pd.notna(row.get("SL")) else None
+        tp = float(row["TP"]) if pd.notna(row.get("TP")) else None
+
+        parts = []
+        if has_remark and pd.notna(row.get("Remark")):
+            parts.append(str(row["Remark"]).strip())
+        if has_remark_sell and pd.notna(row.get("Remark sell")):
+            parts.append(str(row["Remark sell"]).strip())
+        remarks = " | ".join(p for p in parts if p) or None
+
+        db.add(PortfolioDbPosition(
+            user_id=uid,
+            symbol=symbol,
+            direction=direction,
+            entry_date=entry_date,
+            entry_price=entry_price,
+            position_size=position_size,
+            sl=sl,
+            tp=tp,
+            status="closed" if exit_price is not None else "active",
+            exit_date=exit_date,
+            exit_price=exit_price,
+            remarks=remarks,
+        ))
+        count += 1
+
+    await db.commit()
+    return {"synced_rows": count}
 
 
 async def get_performance_by_stock_db(user_id: str, db: AsyncSession,

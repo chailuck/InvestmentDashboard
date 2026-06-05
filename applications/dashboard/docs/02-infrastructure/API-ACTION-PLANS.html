@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Action Plans — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — Action Plans</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Manage investment action plans — structured documents that capture planned trades or portfolio adjustments. Two plan types exist: <strong>purchase</strong> (stocks to buy, with buy-price, TP, SL, strategy) and <strong>portfolio</strong> (existing holdings with entry price and target adjustments). Plans are private to the creating user. The PUT endpoint performs a full replace of all items (delete-all + bulk insert) in a single transaction.
+</div>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/action-plans/suggest-name</code></td><td>Return a unique plan name for today</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/action-plans/stock-price</code></td><td>Live price for a SET symbol</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/action-plans</code></td><td>List plans (filtered by type, optional month window)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/action-plans</code></td><td>Create empty plan header (HTTP 201)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/action-plans/{id}</code></td><td>Get plan header + all items</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/action-plans/{id}</code></td><td>Replace name, notes, and/or all items</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/action-plans/{id}</code></td><td>Hard delete plan + items (HTTP 204)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/action-plans/{id}/duplicate</code></td><td>Deep-copy plan with a new name (HTTP 201)</td></tr>
+</table>
+
+<hr>
+
+<h2>GET /api/v1/action-plans/suggest-name</h2>
+<div class="obj">Returns a name that does not yet exist for this user + plan_type. Pattern: <code>YYYY-MM-DD</code>, then <code>YYYY-MM-DD-01</code>, <code>YYYY-MM-DD-02</code>, …</div>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Values</th></tr>
+  <tr><td><code>plan_type</code></td><td>Yes</td><td><code>purchase</code> | <code>portfolio</code></td></tr>
+</table>
+
+<h4>Sample</h4>
+<pre><code>GET /api/v1/action-plans/suggest-name?plan_type=purchase
+Authorization: Bearer eyJ...
+
+{ "name": "2026-06-03" }      // or "2026-06-03-01" if today already exists</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/action-plans/stock-price</h2>
+<div class="obj">Fetches the latest closing price for a Thai SET stock via Yahoo Finance (appends <code>.BK</code>). Used by the action plan editor to auto-fill the current price field.</div>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Example</th></tr>
+  <tr><td><code>symbol</code></td><td>Yes</td><td><code>BH</code>, <code>GULF</code>, <code>ADVANC</code></td></tr>
+</table>
+
+<h4>Sample</h4>
+<pre><code>GET /api/v1/action-plans/stock-price?symbol=GULF
+Authorization: Bearer eyJ...
+
+{ "symbol": "GULF", "ticker": "GULF.BK", "price": 64.25 }</code></pre>
+
+<div class="err"><strong>404 Not Found</strong> — Yahoo Finance returns no data for <code>{SYMBOL}.BK</code>: <code>{"detail": "Price not found for GULF"}</code></div>
+
+<hr>
+
+<h2>GET /api/v1/action-plans</h2>
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>plan_type</code></td><td>Yes</td><td>—</td><td><code>purchase</code> | <code>portfolio</code></td></tr>
+  <tr><td><code>months</code></td><td>No</td><td>all</td><td><code>3</code> | <code>6</code> | <code>12</code> — look-back window from now</td></tr>
+</table>
+
+<h4>Response 200 — list item shape</h4>
+<pre><code>[
+  {
+    "id":         "plan-uuid-...",
+    "name":       "2026-06-03",
+    "plan_type":  "purchase",
+    "created_at": "2026-06-03T08:00:00+07:00",
+    "updated_at": "2026-06-03T09:30:00+07:00",
+    "symbols":    "GULF, KBANK, ADVANC, BH"   // first 7 symbols, comma-separated preview
+  }
+]</code></pre>
+
+<hr>
+
+<h2>POST /api/v1/action-plans</h2>
+<h4>Request body</h4>
+<pre><code>{
+  "name":      "2026-06-03",
+  "plan_type": "purchase"     // "purchase" | "portfolio"
+}</code></pre>
+<h4>Response 201</h4>
+<pre><code>{
+  "id":        "plan-uuid-...",
+  "name":      "2026-06-03",
+  "plan_type": "purchase"
+}</code></pre>
+<div class="err"><strong>400 Bad Request</strong> — <code>plan_type</code> is not <code>purchase</code> or <code>portfolio</code>.</div>
+
+<hr>
+
+<h2>GET /api/v1/action-plans/{id}</h2>
+<h4>Response 200 — full plan detail</h4>
+<pre><code>{
+  "id":           "plan-uuid-...",
+  "name":         "2026-06-03",
+  "plan_type":    "purchase",
+  "notes":        "Market looks bullish above SET50 MA200.",
+  "set_analysis": "SET50 bouncing from support at 860.",
+  "ai_recommend": "Focus on high-volume breakouts.",
+  "created_at":   "2026-06-03T08:00:00+07:00",
+  "updated_at":   "2026-06-03T09:30:00+07:00",
+
+  "purchase_items": [
+    {
+      "id":            "item-uuid-...",
+      "sort_order":    0,
+      "stock":         "GULF",
+      "current_price": 64.25,
+      "size":          500,
+      "buy_price":     63.50,
+      "tp":            72.00,
+      "sl":            59.00,
+      "strategy":      "BREAK OUT",
+      "reason":        "Weekly breakout above 63 resistance",
+      "triggered":     false
+    }
+  ],
+
+  "portfolio_items": []   // empty for purchase-type plans
+}</code></pre>
+
+<h4>Portfolio item shape (for portfolio-type plans)</h4>
+<pre><code>{
+  "id":            "item-uuid-...",
+  "sort_order":    0,
+  "symbol":        "KBANK",
+  "current_price": 148.50,
+  "size":          300,
+  "entry_price":   145.00,
+  "tp":            165.00,
+  "sl":            135.00,
+  "order_size":    100       // additional shares to add
+}</code></pre>
+
+<div class="err"><strong>404 Not Found</strong> — plan UUID not found or belongs to another user.</div>
+
+<hr>
+
+<h2>PUT /api/v1/action-plans/{id}</h2>
+<div class="obj">Full replace: all fields are optional. If <code>purchase_items</code> is provided, ALL existing items are deleted and replaced with the new list. Items are re-indexed by their position in the array (<code>sort_order = 0, 1, 2, …</code>). Omit the <code>purchase_items</code> key entirely to leave items unchanged.</div>
+
+<h4>Request body</h4>
+<pre><code>{
+  "name":       "2026-06-03",           // optional
+  "notes":      "Updated analysis.",    // optional; null clears the field
+  "set_analysis": null,
+  "ai_recommend": null,
+
+  "purchase_items": [                   // omit key to keep existing items
+    {
+      "sort_order":    0,               // ignored — position in array is used
+      "stock":         "GULF",
+      "current_price": 64.25,
+      "size":          500,
+      "buy_price":     63.50,
+      "tp":            72.00,
+      "sl":            59.00,
+      "strategy":      "BREAK OUT",
+      "reason":        "Weekly breakout",
+      "triggered":     false
+    }
+  ]
+}</code></pre>
+
+<h4>Response 200</h4>
+<pre><code>{ "status": "ok" }</code></pre>
+
+<div class="tip">The <code>id</code> field in request items is ignored — it is provided by the server. Each PUT generates new item UUIDs for all items in the list.</div>
+<div class="err"><strong>404 Not Found</strong> — plan not found or not owned by the requesting user.</div>
+
+<hr>
+
+<h2>DELETE /api/v1/action-plans/{id}</h2>
+<p>Hard-deletes the plan and all its items (cascade). Returns HTTP 204 No Content.</p>
+<div class="err"><strong>404 Not Found</strong> — plan not found or not owned by requesting user.</div>
+
+<hr>
+
+<h2>POST /api/v1/action-plans/{id}/duplicate</h2>
+<div class="obj">Creates a deep copy of a plan — header + all items — under a new name. The duplicate belongs to the same user. Useful for using last week's plan as a template for this week.</div>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Example</th></tr>
+  <tr><td><code>new_name</code></td><td>Yes</td><td><code>2026-06-10</code></td></tr>
+</table>
+
+<h4>Response 201</h4>
+<pre><code>{
+  "id":        "new-plan-uuid-...",
+  "name":      "2026-06-10",
+  "plan_type": "purchase"
+}</code></pre>
+<div class="err"><strong>404 Not Found</strong> — source plan not found.</div>
+
+<hr>
+
+<h2>Common Error Handling</h2>
+<table>
+  <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
+  <tr><td>401</td><td>No or invalid Bearer token</td><td>"Not authenticated"</td></tr>
+  <tr><td>404</td><td>Plan UUID not found or owned by a different user</td><td>"Plan not found"</td></tr>
+  <tr><td>400</td><td>Invalid <code>plan_type</code> value</td><td>"plan_type must be 'purchase' or 'portfolio'"</td></tr>
+  <tr><td>422</td><td>Missing required field or invalid type</td><td>Pydantic validation error array</td></tr>
+</table>
+
+</body>
+</html>

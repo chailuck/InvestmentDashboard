@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Portfolio Tracker — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — Portfolio Tracker</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Serve portfolio positions, P&amp;L calculations, and market index data from either the Excel-backed service or the PostgreSQL DB service, depending on the user's <code>portfolio_mode</code> setting (<code>excel</code> or <code>db</code>). The response shape is identical regardless of mode. Live prices are fetched from Yahoo Finance with a 5-minute in-memory cache. All endpoints require Bearer authentication.
+</div>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/portfolio-tracker/refresh</code></td><td>Copy source Excel to working copy and bust cache</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-tracker/raw-data</code></td><td>All rows from the data source as-is (no P&amp;L)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-tracker/positions</code></td><td>Filtered positions with live P&amp;L</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-tracker/performance</code></td><td>Period P&amp;L chart series (daily/weekly/monthly)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-tracker/performance/by-date</code></td><td>P&amp;L grouped by period bucket with win/loss counts</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-tracker/performance/transactions</code></td><td>Individual closed trades for a period bucket (drill-down)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-tracker/performance/by-stock</code></td><td>P&amp;L aggregated per ticker symbol</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-tracker/market/set-indices</code></td><td>Thai SET market index prices</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/portfolio-tracker/market/global-indices</code></td><td>Global index prices (S&amp;P 500, NASDAQ, BTC, Gold)</td></tr>
+</table>
+
+<hr>
+
+<h2>POST /api/v1/portfolio-tracker/refresh</h2>
+
+<div class="obj">Copies the read-only source Excel file to the writable working path, then writes a <code>.cache_bust</code> timestamp file so all Uvicorn workers drop their in-memory price caches. In DB mode, returns immediately with a message — no file is involved.</div>
+
+<h4>Response 200 — Excel mode</h4>
+<pre><code>{
+  "status":           "ok",
+  "source":           "/app/investment_data/Investment tracking.xlsx",
+  "destination":      "/app/uploads/portfolio.xlsx",
+  "source_size_kb":   142.3,
+  "destination_size_kb": 142.3,
+  "message":          "File copied and cache cleared successfully."
+}</code></pre>
+
+<h4>Response 200 — DB mode</h4>
+<pre><code>{
+  "status":  "ok",
+  "message": "Database mode — no file to refresh. Data is managed directly in the database."
+}</code></pre>
+
+<div class="err">
+<strong>503 Service Unavailable</strong> — source file does not exist at the configured path: <code>{"detail": "Source file not found: /app/investment_data/..."}</code>
+</div>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-tracker/positions</h2>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Type</th><th>Default</th><th>Values</th></tr>
+  <tr><td><code>status</code></td><td>string</td><td><code>active</code></td><td><code>active</code> | <code>closed</code> | <code>all</code></td></tr>
+  <tr><td><code>from_date</code></td><td>ISO date</td><td>—</td><td>Filter by entry date (Excel) or entry_date (DB)</td></tr>
+  <tr><td><code>to_date</code></td><td>ISO date</td><td>—</td><td>Filter by entry/exit date</td></tr>
+</table>
+
+<h4>Response 200</h4>
+<pre><code>{
+  "positions": [
+    {
+      "id":           1,              // row index (Excel) or UUID string (DB mode)
+      "symbol":       "GULF",
+      "direction":    "Long",         // "Long" or "Short" (Excel), "LONG"/"SHORT" (DB)
+      "entryDate":    "2026-02-10",
+      "exitDate":     null,           // null = active position
+      "entryPrice":   57.50,
+      "currentPrice": 64.00,         // live Yahoo Finance price (active) or exitPrice (closed)
+      "exitPrice":    null,
+      "positionSize": 500,
+      "netPnl":       3250.0,        // (currentPrice - entryPrice) × size × direction_multiplier
+      "pnlPct":       11.30,
+      "sl":           52.00,
+      "tp":           72.00,
+      "status":       "active",
+      "remarks":      null
+    }
+  ],
+  "total":       1,
+  "totalNetPnl": 3250.0
+}</code></pre>
+
+<div class="err">
+<strong>503 Service Unavailable</strong> — Excel file missing or unreadable (Excel mode only).<br>
+<strong>500 Internal Server Error</strong> — unexpected error in the service layer; check backend logs.
+</div>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-tracker/performance</h2>
+
+<div class="obj">Returns a time-series of realized (closed) P&amp;L grouped by period. Used to draw the cumulative P&amp;L line chart on the Portfolio page. Only closed positions are included.</div>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Default</th><th>Values</th></tr>
+  <tr><td><code>period</code></td><td><code>daily</code></td><td><code>daily</code> | <code>weekly</code> | <code>monthly</code></td></tr>
+  <tr><td><code>from_date</code></td><td>30 days ago</td><td>ISO date</td></tr>
+  <tr><td><code>to_date</code></td><td>today</td><td>ISO date</td></tr>
+</table>
+
+<h4>Response 200</h4>
+<pre><code>[
+  {
+    "date":          "2026-05",       // sort key: "YYYY-MM-DD" (daily), "YYYY-MM-DD" Mon (weekly), "YYYY-MM" (monthly)
+    "label":         "May 2026",      // human-readable: "03/06/2026" | "02-06 Jun" | "May 2026"
+    "dailyPnl":      8500.0,          // net P&L for this bucket
+    "cumulativePnl": 24300.0          // running total from earliest to this bucket
+  },
+  {
+    "date":          "2026-06",
+    "label":         "Jun 2026",
+    "dailyPnl":      3250.0,
+    "cumulativePnl": 27550.0
+  }
+]</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-tracker/performance/by-date</h2>
+
+<div class="obj">Returns a table of P&amp;L bucketed by period, with win/loss trade counts. Used for the performance table view with drill-down capability.</div>
+
+<h4>Query parameters</h4>
+<p>Same as <code>/performance</code>: <code>period</code>, <code>from_date</code>, <code>to_date</code>.</p>
+
+<h4>Response 200</h4>
+<pre><code>[
+  {
+    "period":         "2026-05",
+    "label":          "May 2026",
+    "net":            8500.0,
+    "accumulatedPnl": 24300.0,
+    "wins":           4,
+    "losses":         2,
+    "total":          6,
+    "winRate":        66.7
+  }
+]</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-tracker/performance/transactions</h2>
+
+<div class="obj">Returns individual closed trade records for one period bucket — the drill-down detail when a user clicks a row in the performance table.</div>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Example</th></tr>
+  <tr><td><code>period_key</code></td><td>Yes</td><td><code>2026-05</code> (monthly), <code>2026-05-12</code> (daily), <code>2026-05-11</code> (weekly Mon)</td></tr>
+  <tr><td><code>period</code></td><td>Yes</td><td><code>daily</code> | <code>weekly</code> | <code>monthly</code></td></tr>
+  <tr><td><code>from_date</code></td><td>No</td><td>ISO date</td></tr>
+  <tr><td><code>to_date</code></td><td>No</td><td>ISO date</td></tr>
+</table>
+
+<h4>Response 200</h4>
+<pre><code>[
+  {
+    "symbol":       "ADVANC",
+    "direction":    "Long",
+    "entryDate":    "2026-04-20",
+    "exitDate":     "2026-05-08",
+    "entryPrice":   215.0,
+    "exitPrice":    228.0,
+    "positionSize": 200,
+    "netPnl":       2600.0,
+    "pnlPct":       6.05,
+    "sl":           200.0,
+    "tp":           240.0,
+    "remarks":      "TP hit"
+  }
+]</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-tracker/performance/by-stock</h2>
+
+<div class="obj">Aggregates all positions (open + closed) by symbol. Used for the "by stock" breakdown table. Includes open positions using live prices for current value.</div>
+
+<h4>Response 200</h4>
+<pre><code>[
+  {
+    "symbol":       "GULF",
+    "net":          11750.0,      // total realized + unrealized P&L
+    "investment":   57500.0,      // sum of entryPrice × positionSize
+    "currentValue": 64000.0,
+    "pnlPct":       20.43,
+    "wins":         3,
+    "losses":       1,
+    "total":        4,
+    "winRate":      75.0
+  }
+]</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-tracker/market/set-indices</h2>
+
+<div class="obj">Fetches live Thai SET market index prices from Yahoo Finance. Note: the Thai SET Composite (<code>^SETI</code>) is unavailable on Yahoo Finance; SET50, SET100, and sSET are used as proxies. Results are cached for 5 minutes.</div>
+
+<h4>Response 200</h4>
+<pre><code>[
+  { "name": "SET50",  "value": 874.32, "change": -3.21, "changePct": -0.37 },
+  { "name": "SET100", "value": 1923.55, "change": -5.10, "changePct": -0.26 },
+  { "name": "sSET",   "value": 734.18, "change": 1.05,  "changePct": 0.14  }
+]</code></pre>
+<p>Any field may be <code>null</code> if Yahoo Finance returns no data for that index.</p>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-tracker/market/global-indices</h2>
+
+<div class="obj">Fetches live global market prices for benchmark comparison. Results are cached for 5 minutes.</div>
+
+<h4>Response 200</h4>
+<pre><code>[
+  { "name": "S&P 500", "value": 5248.92, "change": 12.45,  "changePct": 0.24  },
+  { "name": "NASDAQ",  "value": 16432.10, "change": -45.30, "changePct": -0.27 },
+  { "name": "DOW",     "value": 38912.44, "change": 105.21, "changePct": 0.27  },
+  { "name": "BTC",     "value": 67420.00, "change": 830.50, "changePct": 1.25  },
+  { "name": "XAUUSD",  "value": 2345.60,  "change": -8.40,  "changePct": -0.36 }
+]</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/portfolio-tracker/raw-data</h2>
+
+<div class="obj">Returns all rows from the data source without any P&amp;L calculation. In Excel mode this is the raw spreadsheet content. Used by the "Raw Data" tab in the Portfolio page for debugging data quality.</div>
+
+<h4>Response 200</h4>
+<pre><code>{
+  "file":    "/app/uploads/portfolio.xlsx",   // or "database" in DB mode
+  "columns": ["Symbol", "Entry Date", "Entry Price", "Exit Price", "Position Size", "..."],
+  "rows":    [
+    ["GULF", "2026-02-10", 57.5, null, 500, "..."],
+    ["ADVANC", "2026-04-20", 215.0, 228.0, 200, "..."]
+  ],
+  "total":   2
+}</code></pre>
+
+<hr>
+
+<h2>Common Error Handling</h2>
+<table>
+  <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
+  <tr><td>401</td><td>Missing or invalid Bearer token</td><td>"Not authenticated"</td></tr>
+  <tr><td>503</td><td>Excel file not found (Excel mode)</td><td>"Source file not found: /app/..."</td></tr>
+  <tr><td>500</td><td>Pandas parsing error, yfinance timeout, or unexpected exception</td><td>Exception message — check backend logs for stack trace</td></tr>
+</table>
+<div class="tip">Yahoo Finance price data for Thai SET stocks is typically 15–20 minutes delayed during market hours. <code>null</code> price values indicate Yahoo Finance returned no data — the position's entry price is used as a fallback for open positions.</div>
+
+</body>
+</html>

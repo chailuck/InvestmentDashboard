@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portfolio DB Mode — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 1000px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+
+<h1>Portfolio DB Mode — Functional &amp; Technical Spec</h1>
+
+<p>Portfolio DB mode is an alternative to the Excel-backed portfolio tracker. Instead of reading position data from a spreadsheet file, positions are stored directly in PostgreSQL and managed via a full CRUD UI. The two modes share the same portfolio page, performance charts, and API response shapes — only the data source differs.</p>
+
+<hr>
+
+<h2>1. Mode Overview</h2>
+
+<table>
+  <tr><th>Aspect</th><th>Excel mode (default)</th><th>DB mode</th></tr>
+  <tr><td>Data source</td><td><code>Investment tracking.xlsx</code></td><td><code>portfolio_db_positions</code> table in PostgreSQL</td></tr>
+  <tr><td>Edit positions</td><td>Edit the Excel file directly</td><td>CRUD UI in Settings → Portfolio DB</td></tr>
+  <tr><td>Live prices</td><td>Yahoo Finance (.BK suffix)</td><td>Yahoo Finance (.BK suffix)</td></tr>
+  <tr><td>Partial sells</td><td>Separate rows in Excel</td><td>Parent/child record model</td></tr>
+  <tr><td>Switching mode</td><td colspan="2">Settings → Portfolio DB → toggle "Excel mode / DB mode"</td></tr>
+  <tr><td>Per-user</td><td colspan="2">Each user has their own mode setting stored on their <code>users</code> row</td></tr>
+</table>
+
+<div class="callout tip">Mode switching is instant and non-destructive. Switching from DB back to Excel does not delete any DB positions. Switching from Excel to DB does not import your Excel data automatically — positions must be entered via the UI or API.</div>
+
+<hr>
+
+<h2>2. Settings → Portfolio DB Page</h2>
+
+<p>Route: <code>/settings/portfolio-db</code></p>
+
+<h3>2.1 Mode toggle</h3>
+<p>A banner at the top of the page shows the current mode (<strong>Excel</strong> or <strong>Database</strong>) and a toggle button to switch. The toggle calls <code>PUT /portfolio-db/mode?mode=db</code> or <code>?mode=excel</code>. The portfolio tracker page immediately uses the new mode on the next data fetch.</p>
+
+<h3>2.2 Position list</h3>
+<p>A filterable table of all positions for the current user. Columns:</p>
+<table>
+  <tr><th>Column</th><th>Notes</th></tr>
+  <tr><td>Symbol</td><td>SET ticker, uppercase, monospace</td></tr>
+  <tr><td>Direction</td><td>LONG or SHORT badge</td></tr>
+  <tr><td>Entry date</td><td>Formatted DD MMM YY</td></tr>
+  <tr><td>Entry price</td><td>Thai locale number format</td></tr>
+  <tr><td>Current / Exit price</td><td>Live price for active; exit price for closed</td></tr>
+  <tr><td>Size</td><td>Number of shares</td></tr>
+  <tr><td>Net P&amp;L</td><td>Coloured green/red; shown in THB</td></tr>
+  <tr><td>P&amp;L %</td><td>Coloured green/red</td></tr>
+  <tr><td>Status</td><td>Badge: Active (green) or Closed (grey)</td></tr>
+  <tr><td>Actions</td><td>Edit, Sell, Undo-sell (if has children), Delete buttons</td></tr>
+</table>
+
+<h3>2.3 Add position</h3>
+<p>A modal form with fields: Symbol, Direction (LONG/SHORT), Status (active/closed), Entry Date (defaults to today), Entry Price, Position Size, SL, TP, Exit Date, Exit Price, Remarks. All numeric fields are optional — a position can be created with only a symbol.</p>
+
+<h3>2.4 Edit position</h3>
+<p>Same modal as Add, pre-filled with the current values. Submits a <code>PUT</code> request to replace all fields.</p>
+
+<h3>2.5 Sell a position (full or partial)</h3>
+<p>A "Sell" button opens a dedicated Sell modal with fields: Quantity (shares to sell), Exit Price, Exit Date (defaults to today), Remarks.</p>
+
+<ul>
+  <li><strong>Full sell</strong> (quantity = position size): the position's <code>status</code> is set to <code>closed</code> and <code>exit_price</code> / <code>exit_date</code> are recorded in-place.</li>
+  <li><strong>Partial sell</strong> (quantity &lt; position size): a new <em>child</em> position record is created (status=closed, with exit fields), and the parent's <code>position_size</code> is reduced by the sold quantity. The parent remains active.</li>
+</ul>
+
+<h3>2.6 Undo the last partial sell</h3>
+<p>When a position has child records (i.e., has been partially sold), an "Undo" button appears. It deletes the most recently created child record and restores the parent's position size. Only the <strong>last</strong> partial sell can be undone.</p>
+
+<h3>2.7 Delete position</h3>
+<p>Hard-deletes the position. If the position has children, the children are also deleted (cascade). A confirmation dialog is shown.</p>
+
+<hr>
+
+<h2>3. Database Schema</h2>
+
+<p>Table: <code>portfolio_db_positions</code></p>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Notes</th></tr>
+  <tr><td><code>id</code></td><td>UUID</td><td>No</td><td><code>gen_random_uuid()</code></td><td>Primary key</td></tr>
+  <tr><td><code>user_id</code></td><td>UUID</td><td>No</td><td>—</td><td>FK → <code>users.id</code> CASCADE DELETE</td></tr>
+  <tr><td><code>symbol</code></td><td>VARCHAR(20)</td><td>No</td><td>—</td><td>Stored uppercase, e.g. <code>GULF</code></td></tr>
+  <tr><td><code>direction</code></td><td>VARCHAR(5)</td><td>No</td><td><code>LONG</code></td><td><code>LONG</code> or <code>SHORT</code></td></tr>
+  <tr><td><code>entry_date</code></td><td>DATE</td><td>Yes</td><td>—</td><td></td></tr>
+  <tr><td><code>entry_price</code></td><td>NUMERIC(12,4)</td><td>Yes</td><td>—</td><td></td></tr>
+  <tr><td><code>position_size</code></td><td>INTEGER</td><td>Yes</td><td>—</td><td>Number of shares</td></tr>
+  <tr><td><code>sl</code></td><td>NUMERIC(12,4)</td><td>Yes</td><td>—</td><td>Stop loss</td></tr>
+  <tr><td><code>tp</code></td><td>NUMERIC(12,4)</td><td>Yes</td><td>—</td><td>Take profit</td></tr>
+  <tr><td><code>status</code></td><td>VARCHAR(10)</td><td>No</td><td><code>active</code></td><td><code>active</code> or <code>closed</code></td></tr>
+  <tr><td><code>exit_date</code></td><td>DATE</td><td>Yes</td><td>—</td><td>Null = still open</td></tr>
+  <tr><td><code>exit_price</code></td><td>NUMERIC(12,4)</td><td>Yes</td><td>—</td><td>Null = still open</td></tr>
+  <tr><td><code>remarks</code></td><td>TEXT</td><td>Yes</td><td>—</td><td></td></tr>
+  <tr><td><code>parent_id</code></td><td>UUID</td><td>Yes</td><td>—</td><td>FK → <code>portfolio_db_positions.id</code>; set on partial-sell children</td></tr>
+  <tr><td><code>created_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td><code>now()</code></td><td></td></tr>
+  <tr><td><code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td><code>now()</code></td><td>Auto-updates on write</td></tr>
+</table>
+
+<hr>
+
+<h2>4. P&amp;L Calculation (DB mode)</h2>
+
+<pre><code># Active position:   current_price fetched from Yahoo Finance (.BK)
+# Closed position:   exit_price used as current_price
+
+diff = (current_price - entry_price)      # for LONG
+diff = (entry_price  - current_price)      # for SHORT
+
+net_pnl  = round(diff * position_size, 2)
+pnl_pct  = round((diff / entry_price) * 100, 2)   # 0 if entry_price is 0</code></pre>
+
+<p>Live prices for active positions are fetched in parallel using <code>asyncio.gather</code> across all unique symbols. Only the <code>.BK</code> suffix is tried (no fallback to bare ticker) to avoid matching US-listed symbols with the same name.</p>
+
+<hr>
+
+<h2>5. API Endpoints — Portfolio DB</h2>
+
+<p>All endpoints require <code>Authorization: Bearer &lt;token&gt;</code>. Base path: <code>/api/v1/portfolio-db/</code></p>
+
+<h3>5.1 GET /portfolio-db/mode</h3>
+<pre><code>// Response
+{ "mode": "excel" }    // or "db"</code></pre>
+
+<h3>5.2 PUT /portfolio-db/mode</h3>
+<pre><code>// Query param: ?mode=db   OR   ?mode=excel
+PUT /api/v1/portfolio-db/mode?mode=db
+
+// Response
+{ "mode": "db" }</code></pre>
+
+<h3>5.3 GET /portfolio-db/positions</h3>
+<p>Query params: <code>status</code> (<code>active</code> | <code>closed</code> | <code>all</code>, default <code>active</code>), <code>from_date</code>, <code>to_date</code> (ISO 8601 dates, filter on <code>entry_date</code>).</p>
+<pre><code>// Response
+{
+  "positions": [
+    {
+      "id":           "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "symbol":       "GULF",
+      "direction":    "LONG",
+      "entryDate":    "2026-03-15",
+      "exitDate":     null,
+      "entryPrice":   57.50,
+      "exitPrice":    null,
+      "currentPrice": 64.00,        // live price for active; exit_price for closed
+      "positionSize": 500,
+      "netPnl":       3250.0,
+      "pnlPct":       11.30,
+      "sl":           52.00,
+      "tp":           72.00,
+      "status":       "active",
+      "remarks":      null,
+      "parentId":     null,          // non-null for partial-sell child records
+      "hasChildren":  false,         // true if this position has been partially sold
+      "createdAt":    "2026-03-15T08:30:00+07:00",
+      "updatedAt":    "2026-06-01T14:00:00+07:00"
+    }
+  ],
+  "total":      1,
+  "totalNetPnl": 3250.0
+}</code></pre>
+
+<h3>5.4 POST /portfolio-db/positions</h3>
+<p>Returns HTTP 201 with the created position.</p>
+<pre><code>// Request body — all fields except symbol are optional
+{
+  "symbol":        "BH",
+  "direction":     "LONG",           // "LONG" | "SHORT" — default "LONG"
+  "entry_date":    "2026-05-20",     // ISO date
+  "entry_price":   215.00,
+  "position_size": 200,
+  "sl":            195.00,
+  "tp":            240.00,
+  "status":        "active",         // "active" | "closed" — default "active"
+  "exit_date":     null,
+  "exit_price":    null,
+  "remarks":       "Entered on pullback"
+}
+
+// Response — same shape as a position object above</code></pre>
+
+<h3>5.5 PUT /portfolio-db/positions/{pos_id}</h3>
+<p>Full replace (same body as POST). Returns the updated position object.</p>
+
+<h3>5.6 DELETE /portfolio-db/positions/{pos_id}</h3>
+<p>Returns HTTP 204 No Content. Raises 404 if not found or not owned by the current user.</p>
+
+<h3>5.7 POST /portfolio-db/positions/{pos_id}/sell</h3>
+<p>Sell all or part of an active position. Returns HTTP 201.</p>
+<pre><code>// Request body
+{
+  "quantity":   200,             // shares to sell (must be ≤ position_size)
+  "exit_price": 68.50,
+  "exit_date":  "2026-06-02",
+  "remarks":    "TP hit"          // optional
+}
+
+// Response — FULL sell (quantity == position_size)
+{
+  "type":     "full",
+  "position": { /* closed position object */ }
+}
+
+// Response — PARTIAL sell (quantity < position_size)
+{
+  "type":      "partial",
+  "remaining": { /* updated active parent position */ },
+  "sold":      { /* new closed child position with parent_id set */ }
+}</code></pre>
+
+<p>Error cases:</p>
+<ul>
+  <li><code>400</code> if position <code>status != "active"</code></li>
+  <li><code>400</code> if <code>quantity &lt;= 0</code></li>
+  <li><code>400</code> if <code>quantity > position_size</code></li>
+</ul>
+
+<h3>5.8 POST /portfolio-db/positions/{pos_id}/undo-sell</h3>
+<p>Reverts the most recent partial sell linked to this position.</p>
+<pre><code>// Request: no body needed
+
+// Response
+{
+  "status":            "ok",
+  "restored_quantity": 200,
+  "position":          { /* updated parent position with size restored */ }
+}
+
+// Error: 404 if no child sell record found</code></pre>
+
+<hr>
+
+<h2>6. Performance Endpoints (DB mode)</h2>
+
+<p>These are the same endpoints as the portfolio tracker — the backend routes requests to either Excel helpers or DB helpers based on the user's <code>portfolio_mode</code>. Response shapes are identical in both modes.</p>
+
+<table>
+  <tr><th>Endpoint</th><th>Response shape</th></tr>
+  <tr><td><code>GET /portfolio-tracker/performance?period=monthly</code></td><td><code>[{date, label, dailyPnl, cumulativePnl}]</code> — closed trades only</td></tr>
+  <tr><td><code>GET /portfolio-tracker/performance/by-date?period=monthly</code></td><td><code>[{period, label, net, wins, losses, total, winRate, accumulatedPnl}]</code></td></tr>
+  <tr><td><code>GET /portfolio-tracker/performance/transactions?period_key=2026-05&period=monthly</code></td><td><code>[{symbol, direction, entryDate, exitDate, entryPrice, exitPrice, positionSize, netPnl, pnlPct, sl, tp, remarks}]</code></td></tr>
+  <tr><td><code>GET /portfolio-tracker/performance/by-stock</code></td><td><code>[{symbol, net, investment, currentValue, pnlPct, wins, losses, total, winRate}]</code></td></tr>
+</table>
+
+<div class="callout">In DB mode, performance data is derived from <strong>closed positions only</strong> (where <code>status = "closed"</code>). Active positions are included in the positions list and in real-time P&amp;L but not in historical performance charts.</div>
+
+<hr>
+
+<h2>7. Mode-Routing Logic</h2>
+
+<p>Every portfolio tracker endpoint reads the user's <code>portfolio_mode</code> from the database before deciding which data source to query:</p>
+
+<pre><code># portfolio_tracker.py — every endpoint calls this helper
+async def _mode(user_id: str, db: AsyncSession) -> str:
+    from app.api.v1.endpoints.portfolio_db import get_user_portfolio_mode
+    return await get_user_portfolio_mode(user_id, db)
+
+# get_user_portfolio_mode reads users.portfolio_mode — defaults to "excel" if null
+async def get_user_portfolio_mode(user_id: str, db: AsyncSession) -> str:
+    row = await db.execute(select(User.portfolio_mode).where(User.id == uid))
+    mode = row.scalar_one_or_none()
+    return mode or "excel"</code></pre>
+
+<p>The routing pattern in each endpoint:</p>
+<pre><code>if await _mode(user_id, db) == "db":
+    return await list_positions_db(user_id, db, from_date, to_date, status)
+
+# else: Excel path
+from app.services.portfolio_excel import get_positions
+positions = get_positions(from_date=from_date, to_date=to_date, status=status)</code></pre>
+
+</body>
+</html>

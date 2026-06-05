@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — AI Copilot — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — AI Copilot</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Stream an agentic AI conversation powered by the Anthropic API (Claude). The copilot has access to live portfolio data, market prices, knowledge-base documents, and analysis scripts via five tools. Responses stream word-by-word as Server-Sent Events (SSE). Each session maintains up to 20 messages of conversation history stored in the backend process memory. Requires <code>ANTHROPIC_API_KEY</code> to be configured.
+</div>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Auth</th><th>Purpose</th></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/ai/copilot/stream</code></td><td>Bearer</td><td>Send a message — stream SSE response</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/ai/copilot/session/{session_id}</code></td><td>Bearer</td><td>Clear conversation history for a session</td></tr>
+</table>
+
+<hr>
+
+<h2>POST /api/v1/ai/copilot/stream</h2>
+
+<div class="obj">Sends a user message and streams the assistant response as SSE events. If no <code>session_id</code> is provided, a new UUID is generated and returned in the <code>X-Session-Id</code> response header. Pass the same session_id in subsequent requests to continue the conversation.</div>
+
+<h4>Request body</h4>
+<pre><code>{
+  "message":    "/portList",             // user message text
+  "session_id": "3f9a1c2e-..."           // optional; omit to start a new session
+}</code></pre>
+
+<h4>Response headers</h4>
+<pre><code>Content-Type:  text/event-stream
+Cache-Control: no-cache
+X-Accel-Buffering: no
+X-Session-Id:  3f9a1c2e-...             // use this in the next request to continue</code></pre>
+
+<h4>SSE event stream format</h4>
+<p>Each line is <code>data: {JSON}\n\n</code>. Events arrive in this order for a typical tool-using response:</p>
+<pre><code>data: {"type": "tool_start", "name": "get_portfolio_positions"}
+
+data: {"type": "tool_end", "name": "get_portfolio_positions"}
+
+data: {"type": "text", "content": "Here "}
+data: {"type": "text", "content": "are "}
+data: {"type": "text", "content": "your "}
+data: {"type": "text", "content": "5 "}
+data: {"type": "text", "content": "active "}
+data: {"type": "text", "content": "positions:\n\n"}
+data: {"type": "text", "content": "| Symbol ..."}
+
+data: {"type": "done", "session_id": "3f9a1c2e-..."}</code></pre>
+
+<h4>All SSE event types</h4>
+<table>
+  <tr><th>type</th><th>Additional fields</th><th>Description</th></tr>
+  <tr><td><code>text</code></td><td><code>content: string</code></td><td>One word (or token) of the assistant's reply — concatenate to build the full message</td></tr>
+  <tr><td><code>tool_start</code></td><td><code>name: string</code></td><td>A tool call has started — show a "thinking…" indicator</td></tr>
+  <tr><td><code>tool_end</code></td><td><code>name: string</code></td><td>Tool call completed — hide the indicator</td></tr>
+  <tr><td><code>error</code></td><td><code>content: string</code></td><td>API error or missing key — stream ends after this event</td></tr>
+  <tr><td><code>done</code></td><td><code>session_id: string</code></td><td>Stream complete — always the last event</td></tr>
+</table>
+
+<h4>Slash-command → tool mapping</h4>
+<table>
+  <tr><th>Command</th><th>Tool(s) invoked</th></tr>
+  <tr><td><code>/portList</code></td><td><code>get_portfolio_positions</code></td></tr>
+  <tr><td><code>/portPlan</code>, <code>/portAction</code></td><td><code>get_portfolio_positions</code> + <code>get_performance_summary</code></td></tr>
+  <tr><td><code>/portHist</code></td><td><code>get_performance_summary</code></td></tr>
+  <tr><td><code>/analyze TICKER</code></td><td><code>get_live_price</code> then <code>read_knowledge_doc</code></td></tr>
+</table>
+
+<div class="err">
+<strong>Error event</strong> — <code>ANTHROPIC_API_KEY</code> not set: <code>{"type":"error","content":"Anthropic API key not configured. Set ANTHROPIC_API_KEY in backend/.env and restart the backend."}</code><br>
+<strong>Error event</strong> — Anthropic API returned an error (rate limit, bad key, etc.): <code>{"type":"error","content":"..."}</code>
+</div>
+
+<div class="tip">The AI Copilot is an agentic loop — it may call tools multiple times before producing a final text response. The maximum number of tool-call iterations per request is 6. Session history is in-memory per Uvicorn worker; if the server has multiple workers, the same session_id may hit a different worker with no prior context.</div>
+
+<hr>
+
+<h2>DELETE /api/v1/ai/copilot/session/{session_id}</h2>
+
+<div class="obj">Clears the conversation history stored in the server-side session dictionary. Call this to start a fresh conversation without creating a new session_id, or when the user clicks "Clear chat".</div>
+
+<h4>Sample</h4>
+<pre><code>DELETE /api/v1/ai/copilot/session/3f9a1c2e-...
+Authorization: Bearer eyJ...
+
+HTTP/1.1 200 OK
+{ "status": "cleared", "session_id": "3f9a1c2e-..." }</code></pre>
+
+<p>Deleting a session_id that does not exist (or was already cleared) returns the same <code>200</code> response — this is idempotent.</p>
+
+<hr>
+
+<h2>Available Tools Reference</h2>
+<table>
+  <tr><th>Tool name</th><th>Input</th><th>Returns</th></tr>
+  <tr><td><code>get_portfolio_positions</code></td><td><code>status?: "active"|"closed"|"all"</code></td><td>Markdown table of positions with live P&amp;L</td></tr>
+  <tr><td><code>get_live_price</code></td><td><code>ticker: string</code></td><td>Price, change, change% — auto-appends <code>.BK</code> for SET tickers</td></tr>
+  <tr><td><code>get_performance_summary</code></td><td><code>period?: "daily"|"weekly"|"monthly"</code>, <code>months?: int</code></td><td>Cumulative P&amp;L and per-stock breakdown</td></tr>
+  <tr><td><code>read_knowledge_doc</code></td><td><code>filename: string</code></td><td>First 6,000 chars of a <code>.md</code> file from the knowledge base</td></tr>
+  <tr><td><code>run_analysis_script</code></td><td><code>script: "port_hist"|"port_action"|"portfolio_tracker"</code>, <code>args?: string[]</code></td><td>stdout of the Python script (max 4,000 chars, 60 s timeout)</td></tr>
+</table>
+
+<hr>
+
+<h2>Error Handling Summary</h2>
+<table>
+  <tr><th>Scenario</th><th>How it surfaces</th></tr>
+  <tr><td>API key not configured</td><td>SSE <code>error</code> event immediately; stream ends</td></tr>
+  <tr><td>Anthropic rate limit / API error</td><td>SSE <code>error</code> event; stream ends</td></tr>
+  <tr><td>Tool raises an exception</td><td>Error string returned to Claude as tool result; loop continues</td></tr>
+  <tr><td>Script timeout (60 s)</td><td>Error string returned to Claude; loop continues</td></tr>
+  <tr><td>Max iterations (6) reached</td><td>Stream ends with <code>done</code> event; no error</td></tr>
+  <tr><td>No Bearer token</td><td>HTTP 401 before stream starts</td></tr>
+</table>
+
+</body>
+</html>

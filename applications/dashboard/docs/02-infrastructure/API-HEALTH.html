@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Health — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — Health</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Provide liveness and readiness probes for Docker health checks, container orchestrators (Kubernetes), and monitoring systems. These endpoints require no authentication and are excluded from rate limiting and metrics collection.
+</div>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Auth</th><th>Purpose</th></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/health/live</code></td><td>None</td><td>Liveness — is the process running?</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/health/ready</code></td><td>None</td><td>Readiness — can the service handle traffic?</td></tr>
+</table>
+
+<hr>
+
+<h2>GET /api/v1/health/live</h2>
+
+<h4>Purpose</h4>
+<p>Returns immediately if the Uvicorn process is running. Used by Docker <code>HEALTHCHECK</code> and Kubernetes liveness probes. A failure here triggers a container restart.</p>
+
+<h4>Sample</h4>
+<pre><code>GET /api/v1/health/live
+# No headers required
+
+HTTP/1.1 200 OK
+{ "status": "ok" }</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/health/ready</h2>
+
+<h4>Purpose</h4>
+<p>Verifies that both PostgreSQL and Redis are reachable. A failure here means the service should not receive traffic (Kubernetes readiness probe removes the pod from load-balancer rotation).</p>
+
+<h4>Sample — all healthy</h4>
+<pre><code>GET /api/v1/health/ready
+
+HTTP/1.1 200 OK
+{
+  "status": "ok",
+  "db":    "ok",
+  "redis": "ok"
+}</code></pre>
+
+<h4>Sample — database unreachable</h4>
+<pre><code>HTTP/1.1 503 Service Unavailable
+{
+  "status": "degraded",
+  "db":    "error: connection refused",
+  "redis": "ok"
+}</code></pre>
+
+<hr>
+
+<h2>Error Handling</h2>
+<div class="err">
+<strong>503 Service Unavailable</strong> — returned by <code>/ready</code> when either the database or Redis connection check fails. The response body always includes individual <code>db</code> and <code>redis</code> keys so the monitoring system can pinpoint which dependency is down.
+</div>
+<div class="tip">
+These endpoints are intentionally excluded from the <code>SlowAPIMiddleware</code> rate limiter and from the Prometheus metrics instrumentator to avoid noise in dashboards. They are also excluded from <code>SecurityHeadersMiddleware</code> CSP headers because they return plain JSON with no browser consumer.
+</div>
+
+</body>
+</html>

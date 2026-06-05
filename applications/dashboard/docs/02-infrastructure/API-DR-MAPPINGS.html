@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — DR Mappings — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — DR Mappings</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Manage the global mapping table that links Thai-listed Depositary Receipts (DRs) to their underlying parent assets. This mapping is used by the Weekly Scan price engine to look up the parent asset price (e.g. BTC-USD) and compute the estimated DR price in THB using the unit ratio and the live USD/THB exchange rate. Read access is open to all authenticated users; writes require admin role. DR symbols are stored and matched case-insensitively (always uppercased).
+</div>
+
+<h2>Price Estimation Formula</h2>
+<pre><code>DR estimated price (฿) = parent_price_USD ÷ ratio × USD_THB_rate
+
+// Example: BTCUSD-DR with ratio = 1000
+//   BTC-USD = $60,000  |  USD/THB = 34.0
+//   DR price = 60,000 ÷ 1,000 × 34 = ฿2,040 per DR unit</code></pre>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Auth</th><th>Purpose</th></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/dr-mappings</code></td><td>Bearer</td><td>List all mappings ordered by DR symbol</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/dr-mappings/{dr_symbol}</code></td><td>Bearer</td><td>Get one mapping by DR symbol</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/dr-mappings</code></td><td>Admin</td><td>Create a new mapping (HTTP 201)</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/dr-mappings/{id}</code></td><td>Admin</td><td>Update parent symbol, market, ratio, or active flag</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/dr-mappings/{id}</code></td><td>Admin</td><td>Hard delete (HTTP 204)</td></tr>
+</table>
+
+<h4>DR Mapping response shape</h4>
+<pre><code>{
+  "id":            1,
+  "dr_symbol":     "BTCUSD-DR",
+  "parent_symbol": "BTC-USD",
+  "parent_market": "CRYPTO",      // "CRYPTO" | "COMMODITY" | "US" | "OTHER"
+  "ratio":         1000.0,        // number of DR units per 1 parent unit
+  "description":   "1 BTC-USD = 1000 BTCUSD-DR",   // auto-generated; always up to date
+  "is_active":     true,
+  "created_at":    "2026-06-02T09:00:00+07:00",
+  "updated_at":    "2026-06-02T09:00:00+07:00"
+}</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/dr-mappings</h2>
+<pre><code>GET /api/v1/dr-mappings
+Authorization: Bearer eyJ...
+
+[
+  {
+    "id": 1, "dr_symbol": "BTCUSD-DR", "parent_symbol": "BTC-USD",
+    "parent_market": "CRYPTO", "ratio": 1000.0,
+    "description": "1 BTC-USD = 1000 BTCUSD-DR",
+    "is_active": true,
+    "created_at": "2026-06-02T09:00:00+07:00",
+    "updated_at": "2026-06-02T09:00:00+07:00"
+  },
+  {
+    "id": 2, "dr_symbol": "GOLUSD-DR", "parent_symbol": "GC=F",
+    "parent_market": "COMMODITY", "ratio": 10.0,
+    "description": "1 GC=F = 10 GOLUSD-DR",
+    "is_active": true,
+    "created_at": "2026-06-02T09:05:00+07:00",
+    "updated_at": "2026-06-02T09:05:00+07:00"
+  }
+]</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/dr-mappings/{dr_symbol}</h2>
+<pre><code>GET /api/v1/dr-mappings/BTCUSD-DR
+Authorization: Bearer eyJ...
+
+// Response 200 — single DrMapping object (same shape as list item)</code></pre>
+<div class="err"><strong>404 Not Found</strong> — no mapping found for the given DR symbol: <code>{"detail": "No mapping found for BTCUSD-DR"}</code></div>
+
+<hr>
+
+<h2>POST /api/v1/dr-mappings</h2>
+<h4>Request body</h4>
+<pre><code>{
+  "dr_symbol":     "ETHUSD-DR",         // 1-30 chars; stored uppercased
+  "parent_symbol": "ETH-USD",           // 1-30 chars; stored uppercased
+  "parent_market": "CRYPTO",            // default "CRYPTO"; max 20 chars
+  "ratio":         100.0,               // must be > 0
+  "is_active":     true                 // optional, default true
+}</code></pre>
+<h4>Response 201</h4>
+<pre><code>{
+  "id":            3,
+  "dr_symbol":     "ETHUSD-DR",
+  "parent_symbol": "ETH-USD",
+  "parent_market": "CRYPTO",
+  "ratio":         100.0,
+  "description":   "1 ETH-USD = 100 ETHUSD-DR",   // auto-generated
+  "is_active":     true,
+  "created_at":    "2026-06-03T10:00:00+07:00",
+  "updated_at":    "2026-06-03T10:00:00+07:00"
+}</code></pre>
+<div class="err">
+<strong>403 Forbidden</strong> — calling user is not admin.<br>
+<strong>409 Conflict</strong> — DR symbol already exists: <code>{"detail": "Mapping for ETHUSD-DR already exists"}</code>
+</div>
+
+<hr>
+
+<h2>PUT /api/v1/dr-mappings/{id}</h2>
+<div class="obj">Updates one or more fields. The <code>description</code> field is always auto-regenerated from the current <code>parent_symbol</code> and <code>ratio</code> after any update — it cannot be set manually.</div>
+
+<h4>Request body (all fields optional)</h4>
+<pre><code>{
+  "parent_symbol": "ETH-USD",    // max 30 chars; uppercased on save
+  "parent_market": "CRYPTO",     // max 20 chars
+  "ratio":         150.0,        // must be > 0
+  "is_active":     false
+}</code></pre>
+<h4>Response 200</h4>
+<pre><code>// Full updated DrMapping object with regenerated description</code></pre>
+<div class="err">
+<strong>403 Forbidden</strong> — calling user is not admin.<br>
+<strong>404 Not Found</strong> — mapping ID not found.
+</div>
+
+<hr>
+
+<h2>DELETE /api/v1/dr-mappings/{id}</h2>
+<pre><code>DELETE /api/v1/dr-mappings/3
+Authorization: Bearer &lt;admin-token&gt;
+
+HTTP/1.1 204 No Content</code></pre>
+<div class="err">
+<strong>403 Forbidden</strong> — calling user is not admin.<br>
+<strong>404 Not Found</strong> — mapping ID not found.
+</div>
+
+<hr>
+
+<h2>Bulk Import / Export (Frontend)</h2>
+<p>The Settings → DR Mappings page supports file-based bulk operations that call the API in a loop. The file format is pipe-delimited text:</p>
+<pre><code>DR_SYMBOL|PARENT_SYMBOL|MARKET|RATIO    ← header line (skipped on import)
+BTCUSD-DR|BTC-USD|CRYPTO|1000
+GOLUSD-DR|GC=F|COMMODITY|10
+ETHUSD-DR|ETH-USD|CRYPTO|100</code></pre>
+<p>Import calls <code>POST /dr-mappings</code> for each line. Lines that result in a 409 (duplicate) are counted as skipped, not errors. All other errors also count as skipped.</p>
+
+<hr>
+
+<h2>Common Error Handling</h2>
+<table>
+  <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
+  <tr><td>401</td><td>No or invalid Bearer token</td><td>"Not authenticated"</td></tr>
+  <tr><td>403</td><td>Non-admin calling a write endpoint</td><td>"Insufficient permissions"</td></tr>
+  <tr><td>404</td><td>DR symbol or mapping ID not found</td><td>"No mapping found for {symbol}" / "Mapping not found"</td></tr>
+  <tr><td>409</td><td>Creating a mapping with an existing DR symbol</td><td>"Mapping for {symbol} already exists"</td></tr>
+  <tr><td>422</td><td>ratio ≤ 0, string too long, or missing required field</td><td>Pydantic validation error array</td></tr>
+</table>
+
+</body>
+</html>

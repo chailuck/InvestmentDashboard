@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Weekly Scan — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — Weekly Scan</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Manage the weekly manual stock scan workflow — from maintaining symbol lists through creating scan snapshots, evaluating symbols with colour marks and strategies, fetching weekly prices (Monday open / Friday close), and viewing DR-adjusted prices. All data is private to the requesting user. Scans are named with a date pattern (<code>WEEKLY_SCAN_DD_MM_YYYY</code>) used to derive the price dates automatically.
+</div>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/weekly-scan/symbol-lists</code></td><td>All symbol lists for this user</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/weekly-scan/symbol-lists</code></td><td>Create a named symbol list</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/weekly-scan/symbol-lists/{list_id}</code></td><td>Update list name, market, DR flag, or symbols</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/weekly-scan/symbol-lists/{list_id}</code></td><td>Delete a symbol list</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/weekly-scan/suggest-name</code></td><td>Suggest next scan name (next or last Saturday)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/weekly-scan/scans</code></td><td>List all scans (newest first) with colour counts</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/weekly-scan/scans</code></td><td>Create scan and populate from symbol lists</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/weekly-scan/scans/{scan_id}</code></td><td>Scan header + all items + colour counts</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/weekly-scan/scans/{scan_id}</code></td><td>Hard-delete scan and all items</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/weekly-scan/scans/{scan_id}/refresh</code></td><td>Merge current symbol lists into scan (upsert)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/weekly-scan/scans/{scan_id}/items</code></td><td>Add a single symbol (409 if duplicate)</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/weekly-scan/scans/{scan_id}/items/{symbol}</code></td><td>Update evaluation fields for one symbol</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/weekly-scan/scans/{scan_id}/items/{symbol}</code></td><td>Remove a symbol from the scan</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/weekly-scan/scans/{scan_id}/week-prices</code></td><td>Mon open + Fri close for all symbols + DR THB estimates</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/weekly-scan/symbol-notes/{symbol}</code></td><td>Get saved note for a symbol</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/weekly-scan/symbol-notes/{symbol}</code></td><td>Upsert note for a symbol</td></tr>
+</table>
+
+<hr>
+
+<h2>Symbol Lists</h2>
+
+<h3>GET /api/v1/weekly-scan/symbol-lists</h3>
+<div class="obj">Returns all symbol lists for the user ordered by <code>sort_order</code>. If the user has no lists but has a legacy config, a "Default" list is auto-seeded from the config on first access.</div>
+<pre><code>[
+  {
+    "id":         "list-uuid-...",
+    "name":       "SET50",
+    "market":     "SET",          // "SET" | "US" | "CRYPTO" | "HK" | "OTHER"
+    "is_dr":      false,          // true = this list contains parent symbols; show DR prices
+    "symbols":    ["ADVANC", "AOT", "KBANK", "GULF"],
+    "sort_order": 0,
+    "updated_at": "2026-05-30T10:00:00+07:00"
+  }
+]</code></pre>
+
+<h3>POST /api/v1/weekly-scan/symbol-lists</h3>
+<pre><code>// Request
+{
+  "name":    "DRs",
+  "market":  "CRYPTO",    // optional, default "SET"
+  "is_dr":   true,        // optional, default false
+  "symbols": ["BTC-USD", "ETH-USD"]
+}
+
+// Response 200
+{ /* UserSymbolList object */ }</code></pre>
+
+<h3>PUT /api/v1/weekly-scan/symbol-lists/{list_id}</h3>
+<pre><code>// All fields optional — only provided fields are updated
+{
+  "name":       "My DRs",
+  "symbols":    ["BTC-USD", "ETH-USD", "GC=F"],
+  "sort_order": 2
+}</code></pre>
+<div class="err"><strong>404 Not Found</strong> — list not found or not owned by user.</div>
+
+<hr>
+
+<h2>Scans</h2>
+
+<h3>GET /api/v1/weekly-scan/suggest-name</h3>
+<pre><code>GET /api/v1/weekly-scan/suggest-name
+
+{ "name": "WEEKLY_SCAN_07_06_2026" }   // next Saturday if scans exist; last Saturday for first scan</code></pre>
+
+<h3>POST /api/v1/weekly-scan/scans</h3>
+<div class="obj">Creates a scan and populates it with all symbols from the user's current symbol lists. Items inherit list name and market. If no lists exist, falls back to the legacy symbol config (or SET50 defaults).</div>
+<pre><code>// Request
+{ "name": "WEEKLY_SCAN_07_06_2026" }
+
+// Response 200
+{
+  "id":         "scan-uuid-...",
+  "name":       "WEEKLY_SCAN_07_06_2026",
+  "created_at": "2026-06-03T08:00:00+07:00"
+}</code></pre>
+
+<h3>GET /api/v1/weekly-scan/scans/{scan_id}</h3>
+<pre><code>{
+  "id":           "scan-uuid-...",
+  "name":         "WEEKLY_SCAN_07_06_2026",
+  "created_at":   "2026-06-03T08:00:00+07:00",
+  "updated_at":   "2026-06-03T10:15:00+07:00",
+  "color_counts": { "CYAN": 3, "GREEN": 8, "YELLOW": 5, "RED": 12, "PURPLE": 4, "NONE": 18 },
+  "items": [
+    {
+      "id":         "item-uuid-...",
+      "symbol":     "GULF",
+      "sort_order": 0,
+      "list_name":  "SET50",
+      "market":     "SET",
+      "color_mark": "GREEN",          // "CYAN"|"GREEN"|"YELLOW"|"RED"|"PURPLE"|null
+      "strategy":   "BREAK OUT",
+      "buy_price":  64.0,
+      "size":       500,
+      "tp":         72.0,
+      "sl":         59.0,
+      "remark":     "Breakout from 3-month base",
+      "updated_at": "2026-06-03T09:00:00+07:00"
+    }
+  ]
+}</code></pre>
+<div class="err"><strong>404 Not Found</strong> — scan not found or not owned by user.</div>
+
+<h3>PUT /api/v1/weekly-scan/scans/{scan_id}/items/{symbol}</h3>
+<div class="obj">Partial update — only fields present in the request body are written. Used after every click in the scan table (colour picker, strategy dropdown, numeric field edit).</div>
+<pre><code>// Request — any subset of these fields
+{
+  "color_mark": "CYAN",
+  "strategy":   "BUY ON DIP",
+  "buy_price":  63.0,
+  "size":       300,
+  "tp":         70.0,
+  "sl":         58.0,
+  "remark":     "Watch for close above 63"
+}
+
+// Response 200 — full updated item
+{ /* WeeklyScanItem */ }</code></pre>
+<div class="err">
+<strong>404 Not Found</strong> — scan not found: <code>{"detail": "Scan not found"}</code><br>
+<strong>404 Not Found</strong> — symbol not in scan: <code>{"detail": "GULF not in scan"}</code>
+</div>
+
+<hr>
+
+<h2>GET /api/v1/weekly-scan/scans/{scan_id}/week-prices</h2>
+
+<div class="obj">Fetches Monday-open and Friday-close prices for every symbol in the scan. Week dates are parsed from the scan name pattern <code>WEEKLY_SCAN_DD_MM_YYYY</code>. DR symbols (mapped via the <code>dr_mappings</code> table) additionally return parent asset prices and estimated THB prices. All yfinance calls run concurrently with a semaphore of 5.</div>
+
+<h4>Response 200</h4>
+<pre><code>{
+  "mon_date": "2026-06-02",
+  "fri_date": "2026-06-06",
+  "usd_thb":  34.12,          // USD/THB rate (null if no DR symbols in scan)
+
+  "prices": {
+    "GULF": {
+      "mon":        63.50,
+      "fri":        65.25,
+      "current":    65.00,
+      "change_abs": -0.25,
+      "change_pct": -0.38
+    },
+    "BTCUSD-DR": {
+      "mon":           67000.0,    // parent BTC-USD price (USD)
+      "fri":           68200.0,
+      "current":       68000.0,
+      "parent_mon":    67000.0,
+      "parent_fri":    68200.0,
+      "dr_mon_thb":    2283.52,    // parent_mon / ratio × usd_thb
+      "dr_fri_thb":    2324.36,
+      "dr_current_thb": 2316.53,
+      "parent_symbol": "BTC-USD",
+      "ratio":         1000.0
+    },
+    "ADVANC": {
+      "mon":  null,               // null = no data from Yahoo Finance for that date
+      "fri":  null,
+      "current": 217.50,
+      "change_abs": 1.50,
+      "change_pct": 0.69
+    }
+  }
+}</code></pre>
+
+<div class="tip">If the scan name does not match the <code>WEEKLY_SCAN_DD_MM_YYYY</code> pattern, <code>mon_date</code> and <code>fri_date</code> are <code>null</code> and all prices will be <code>null</code>. The response body is still returned (HTTP 200) so the UI can show an informative message.</div>
+
+<hr>
+
+<h2>Symbol Notes</h2>
+
+<h3>GET /api/v1/weekly-scan/symbol-notes/{symbol}</h3>
+<pre><code>GET /api/v1/weekly-scan/symbol-notes/GULF
+Authorization: Bearer eyJ...
+
+// Note exists
+{ "symbol": "GULF", "note": "Strong accumulation below 63.", "updated_at": "2026-06-01T09:00:00+07:00" }
+
+// No note
+{ "symbol": "GULF", "note": null, "updated_at": null }</code></pre>
+
+<h3>PUT /api/v1/weekly-scan/symbol-notes/{symbol}</h3>
+<pre><code>// Request
+{ "note": "Watching for breakout above 65." }
+
+// Response 200
+{ "symbol": "GULF", "note": "Watching for breakout above 65.", "updated_at": "2026-06-03T10:00:00+07:00" }</code></pre>
+
+<hr>
+
+<h2>Common Error Handling</h2>
+<table>
+  <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
+  <tr><td>401</td><td>No or invalid Bearer token</td><td>"Not authenticated"</td></tr>
+  <tr><td>404</td><td>Scan or list UUID not found / not owned by user</td><td>"Scan not found" / "Symbol list not found"</td></tr>
+  <tr><td>409</td><td>Adding a symbol that already exists in the scan</td><td>"GULF already in scan"</td></tr>
+  <tr><td>422</td><td>Missing required field or invalid UUID format</td><td>Pydantic validation error array</td></tr>
+</table>
+
+</body>
+</html>

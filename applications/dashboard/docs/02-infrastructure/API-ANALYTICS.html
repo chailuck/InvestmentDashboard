@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Analytics — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — Analytics</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Provide symbol lookup, OHLCV chart data with technical indicators (RSI, Stochastic, VRVP), and per-user supplementary content — analysis logs (HTML/MD files from the investment agent knowledge base), Fibonacci chart images (from the knowledge base), and personal text notes stored in PostgreSQL. All data is fetched on demand with no caching at the API layer. Symbol inputs are validated against a strict regex and file-system access is path-traversal-hardened.
+</div>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Auth</th><th>Purpose</th></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/analytics/search</code></td><td>Bearer</td><td>Symbol lookup — price + name + exchange</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/analytics/chart</code></td><td>Bearer</td><td>OHLCV + RSI + Stochastic + VRVP</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/analytics/analysis-log</code></td><td>Bearer</td><td>Analysis log file (HTML or MD)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/analytics/fibo-chart</code></td><td>Bearer</td><td>Fibonacci chart image as Base64 data URI</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/analytics/note</code></td><td>Bearer</td><td>Get user's personal note for a symbol</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/analytics/note</code></td><td>Bearer</td><td>Upsert personal note for a symbol</td></tr>
+</table>
+
+<hr>
+
+<h2>GET /api/v1/analytics/search</h2>
+<div class="obj">Quick symbol lookup — tries multiple Yahoo Finance ticker variants in order and returns the first with price data. Used by the search form to validate a symbol before opening the chart modal.</div>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Default</th><th>Values</th></tr>
+  <tr><td><code>q</code></td><td>Yes (min 1 char)</td><td>—</td><td>Symbol, e.g. <code>GULF</code>, <code>BTC</code>, <code>GOLD</code></td></tr>
+  <tr><td><code>asset_type</code></td><td>No</td><td><code>SET</code></td><td><code>SET</code> | <code>CRYPTO</code> | <code>DR</code> | <code>US</code> | <code>HK</code> | <code>OTHER</code></td></tr>
+</table>
+
+<h4>Ticker resolution order by asset_type</h4>
+<table>
+  <tr><th>asset_type</th><th>Tries in order</th></tr>
+  <tr><td>SET</td><td><code>SYMBOL.BK</code> → <code>SYMBOL</code></td></tr>
+  <tr><td>CRYPTO</td><td><code>SYMBOL-USD</code> → <code>SYMBOL-USDT</code> → <code>SYMBOL</code></td></tr>
+  <tr><td>DR</td><td><code>SYMBOL.BK</code> → <code>SYMBOL</code></td></tr>
+  <tr><td>HK</td><td><code>0001.HK</code> (zero-padded 4 digits) → <code>SYMBOL.HK</code> → <code>SYMBOL</code></td></tr>
+  <tr><td>US / OTHER</td><td><code>SYMBOL</code> (bare)</td></tr>
+</table>
+
+<h4>Sample — found</h4>
+<pre><code>GET /api/v1/analytics/search?q=GULF&asset_type=SET
+Authorization: Bearer eyJ...
+
+{
+  "symbol":     "GULF",
+  "ticker":     "GULF.BK",
+  "asset_type": "SET",
+  "exchange":   "SET",
+  "name":       "Gulf Energy Development Public Company Limited",
+  "price":      64.25,
+  "change_pct": 1.18,
+  "found":      true
+}</code></pre>
+
+<h4>Sample — not found</h4>
+<pre><code>GET /api/v1/analytics/search?q=INVALID&asset_type=SET
+
+{ "symbol": "INVALID", "found": false }</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/analytics/chart</h2>
+<div class="obj">Returns the full dataset for the ECharts chart modal: candlestick OHLCV, volume bars, RSI(14), Stochastic(9,3,3), and VRVP(24 bins). Fetches up to 2.5 years of daily/weekly data or 2 years of hourly data. All yfinance calls run in a thread pool to avoid blocking the async event loop.</div>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Default</th><th>Values</th></tr>
+  <tr><td><code>symbol</code></td><td>Yes</td><td>—</td><td>Trading symbol</td></tr>
+  <tr><td><code>asset_type</code></td><td>No</td><td><code>SET</code></td><td>Same as search</td></tr>
+  <tr><td><code>interval</code></td><td>No</td><td><code>1d</code></td><td><code>1h</code> | <code>4h</code> | <code>1d</code> | <code>1wk</code></td></tr>
+</table>
+
+<h4>Response 200 (abbreviated)</h4>
+<pre><code>{
+  "symbol":   "GULF",
+  "ticker":   "GULF.BK",
+  "exchange": "SET",
+
+  "candles": [
+    { "time": "2026-05-30", "open": 63.25, "high": 64.50, "low": 62.75, "close": 64.00 }
+  ],
+
+  "volume": [
+    { "time": "2026-05-30", "value": 12500000, "color": "rgba(34,197,94,0.5)" }
+  ],                                       // green = up candle, red = down candle
+
+  "rsi": [
+    { "time": "2026-05-30", "value": 58.42 }
+  ],                                       // NaN values omitted
+
+  "stoch_k": [{ "time": "2026-05-30", "value": 72.34 }],  // %K smoothed (9,3)
+  "stoch_d": [{ "time": "2026-05-30", "value": 68.12 }],  // %D signal line
+
+  "vrvp": [
+    { "price_low": 55.00, "price_high": 55.46, "volume": 45200000 }
+    // ... 24 bins total spanning the full price range of loaded history
+  ]
+}</code></pre>
+
+<div class="err"><strong>404 Not Found</strong> — no price data found for any ticker variant for this symbol + asset_type.</div>
+
+<hr>
+
+<h2>GET /api/v1/analytics/analysis-log</h2>
+<div class="obj">Searches the <code>analysis_log_path</code> directory for files matching <code>*{SYMBOL}*.html</code> or <code>*{SYMBOL}*.md</code> and returns the most recently modified file. All path results are validated to be inside the configured base directory before reading (path-traversal guard).</div>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Validation</th></tr>
+  <tr><td><code>symbol</code></td><td>Yes</td><td>Must match <code>^[A-Z0-9.\-]{1,20}$</code> — 400 on failure</td></tr>
+</table>
+
+<h4>Sample — file found</h4>
+<pre><code>GET /api/v1/analytics/analysis-log?symbol=GULF
+Authorization: Bearer eyJ...
+
+{
+  "found":     true,
+  "content":   "&lt;!DOCTYPE html&gt;&lt;html&gt;...&lt;/html&gt;",
+  "filename":  "GULF_analysis_2026-05-30.html",
+  "file_type": "html"          // "html" | "md"
+}</code></pre>
+
+<h4>Sample — not found</h4>
+<pre><code>{ "found": false, "content": null, "filename": null, "file_type": null }</code></pre>
+
+<div class="err"><strong>400 Bad Request</strong> — symbol contains invalid characters: <code>{"detail": "Invalid symbol: must be 1-20 alphanumeric characters, dots, or hyphens"}</code></div>
+
+<hr>
+
+<h2>GET /api/v1/analytics/fibo-chart</h2>
+<div class="obj">Searches the <code>fibo_chart_path</code> directory for image files matching the symbol. Returns the image as a Base64 data URI so the frontend can embed it directly without a second request.</div>
+
+<h4>Query parameters</h4>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Accepted formats</th></tr>
+  <tr><td><code>symbol</code></td><td>Yes</td><td>Same validation as analysis-log; matches <code>.png</code> <code>.jpg</code> <code>.jpeg</code> <code>.webp</code></td></tr>
+</table>
+
+<h4>Sample — found</h4>
+<pre><code>{
+  "found":    true,
+  "image":    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...",
+  "filename": "GULF_fibo_2026-05.png"
+}
+// Not found: { "found": false, "image": null, "filename": null }</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/analytics/note</h2>
+<pre><code>GET /api/v1/analytics/note?symbol=GULF
+Authorization: Bearer eyJ...
+
+// Found
+{ "symbol": "GULF", "note": "Strong support at 60.", "asset_type": "SET", "found": true }
+
+// Not found
+{ "symbol": "GULF", "note": "", "found": false }</code></pre>
+
+<hr>
+
+<h2>PUT /api/v1/analytics/note</h2>
+<div class="obj">PostgreSQL upsert on <code>(user_id, symbol)</code> constraint. Concurrent upserts are safe. Saving an empty string stores a blank note but does not delete the record.</div>
+<pre><code>// Request
+{ "symbol": "GULF", "asset_type": "SET", "note": "Watch RSI divergence on weekly." }
+
+// Response 200
+{ "status": "ok" }</code></pre>
+
+<hr>
+
+<h2>Common Error Handling</h2>
+<table>
+  <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
+  <tr><td>400</td><td>Symbol contains path traversal chars or special chars</td><td>"Invalid symbol: must be 1-20 alphanumeric characters, dots, or hyphens"</td></tr>
+  <tr><td>401</td><td>No or invalid Bearer token</td><td>"Not authenticated"</td></tr>
+  <tr><td>404</td><td>No chart data found for any ticker variant</td><td>"No data found for {symbol} ({symbol}.BK)"</td></tr>
+  <tr><td>422</td><td>Missing required query param or wrong type</td><td>Pydantic validation error</td></tr>
+</table>
+
+</body>
+</html>

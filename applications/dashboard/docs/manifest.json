@@ -17,9 +17,26 @@
       "id": "infrastructure",
       "label": "Infrastructure",
       "children": [
-        { "id": "docker",      "label": "Docker & Deployment", "file": "02-infrastructure/DOCKER.html"     },
-        { "id": "database",    "label": "Database Schema",     "file": "02-infrastructure/DATABASE.html"   },
-        { "id": "api-design",  "label": "API Design",          "file": "02-infrastructure/API-DESIGN.html" }
+        { "id": "docker",   "label": "Docker & Deployment", "file": "02-infrastructure/DOCKER.html"   },
+        { "id": "database", "label": "Database Schema",     "file": "02-infrastructure/DATABASE.html" },
+        {
+          "id": "api-design",
+          "label": "API Design",
+          "file": "02-infrastructure/API-DESIGN.html",
+          "children": [
+            { "id": "api-health",            "label": "Health",            "file": "02-infrastructure/API-HEALTH.html"            },
+            { "id": "api-auth",              "label": "Authentication",    "file": "02-infrastructure/API-AUTH.html"              },
+            { "id": "api-users",             "label": "Users",             "file": "02-infrastructure/API-USERS.html"             },
+            { "id": "api-portfolio-tracker", "label": "Portfolio Tracker", "file": "02-infrastructure/API-PORTFOLIO-TRACKER.html" },
+            { "id": "api-action-plans",      "label": "Action Plans",      "file": "02-infrastructure/API-ACTION-PLANS.html"      },
+            { "id": "api-ai-copilot",        "label": "AI Copilot",        "file": "02-infrastructure/API-AI-COPILOT.html"        },
+            { "id": "api-app-config",        "label": "App Configuration", "file": "02-infrastructure/API-APP-CONFIG.html"        },
+            { "id": "api-weekly-scan",       "label": "Weekly Scan",       "file": "02-infrastructure/API-WEEKLY-SCAN.html"       },
+            { "id": "api-analytics",         "label": "Analytics",         "file": "02-infrastructure/API-ANALYTICS.html"         },
+            { "id": "api-portfolio-db",      "label": "Portfolio DB",      "file": "02-infrastructure/API-PORTFOLIO-DB.html"      },
+            { "id": "api-dr-mappings",       "label": "DR Mappings",       "file": "02-infrastructure/API-DR-MAPPINGS.html"       }
+          ]
+        }
       ]
     },
     {
@@ -42,8 +59,9 @@
       "id": "portfolio",
       "label": "Portfolio Tracker",
       "children": [
-        { "id": "port-functional", "label": "Functional Spec",  "file": "05-portfolio/FUNCTIONAL.html" },
-        { "id": "port-technical",  "label": "Technical Design", "file": "05-portfolio/TECHNICAL.html"  }
+        { "id": "port-functional",  "label": "Functional Spec",    "file": "05-portfolio/FUNCTIONAL.html"    },
+        { "id": "port-technical",   "label": "Technical Design",   "file": "05-portfolio/TECHNICAL.html"     },
+        { "id": "port-db",          "label": "Portfolio DB Mode",  "file": "05-portfolio/PORTFOLIO-DB.html"  }
       ]
     },
     {
@@ -104,6 +122,14 @@
       "label": "Migrations & Redis",
       "children": [
         { "id": "migrations-technical", "label": "Alembic Workflow & Redis Keys", "file": "14-migrations/TECHNICAL.html" }
+      ]
+    },
+    {
+      "id": "analytics",
+      "label": "Analytics",
+      "children": [
+        { "id": "analytics-functional", "label": "Functional Spec",  "file": "16-analytics/FUNCTIONAL.html" },
+        { "id": "analytics-technical",  "label": "Technical Design", "file": "16-analytics/TECHNICAL.html"  }
       ]
     },
     {

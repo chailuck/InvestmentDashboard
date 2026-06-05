@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analytics — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 1000px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+
+<h1>Analytics — Technical Design</h1>
+
+<p>Source: <code>backend/app/api/v1/endpoints/analytics.py</code>, <code>frontend/src/services/analytics.ts</code>, <code>frontend/src/components/analytics/</code></p>
+
+<hr>
+
+<h2>1. API Endpoints</h2>
+
+<p>All endpoints are under <code>/api/v1/analytics/</code> and require <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+
+<table>
+  <tr><th>Method</th><th>Path</th><th>Query params</th><th>Description</th></tr>
+  <tr><td>GET</td><td><code>/analytics/search</code></td><td><code>q</code>, <code>asset_type</code></td><td>Symbol lookup — returns price, name, exchange</td></tr>
+  <tr><td>GET</td><td><code>/analytics/chart</code></td><td><code>symbol</code>, <code>asset_type</code>, <code>interval</code></td><td>Full OHLCV + indicators for the chart modal</td></tr>
+  <tr><td>GET</td><td><code>/analytics/analysis-log</code></td><td><code>symbol</code></td><td>Return HTML or MD analysis file content</td></tr>
+  <tr><td>GET</td><td><code>/analytics/fibo-chart</code></td><td><code>symbol</code></td><td>Return Fibonacci image as Base64 data URI</td></tr>
+  <tr><td>GET</td><td><code>/analytics/note</code></td><td><code>symbol</code></td><td>Get user's saved note for a symbol</td></tr>
+  <tr><td>PUT</td><td><code>/analytics/note</code></td><td>—</td><td>Upsert user's note for a symbol</td></tr>
+</table>
+
+<hr>
+
+<h2>2. GET /analytics/search</h2>
+
+<h3>Query parameters</h3>
+<table>
+  <tr><th>Param</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>q</code></td><td>string</td><td>Yes (min length 1)</td><td>—</td><td>Symbol to look up, e.g. <code>PTT</code>, <code>BTC</code></td></tr>
+  <tr><td><code>asset_type</code></td><td>string</td><td>No</td><td><code>SET</code></td><td><code>SET</code> | <code>CRYPTO</code> | <code>DR</code> | <code>US</code> | <code>HK</code> | <code>OTHER</code></td></tr>
+</table>
+
+<h3>Response — found</h3>
+<pre><code>// GET /api/v1/analytics/search?q=PTT&asset_type=SET
+{
+  "symbol":     "PTT",
+  "ticker":     "PTT.BK",          // actual Yahoo Finance ticker used
+  "asset_type": "SET",
+  "exchange":   "SET",
+  "name":       "PTT Public Company Limited",
+  "price":      37.25,             // last close price (4 decimal places)
+  "change_pct": -0.67,             // % change vs previous close
+  "found":      true
+}</code></pre>
+
+<h3>Response — not found</h3>
+<pre><code>// GET /api/v1/analytics/search?q=INVALID&asset_type=SET
+{
+  "symbol": "INVALID",
+  "found":  false
+}</code></pre>
+
+<div class="callout tip">The search endpoint tries multiple ticker variants in order and returns the first that has data. For <code>SET</code>: <code>SYMBOL.BK</code> then bare <code>SYMBOL</code>. For <code>CRYPTO</code>: <code>SYMBOL-USD</code>, <code>SYMBOL-USDT</code>, then bare. For <code>DR</code>: <code>SYMBOL.BK</code> then bare. For <code>HK</code>: zero-padded 4-digit <code>XXXX.HK</code>, then <code>SYMBOL.HK</code>, then bare.</div>
+
+<hr>
+
+<h2>3. GET /analytics/chart</h2>
+
+<h3>Query parameters</h3>
+<table>
+  <tr><th>Param</th><th>Type</th><th>Required</th><th>Values</th><th>Notes</th></tr>
+  <tr><td><code>symbol</code></td><td>string</td><td>Yes</td><td>—</td><td>Trading symbol, e.g. <code>GULF</code>, <code>BTC</code></td></tr>
+  <tr><td><code>asset_type</code></td><td>string</td><td>No</td><td>See search above</td><td>Default: <code>SET</code></td></tr>
+  <tr><td><code>interval</code></td><td>string</td><td>No</td><td><code>1h</code> <code>4h</code> <code>1d</code> <code>1wk</code></td><td>Default: <code>1d</code></td></tr>
+</table>
+
+<h3>History window by interval</h3>
+<table>
+  <tr><th>Interval</th><th>yfinance fetch interval</th><th>Days fetched</th><th>Notes</th></tr>
+  <tr><td><code>1h</code></td><td><code>1h</code></td><td>730</td><td>yfinance cap on hourly data</td></tr>
+  <tr><td><code>4h</code></td><td><code>1h</code></td><td>730</td><td>Fetched as 1h then resampled to 4h via pandas <code>resample("4h")</code></td></tr>
+  <tr><td><code>1d</code></td><td><code>1d</code></td><td>912</td><td>~2.5 years of daily candles</td></tr>
+  <tr><td><code>1wk</code></td><td><code>1wk</code></td><td>912</td><td>~2.5 years of weekly candles</td></tr>
+</table>
+
+<h3>Response shape</h3>
+<pre><code>{
+  "symbol":   "GULF",
+  "ticker":   "GULF.BK",     // actual Yahoo Finance ticker resolved
+  "exchange": "SET",
+
+  // OHLCV candles — time format is "YYYY-MM-DD" for daily/weekly,
+  // "YYYY-MM-DD HH:MM" for intraday (1h / 4h)
+  "candles": [
+    { "time": "2026-05-30", "open": 63.25, "high": 64.50, "low": 62.75, "close": 64.00 },
+    { "time": "2026-06-02", "open": 64.00, "high": 65.25, "low": 63.50, "close": 65.00 }
+  ],
+
+  // Volume bars — color encodes candle direction
+  "volume": [
+    { "time": "2026-05-30", "value": 12500000, "color": "rgba(34,197,94,0.5)" },  // green = up-candle
+    { "time": "2026-06-02", "value": 8900000,  "color": "rgba(239,68,68,0.5)" }   // red  = down-candle
+  ],
+
+  // RSI (14-period) — NaN values are omitted
+  "rsi": [
+    { "time": "2026-05-30", "value": 58.42 },
+    { "time": "2026-06-02", "value": 61.17 }
+  ],
+
+  // Stochastic %K (fast line) — params: k_period=9, smooth_k=3, d_period=3
+  "stoch_k": [
+    { "time": "2026-05-30", "value": 72.34 },
+    { "time": "2026-06-02", "value": 78.91 }
+  ],
+
+  // Stochastic %D (slow/signal line)
+  "stoch_d": [
+    { "time": "2026-05-30", "value": 68.12 },
+    { "time": "2026-06-02", "value": 73.45 }
+  ],
+
+  // VRVP — 24 price buckets spanning full history range
+  "vrvp": [
+    { "price_low": 55.00, "price_high": 55.46, "volume": 45200000 },
+    { "price_low": 55.46, "price_high": 55.92, "volume": 32100000 }
+    // ... 22 more buckets
+  ]
+}</code></pre>
+
+<p>Returns HTTP <code>404</code> if no data is found for any ticker variant.</p>
+
+<hr>
+
+<h2>4. GET /analytics/analysis-log</h2>
+
+<h3>Query parameters</h3>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Notes</th></tr>
+  <tr><td><code>symbol</code></td><td>Yes</td><td>Validated against <code>^[A-Z0-9.\-]{1,20}$</code> — HTTP 400 on failure</td></tr>
+</table>
+
+<h3>Response</h3>
+<pre><code>// File found
+{
+  "found":     true,
+  "content":   "&lt;!DOCTYPE html&gt;&lt;html&gt;...&lt;/html&gt;",  // full file text
+  "filename":  "GULF_analysis_2026-05-30.html",
+  "file_type": "html"    // "html" | "md"
+}
+
+// File not found
+{
+  "found":     false,
+  "content":   null,
+  "filename":  null,
+  "file_type": null
+}</code></pre>
+
+<p>Search base directory: <code>app_config.analysis_log_path</code> → default <code>/app/investment_agent/analysis_log</code>.</p>
+<p>Glob pattern: <code>*{SYMBOL}*.html</code> and <code>*{SYMBOL}*.md</code>. Most recently modified file wins when multiple match.</p>
+
+<hr>
+
+<h2>5. GET /analytics/fibo-chart</h2>
+
+<h3>Query parameters</h3>
+<table>
+  <tr><th>Param</th><th>Required</th><th>Notes</th></tr>
+  <tr><td><code>symbol</code></td><td>Yes</td><td>Same validation as analysis-log</td></tr>
+</table>
+
+<h3>Response</h3>
+<pre><code>// Image found
+{
+  "found":    true,
+  "image":    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...",  // full base64 data URI
+  "filename": "GULF_fibo_2026-05.png"
+}
+
+// Not found
+{
+  "found":    false,
+  "image":    null,
+  "filename": null
+}</code></pre>
+
+<p>Search base directory: <code>app_config.fibo_chart_path</code> → default <code>/app/investment_agent/charts/Fibo</code>.</p>
+<p>Accepted formats: <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.webp</code>. Most recently modified wins.</p>
+
+<hr>
+
+<h2>6. GET /analytics/note</h2>
+
+<h3>Query parameters</h3>
+<table>
+  <tr><th>Param</th><th>Required</th></tr>
+  <tr><td><code>symbol</code></td><td>Yes</td></tr>
+</table>
+
+<h3>Response</h3>
+<pre><code>// Note exists
+{
+  "symbol":     "GULF",
+  "note":       "Strong support at 60. Watch RSI divergence.",
+  "asset_type": "SET",
+  "found":      true
+}
+
+// No note exists yet
+{
+  "symbol": "GULF",
+  "note":   "",
+  "found":  false
+}</code></pre>
+
+<hr>
+
+<h2>7. PUT /analytics/note</h2>
+
+<h3>Request body</h3>
+<pre><code>{
+  "symbol":     "GULF",
+  "asset_type": "SET",         // "SET" | "CRYPTO" | "DR" | "US" | "HK" | "OTHER"
+  "note":       "Watch for breakout above 65."
+}</code></pre>
+
+<h3>Response</h3>
+<pre><code>{ "status": "ok" }</code></pre>
+
+<p>Uses PostgreSQL <code>INSERT ... ON CONFLICT DO UPDATE</code> on the <code>(user_id, symbol)</code> unique constraint. Concurrent upserts are safe.</p>
+
+<hr>
+
+<h2>8. Indicator Calculations</h2>
+
+<h3>8.1 RSI (Relative Strength Index) — 14-period</h3>
+<pre><code>delta     = close.diff()
+gain      = delta.clip(lower=0)
+loss      = -delta.clip(upper=0)
+avg_gain  = gain.ewm(com=13, min_periods=14).mean()     # EMA, not SMA
+avg_loss  = loss.ewm(com=13, min_periods=14).mean()
+RS        = avg_gain / avg_loss                          # 0 if avg_loss==0 → NaN guard
+RSI       = 100 - (100 / (1 + RS))</code></pre>
+
+<h3>8.2 Stochastic Oscillator — (9, 3, 3)</h3>
+<pre><code>k_period  = 9   # lookback for highest high / lowest low
+smooth_k  = 3   # smoothing period for raw %K
+d_period  = 3   # smoothing period for %D (signal)
+
+lowest_low    = low.rolling(k_period).min()
+highest_high  = high.rolling(k_period).max()
+raw_k         = 100 * (close - lowest_low) / (highest_high - lowest_low)
+%K            = raw_k.rolling(smooth_k).mean()   # "slow %K"
+%D            = %K.rolling(d_period).mean()       # signal line</code></pre>
+
+<h3>8.3 VRVP (Volume Range Visible Profile) — 24 bins</h3>
+<pre><code>price_min  = df["Low"].min()
+price_max  = df["High"].max()
+edges      = np.linspace(price_min, price_max, 25)   # 25 edges = 24 bins
+
+for each candle:
+    mid = (High + Low) / 2
+    bin_idx = np.searchsorted(edges[1:], mid, side="left")  # which bin the candle's midpoint falls in
+    volumes[bin_idx] += Volume</code></pre>
+
+<p>The resulting 24 <code>{price_low, price_high, volume}</code> records are sent to the frontend and rendered as a horizontal bar chart on the right Y-axis of the price pane.</p>
+
+<hr>
+
+<h2>9. Ticker Resolution by Asset Type</h2>
+
+<p>The backend tries each ticker in order, returning the first that has non-empty yfinance history.</p>
+
+<table>
+  <tr><th>asset_type</th><th>Ticker candidates tried in order</th></tr>
+  <tr><td><code>SET</code></td><td><code>SYMBOL.BK</code>, then <code>SYMBOL</code></td></tr>
+  <tr><td><code>CRYPTO</code></td><td><code>SYMBOL-USD</code>, <code>SYMBOL-USDT</code>, then <code>SYMBOL</code></td></tr>
+  <tr><td><code>DR</code></td><td><code>SYMBOL.BK</code>, then <code>SYMBOL</code></td></tr>
+  <tr><td><code>HK</code></td><td><code>{SYMBOL zero-padded to 4 digits}.HK</code>, <code>SYMBOL.HK</code>, <code>SYMBOL</code></td></tr>
+  <tr><td><code>US</code></td><td><code>SYMBOL</code> (bare)</td></tr>
+  <tr><td><code>OTHER</code></td><td><code>SYMBOL</code> (bare)</td></tr>
+</table>
+
+<div class="callout">All yfinance calls are executed in a thread pool via <code>asyncio.get_running_loop().run_in_executor(None, ...)</code> to avoid blocking the async event loop.</div>
+
+<hr>
+
+<h2>10. Security — Symbol Validation & Path Traversal Guard</h2>
+
+<h3>Symbol whitelist regex</h3>
+<pre><code>_SYMBOL_RE = re.compile(r"^[A-Z0-9.\-]{1,20}$")</code></pre>
+<p>Applied to every endpoint that accepts a <code>symbol</code> parameter. Symbols containing slashes, spaces, null bytes, or any other special character are rejected with HTTP 400 before any file system access.</p>
+
+<h3>_safe_glob — directory boundary enforcement</h3>
+<pre><code>def _safe_glob(base_dir: str, pattern: str) -> list[str]:
+    base = Path(base_dir).resolve()
+    results = []
+    for p in glob.glob(pattern):
+        try:
+            resolved = Path(p).resolve()
+            resolved.relative_to(base)   # raises ValueError if outside base_dir
+            results.append(p)
+        except ValueError:
+            log.warning("Path traversal attempt blocked", ...)
+    return results</code></pre>
+
+<p>Even if a crafted symbol passed the regex, the <code>_safe_glob</code> function verifies each result is physically inside the configured directory (resolving symlinks). Any match outside the directory is silently dropped and logged as a warning.</p>
+
+<hr>
+
+<h2>11. Frontend Service Layer</h2>
+
+<p>Source: <code>frontend/src/services/analytics.ts</code></p>
+
+<pre><code>export type AssetType = 'SET' | 'CRYPTO' | 'DR' | 'US' | 'HK' | 'OTHER'
+
+export interface ChartData {
+  symbol: string; ticker: string; exchange: string
+  candles:  { time: string; open: number; high: number; low: number; close: number }[]
+  volume:   { time: string; value: number; color: string }[]
+  rsi:      { time: string; value: number }[]
+  stoch_k:  { time: string; value: number }[]
+  stoch_d:  { time: string; value: number }[]
+  vrvp:     { price_low: number; price_high: number; volume: number }[]
+}
+
+export interface SearchResult {
+  symbol: string; ticker?: string; asset_type: AssetType
+  exchange?: string; name?: string
+  price?: number; change_pct?: number; found: boolean
+}
+
+analyticsService.getChartData(symbol, assetType, interval)  // GET /analytics/chart
+analyticsService.search(q, assetType)                       // GET /analytics/search
+analyticsService.getAnalysisLog(symbol)                     // GET /analytics/analysis-log
+analyticsService.getFiboChart(symbol)                       // GET /analytics/fibo-chart
+analyticsService.getNote(symbol)                            // GET /analytics/note
+analyticsService.saveNote(symbol, assetType, note)          // PUT /analytics/note</code></pre>
+
+<hr>
+
+<h2>12. EChartsChart Component</h2>
+
+<p>Source: <code>frontend/src/components/analytics/EChartsChart.tsx</code></p>
+
+<table>
+  <tr><th>Prop</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>symbol</code></td><td>string</td><td>Trading symbol — triggers data fetch</td></tr>
+  <tr><td><code>assetType</code></td><td>AssetType</td><td>Passed to API for ticker resolution</td></tr>
+  <tr><td><code>interval</code></td><td>ChartInterval</td><td><code>'1h' | '4h' | '1d' | '1wk'</code></td></tr>
+  <tr><td><code>onIntervalChange</code></td><td><code>(i: ChartInterval) => void</code></td><td>Called when user clicks an interval button</td></tr>
+  <tr><td><code>height</code></td><td>number</td><td>Total chart canvas height in px (default: 560)</td></tr>
+</table>
+
+<p>The component fetches chart data on mount and on <code>(symbol, assetType, interval)</code> changes. It uses the ECharts <code>grid</code> layout with four grids stacked vertically. The <code>dataZoom</code> component links all four grids so zooming one zooms all.</p>
+
+</body>
+</html>

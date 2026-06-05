@@ -218,11 +218,8 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
   const pathname = usePathname()
   const { user, clearAuth } = useAuthStore()
 
-  const inPortfolioSection = pathname.startsWith('/portfolio') || pathname.startsWith('/settings/portfolio-db')
-  const inSettingsSection = (pathname.startsWith('/settings') && !pathname.startsWith('/settings/portfolio-db'))
-    || pathname.startsWith('/admin')
+  const inSettingsSection = pathname.startsWith('/settings') || pathname.startsWith('/admin')
 
-  const [portfolioOpen, setPortfolioOpen] = useState(inPortfolioSection)
   const [settingsOpen, setSettingsOpen] = useState(inSettingsSection)
 
   const { data: modeData } = useQuery({
@@ -342,17 +339,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
       <nav className="flex-1 py-4 px-2 space-y-0.5 overflow-y-auto no-scrollbar">
         <NavLink href="/dashboard" label="Dashboard" icon={LayoutDashboard} />
 
-        <AccordionGroup
-          label="Portfolio" icon={TrendingUp}
-          active={inPortfolioSection}
-          open={portfolioOpen}
-          onToggle={() => setPortfolioOpen(o => !o)}
-        >
-          <SubLink href="/portfolio" label="Portfolio Tracker" icon={TrendingUp} />
-          {isDbMode && (
-            <SubLink href="/settings/portfolio-db" label="Portfolio Manager" icon={Database} />
-          )}
-        </AccordionGroup>
+        <NavLink href="/portfolio" label="Portfolio" icon={TrendingUp} />
 
         <NavLink href="/action-plan" label="Action Plan" icon={ClipboardList} />
         <NavLink href="/analytics"   label="Analytics"   icon={BarChart3} />

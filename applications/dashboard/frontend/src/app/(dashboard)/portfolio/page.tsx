@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 import { format, subMonths } from 'date-fns'
-import { RefreshCw, AlertCircle, ChevronDown, ChevronRight, X, Loader2, CheckCircle2, XCircle, FileText, Copy, Trash2, RotateCcw, Table2 } from 'lucide-react'
+import { RefreshCw, AlertCircle, ChevronDown, ChevronRight, X, Loader2, CheckCircle2, XCircle, FileText, Copy, Trash2, RotateCcw, Table2, Database, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import {
@@ -135,7 +135,7 @@ function StepRow({ icon: Icon, label, detail, status }: {
 function RefreshModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient()
   const [phase, setPhase] = useState<'copying' | 'reloading' | 'done' | 'error'>('copying')
-  const [info, setInfo] = useState<{ source: string; destination: string; source_size_kb: number; destination_size_kb: number } | null>(null)
+  const [info, setInfo] = useState<{ source: string; destination: string; source_size_kb: number; destination_size_kb: number; synced_rows?: number } | null>(null)
   const [errMsg, setErrMsg] = useState('')
 
   useEffect(() => {
@@ -151,6 +151,7 @@ function RefreshModal({ onClose }: { onClose: () => void }) {
           queryClient.refetchQueries({ queryKey: ['portfolio-performance'] }),
           queryClient.refetchQueries({ queryKey: ['portfolio-by-date'] }),
           queryClient.refetchQueries({ queryKey: ['portfolio-by-stock'] }),
+          queryClient.refetchQueries({ queryKey: ['portfolio-summary'] }),
         ])
         if (!cancelled) setPhase('done')
       } catch (e: any) {
@@ -173,12 +174,17 @@ function RefreshModal({ onClose }: { onClose: () => void }) {
     {
       icon: Copy, label: 'Copying to working location',
       detail: info ? `→ ${info.destination}  (${info.destination_size_kb} KB)` : undefined,
-      status: phase === 'copying' ? 'pending' : phase === 'error' ? 'error' : 'done',
+      status: phase === 'copying' ? 'running' : phase === 'error' ? 'error' : 'done',
     },
     {
       icon: Trash2, label: 'Clearing cache (all workers)',
       detail: (phase === 'reloading' || phase === 'done') ? 'Cache bust file written' : undefined,
-      status: phase === 'copying' ? 'pending' : phase === 'error' ? 'pending' : 'done',
+      status: phase === 'copying' ? 'running' : phase === 'error' ? 'error' : 'done',
+    },
+    {
+      icon: Database, label: 'Syncing to database',
+      detail: info?.synced_rows != null ? `${info.synced_rows} rows written to portfolio_positions_db` : undefined,
+      status: phase === 'copying' ? 'running' : phase === 'error' ? 'error' : 'done',
     },
     {
       icon: RotateCcw, label: 'Reloading portfolio data',
@@ -287,6 +293,89 @@ function RawDataModal({ onClose }: { onClose: () => void }) {
                 <XCircle className="w-8 h-8 text-loss mx-auto" />
                 <p className="text-sm text-loss">Failed to load Excel file.</p>
                 <p className="text-xs text-ink-muted">Make sure the working copy exists. Press Refresh first if needed.</p>
+              </div>
+            </div>
+          )}
+          {data && (
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 z-10 bg-surface-card">
+                <tr className="border-b border-border/60">
+                  <th className="px-2.5 py-2 text-left font-medium text-ink-disabled whitespace-nowrap border-r border-border/30">#</th>
+                  {data.columns.map((col, i) => (
+                    <th key={i} className="px-2.5 py-2 text-left font-medium text-ink-muted whitespace-nowrap border-r border-border/20 last:border-r-0">
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((row, ri) => (
+                  <tr key={ri} className={cn('border-b border-border/20 hover:bg-surface-elevated/50 transition-colors',
+                    ri % 2 === 1 && 'bg-surface-elevated/20')}>
+                    <td className="px-2.5 py-1.5 text-ink-disabled border-r border-border/20 tabular-nums">{ri + 1}</td>
+                    {row.map((cell, ci) => (
+                      <td key={ci} className="px-2.5 py-1.5 text-ink-secondary border-r border-border/15 last:border-r-0 whitespace-nowrap max-w-[200px] truncate"
+                          title={cell != null ? String(cell) : ''}>
+                        {cell != null ? String(cell) : <span className="text-ink-disabled">—</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+// ── Raw source data viewer modal ───────────────────────────────────────────────
+
+function RawSourceDataModal({ onClose }: { onClose: () => void }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['raw-source-data'],
+    queryFn: () => portfolioTrackerService.getRawSourceData(),
+    staleTime: 0,
+    retry: 1,
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+         onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-surface-card border border-border/60 rounded-2xl shadow-2xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/50 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <Database className="w-4 h-4 text-amber-400" />
+            <div>
+              <h2 className="text-sm font-semibold text-ink-primary">Raw Source Data</h2>
+              {data && (
+                <p className="text-[11px] text-ink-muted mt-0.5 font-mono">{data.file} — {data.total} rows</p>
+              )}
+            </div>
+          </div>
+          <button onClick={onClose} className="btn-icon"><X className="w-4 h-4" /></button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-auto">
+          {isLoading && (
+            <div className="flex items-center justify-center h-full gap-2 text-ink-muted text-sm">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading source file…
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center space-y-2">
+                <XCircle className="w-8 h-8 text-loss mx-auto" />
+                <p className="text-sm text-loss">Failed to read source file.</p>
+                <p className="text-xs text-ink-muted">Check that the source path is mounted correctly in docker-compose.</p>
               </div>
             </div>
           )}
@@ -530,7 +619,48 @@ function PositionsTable({ positions, total, totalPnl, loading, onSymbolClick }: 
   )
 }
 
-// ── Section 2: Performance Chart ───────────────────────────────────────────────
+// ── Section 2a: Performance Summary stats ─────────────────────────────────────
+
+function PerformanceSummary({ data }: {
+  data: { accumulated_pnl: number; win_rate: number; avg_pnl: number; avg_pnl_pct: number; total_trades: number; wins: number; losses: number } | undefined
+}) {
+  const stats = [
+    {
+      label: 'Accumulated P&L',
+      value: data ? fmtPnl(data.accumulated_pnl) : '—',
+      color: data ? (data.accumulated_pnl >= 0 ? 'text-gain' : 'text-loss') : 'text-ink-muted',
+    },
+    {
+      label: 'Win Rate',
+      value: data ? `${data.win_rate}%` : '—',
+      sub: data ? `${data.wins}W / ${data.losses}L / ${data.total_trades}T` : undefined,
+      color: data ? (data.win_rate >= 50 ? 'text-gain' : 'text-loss') : 'text-ink-muted',
+    },
+    {
+      label: 'Avg P&L / Trade',
+      value: data ? fmtPnl(data.avg_pnl) : '—',
+      color: data ? (data.avg_pnl >= 0 ? 'text-gain' : 'text-loss') : 'text-ink-muted',
+    },
+    {
+      label: 'Avg %P&L / Trade',
+      value: data ? `${data.avg_pnl_pct >= 0 ? '+' : ''}${data.avg_pnl_pct.toFixed(2)}%` : '—',
+      color: data ? (data.avg_pnl_pct >= 0 ? 'text-gain' : 'text-loss') : 'text-ink-muted',
+    },
+  ]
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {stats.map(s => (
+        <div key={s.label} className="card p-3.5 flex flex-col gap-1">
+          <span className="text-[11px] text-ink-muted font-medium">{s.label}</span>
+          <span className={cn('text-base font-bold tabular-nums', s.color)}>{s.value}</span>
+          {s.sub && <span className="text-[10px] text-ink-disabled">{s.sub}</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Section 2b: Performance Chart ─────────────────────────────────────────────
 
 function PerformanceChart({ data, period, onPeriodChange, loading }: {
   data: { date: string; label: string; dailyPnl: number; cumulativePnl: number }[]
@@ -608,6 +738,17 @@ function PerformanceChart({ data, period, onPeriodChange, loading }: {
   )
 }
 
+// ── Sort helpers ───────────────────────────────────────────────────────────────
+
+type SortDir = 'asc' | 'desc'
+
+function SortIcon({ col, sortKey, dir }: { col: string; sortKey: string; dir: SortDir }) {
+  if (col !== sortKey) return <ArrowUpDown className="w-3 h-3 ml-1 inline-block opacity-30" />
+  return dir === 'asc'
+    ? <ArrowUp className="w-3 h-3 ml-1 inline-block text-brand-400" />
+    : <ArrowDown className="w-3 h-3 ml-1 inline-block text-brand-400" />
+}
+
 // ── Section 3: Performance by Date table ──────────────────────────────────────
 
 function PerformanceByDateTable({ data, period, onRowClick }: {
@@ -615,21 +756,58 @@ function PerformanceByDateTable({ data, period, onRowClick }: {
   period: Period
   onRowClick: (periodKey: string, label: string) => void
 }) {
+  const [sortKey, setSortKey] = useState<string>('period')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  const onSort = (col: string) => {
+    if (col === sortKey) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(col); setSortDir('desc') }
+  }
+
+  const sorted = useMemo(() => {
+    const d = [...data]
+    d.sort((a, b) => {
+      let av: any, bv: any
+      if (sortKey === 'period') { av = a.period; bv = b.period }
+      else if (sortKey === 'net') { av = a.net; bv = b.net }
+      else if (sortKey === 'accumulatedPnl') { av = a.accumulatedPnl ?? 0; bv = b.accumulatedPnl ?? 0 }
+      else if (sortKey === 'wins') { av = a.wins; bv = b.wins }
+      else if (sortKey === 'losses') { av = a.losses; bv = b.losses }
+      else if (sortKey === 'total') { av = a.total; bv = b.total }
+      else if (sortKey === 'winRate') { av = a.winRate; bv = b.winRate }
+      else { av = 0; bv = 0 }
+      return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1)
+    })
+    return d
+  }, [data, sortKey, sortDir])
+
+  const Th = ({ col, label }: { col: string; label: string }) => (
+    <th onClick={() => onSort(col)}
+        className="px-3 py-2.5 text-left font-medium whitespace-nowrap cursor-pointer select-none hover:text-ink-primary transition-colors">
+      {label}<SortIcon col={col} sortKey={sortKey} dir={sortDir} />
+    </th>
+  )
+
   return (
     <CollapsibleSection title={`Performance by ${period.charAt(0).toUpperCase() + period.slice(1)}`}>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border/50 text-ink-muted">
-              {['Period', 'Net P&L', 'Accumulated P&L', 'Wins', 'Losses', 'Total', 'Win Rate', ''].map((h, i) => (
-                <th key={i} className="px-3 py-2.5 text-left font-medium whitespace-nowrap">{h}</th>
-              ))}
+              <Th col="period" label="Period" />
+              <Th col="net" label="Net P&L" />
+              <Th col="accumulatedPnl" label="Accumulated P&L" />
+              <Th col="wins" label="Wins" />
+              <Th col="losses" label="Losses" />
+              <Th col="total" label="Total" />
+              <Th col="winRate" label="Win Rate" />
+              <th className="px-3 py-2.5" />
             </tr>
           </thead>
           <tbody>
-            {data.length === 0 ? (
+            {sorted.length === 0 ? (
               <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-muted">No data.</td></tr>
-            ) : data.map(row => (
+            ) : sorted.map(row => (
               <tr
                 key={row.period}
                 onClick={() => onRowClick(row.period, row.label)}
@@ -660,74 +838,57 @@ function PerformanceByDateTable({ data, period, onRowClick }: {
   )
 }
 
-// ── Section 4: Performance by Stock chart ─────────────────────────────────────
-
-function PerformanceByStockChart({ data }: {
-  data: { symbol: string; net: number }[]
-}) {
-  const option = useMemo(() => {
-    const sorted = [...data].sort((a, b) => b.net - a.net)
-    return {
-      backgroundColor: 'transparent',
-      tooltip: {
-        trigger: 'axis', axisPointer: { type: 'shadow' },
-        backgroundColor: '#1e293b', borderColor: '#334155', textStyle: { color: '#e2e8f0', fontSize: 11 },
-        formatter: (params: any[]) => {
-          const p = params[0]
-          return `<b>${p.name}</b><br/>Net P&L: ${Number(p.value) >= 0 ? '+' : ''}${Number(p.value).toLocaleString()} THB`
-        },
-      },
-      grid: { left: '2%', right: '4%', bottom: '3%', top: '8px', containLabel: true },
-      xAxis: {
-        type: 'category', data: sorted.map(d => d.symbol),
-        axisLabel: { color: '#94a3b8', fontSize: 11 }, axisLine: { lineStyle: { color: '#334155' } }, splitLine: { show: false },
-      },
-      yAxis: {
-        type: 'value', name: 'THB',
-        axisLabel: { color: '#64748b', fontSize: 10, formatter: (v: number) => v.toLocaleString() },
-        axisLine: { show: false }, splitLine: { lineStyle: { color: '#1e293b' } },
-      },
-      series: [{
-        type: 'bar',
-        data: sorted.map(d => ({
-          value: d.net,
-          itemStyle: { color: d.net >= 0 ? '#22c55e' : '#ef4444', borderRadius: d.net >= 0 ? [4, 4, 0, 0] : [0, 0, 4, 4] },
-        })),
-        barMaxWidth: 48,
-      }],
-    }
-  }, [data])
-
-  if (data.length === 0) return null
-
-  return (
-    <div className="card p-4">
-      <h2 className="text-sm font-semibold text-ink-primary mb-3">Performance by Stock</h2>
-      <ReactECharts option={option} style={{ height: 220 }} notMerge />
-    </div>
-  )
-}
-
-// ── Section 5: Performance by Stock table ─────────────────────────────────────
+// ── Section 4: Performance by Stock table ─────────────────────────────────────
 
 function PerformanceByStockTable({ data }: {
   data: { symbol: string; net: number; investment: number; currentValue: number; pnlPct: number; wins: number; losses: number; total: number; winRate: number }[]
 }) {
+  const [sortKey, setSortKey] = useState<string>('net')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  const onSort = (col: string) => {
+    if (col === sortKey) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(col); setSortDir('desc') }
+  }
+
+  const sorted = useMemo(() => {
+    const d = [...data]
+    d.sort((a, b) => {
+      const av = (a as any)[sortKey] ?? 0
+      const bv = (b as any)[sortKey] ?? 0
+      if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
+      return sortDir === 'asc' ? av - bv : bv - av
+    })
+    return d
+  }, [data, sortKey, sortDir])
+
+  const Th = ({ col, label }: { col: string; label: string }) => (
+    <th onClick={() => onSort(col)}
+        className="px-3 py-2.5 text-left font-medium whitespace-nowrap cursor-pointer select-none hover:text-ink-primary transition-colors">
+      {label}<SortIcon col={col} sortKey={sortKey} dir={sortDir} />
+    </th>
+  )
+
   return (
     <CollapsibleSection title="Performance by Stock — Detail">
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border/50 text-ink-muted">
-              {['Symbol', 'Investment', 'Current Value', 'Net P&L', 'P&L %', 'Wins', 'Losses', 'Win Rate'].map(h => (
-                <th key={h} className="px-3 py-2.5 text-left font-medium whitespace-nowrap">{h}</th>
-              ))}
+              <Th col="symbol" label="Symbol" />
+              <Th col="investment" label="Investment" />
+              <Th col="currentValue" label="Current Value" />
+              <Th col="net" label="Net P&L" />
+              <Th col="pnlPct" label="P&L %" />
+              <Th col="wins" label="Wins" />
+              <Th col="losses" label="Losses" />
+              <Th col="winRate" label="Win Rate" />
             </tr>
           </thead>
           <tbody>
-            {data.length === 0 ? (
+            {sorted.length === 0 ? (
               <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-muted">No data.</td></tr>
-            ) : data.map(row => (
+            ) : sorted.map(row => (
               <tr key={row.symbol} className="border-b border-border/30 hover:bg-surface-elevated/50 transition-colors">
                 <td className="px-3 py-2 font-semibold text-ink-primary">{row.symbol}</td>
                 <td className="px-3 py-2 text-ink-secondary tabular-nums">{fmt(row.investment, 0)}</td>
@@ -763,12 +924,13 @@ export default function PortfolioPage() {
   const queryClient = useQueryClient()
   const saved = loadCriteria()
   const [fromDate, setFromDate] = useState(saved?.fromDate ?? defaultFromDate())
-  const [toDate, setToDate] = useState(saved?.toDate ?? todayStr())
+  const [toDate, setToDate] = useState(todayStr())
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(saved?.statusFilter ?? 'active')
   const [period, setPeriod] = useState<Period>('daily')
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null)
   const [showRefresh, setShowRefresh] = useState(false)
   const [showRawData, setShowRawData] = useState(false)
+  const [showRawSourceData, setShowRawSourceData] = useState(false)
   const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
 
   // Persist criteria on change
@@ -800,6 +962,12 @@ export default function PortfolioPage() {
     refetchInterval: 60_000,
   })
 
+  const summaryQuery = useQuery({
+    queryKey: ['portfolio-summary', fromDate, toDate],
+    queryFn: () => portfolioTrackerService.getSummary(params),
+    refetchInterval: 60_000,
+  })
+
 
 
   const positions = posQuery.data?.positions ?? []
@@ -821,9 +989,16 @@ export default function PortfolioPage() {
         </div>
         <div className="flex items-center gap-1">
           <button
+            onClick={() => setShowRawSourceData(true)}
+            className="btn-icon"
+            title="View raw source Excel data (from mounted source path)"
+          >
+            <Database className="w-4 h-4" />
+          </button>
+          <button
             onClick={() => setShowRawData(true)}
             className="btn-icon"
-            title="View raw Excel data"
+            title="View raw Excel data (working copy)"
           >
             <Table2 className="w-4 h-4" />
           </button>
@@ -898,10 +1073,13 @@ export default function PortfolioPage() {
       {/* 1. Positions */}
       <PositionsTable positions={positions} total={totalPositions} totalPnl={totalPnl} loading={isLoading} onSymbolClick={setAnalyticsSymbol} />
 
-      {/* 2. Daily Performance Chart */}
+      {/* 2a. Summary stats */}
+      <PerformanceSummary data={summaryQuery.data} />
+
+      {/* 2b. Daily Performance Chart */}
       <PerformanceChart data={perfQuery.data ?? []} period={period} onPeriodChange={setPeriod} loading={perfQuery.isLoading} />
 
-      {/* 3. Performance by Date table (collapsible, aligned with chart period) */}
+      {/* 3. Performance by Date table */}
       <PerformanceByDateTable
         data={byDateQuery.data ?? []}
         period={period}
@@ -910,10 +1088,7 @@ export default function PortfolioPage() {
         }
       />
 
-      {/* 4. Performance by Stock chart */}
-      <PerformanceByStockChart data={byStockQuery.data ?? []} />
-
-      {/* 5. Performance by Stock table (collapsible) */}
+      {/* 4. Performance by Stock table */}
       <PerformanceByStockTable data={byStockQuery.data ?? []} />
 
       {/* Drill-down modal */}
@@ -926,6 +1101,9 @@ export default function PortfolioPage() {
 
       {/* Raw data viewer modal */}
       {showRawData && <RawDataModal onClose={() => setShowRawData(false)} />}
+
+      {/* Raw source data viewer modal */}
+      {showRawSourceData && <RawSourceDataModal onClose={() => setShowRawSourceData(false)} />}
 
       {/* Analytics modal */}
       <AnimatePresence>

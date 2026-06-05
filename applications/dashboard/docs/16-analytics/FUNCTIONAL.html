@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analytics — Functional Spec — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 1000px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+
+<h1>Analytics — Functional Specification</h1>
+
+<p>The Analytics page lets users search any financial symbol across Thai SET, Crypto, and Depositary Receipt markets, then view a full technical analysis modal with interactive charts, AI-generated analysis logs, Fibonacci charts, and personal notes.</p>
+
+<hr>
+
+<h2>1. Page Overview</h2>
+
+<table>
+  <tr><th>Route</th><td><code>/analytics</code></td></tr>
+  <tr><th>Auth required</th><td>Yes — any authenticated role</td></tr>
+  <tr><th>State persistence</th><td>Search history lives in React <code>useState</code> — cleared on page navigation. No URL params, no server-side state.</td></tr>
+  <tr><th>Data sources</th><td>Yahoo Finance (live prices + OHLCV), investment agent knowledge base (analysis logs + Fibonacci charts), PostgreSQL (symbol notes)</td></tr>
+</table>
+
+<hr>
+
+<h2>2. Asset Type Selector</h2>
+
+<p>Three mutually-exclusive tabs control which market the search targets. The selected type determines how the backend resolves the ticker symbol.</p>
+
+<table>
+  <tr><th>Tab</th><th>Value</th><th>Accent colour</th><th>Example symbols</th><th>Yahoo Finance resolution</th></tr>
+  <tr><td><strong>SET</strong></td><td><code>SET</code></td><td>Brand blue</td><td>KBANK, GULF, AOT, PTT</td><td>Appends <code>.BK</code> → tries <code>KBANK.BK</code>, then bare <code>KBANK</code></td></tr>
+  <tr><td><strong>CRYPTO</strong></td><td><code>CRYPTO</code></td><td>Amber</td><td>BTC, ETH, SOL, XRP</td><td>Tries <code>BTC-USD</code>, then <code>BTC-USDT</code>, then bare <code>BTC</code></td></tr>
+  <tr><td><strong>DR</strong></td><td><code>DR</code></td><td>Purple</td><td>GOLD, OIL, BTCUSD-DR</td><td>Tries <code>GOLD.BK</code>, then bare <code>GOLD</code></td></tr>
+</table>
+
+<div class="callout">The backend also accepts <code>US</code>, <code>HK</code>, and <code>OTHER</code> as asset types (used by the analytics service), but the Analytics page UI exposes only <code>SET</code>, <code>CRYPTO</code>, and <code>DR</code> tabs. The additional types are available via direct API calls.</div>
+
+<hr>
+
+<h2>3. Search Form</h2>
+
+<ul>
+  <li>Single text input — values are automatically converted to UPPERCASE as the user types.</li>
+  <li>Input placeholder changes by asset type: <em>"e.g. BBCP, AOT, KBANK"</em> / <em>"e.g. BTC, ETH, SOL"</em> / <em>"e.g. GOLD, OIL"</em>.</li>
+  <li>Submit via the <strong>Search</strong> button or pressing <kbd>Enter</kbd>.</li>
+  <li>The Search button is disabled while a request is in flight (spinner shown) or when the input is empty.</li>
+  <li>On success: the symbol is added to the result history table AND the Analytics Modal opens immediately.</li>
+  <li>On failure (symbol not found): an error banner appears below the form — <em>"Symbol "X" not found on SET."</em> The symbol is still added to history with <code>found: false</code>.</li>
+  <li>On network error: <em>"Search failed. Check your connection."</em></li>
+</ul>
+
+<hr>
+
+<h2>4. Search Result History Table</h2>
+
+<p>Every successful search request is added to an in-page history table. The table persists as long as the user stays on the Analytics page.</p>
+
+<h3>Deduplication rule</h3>
+<p>If the same <code>(symbol, assetType)</code> pair is searched again, the previous entry is removed and the new one is inserted at the top. The list is capped at <strong>20 entries</strong>.</p>
+
+<h3>Table columns</h3>
+<table>
+  <tr><th>Column</th><th>Source</th><th>Notes</th></tr>
+  <tr><td>Symbol</td><td><code>entry.symbol</code></td><td>Clickable — reopens the Analytics Modal for that symbol</td></tr>
+  <tr><td>Name</td><td><code>result.name</code></td><td>Long name from Yahoo Finance <code>info.longName</code> or <code>shortName</code>; falls back to the symbol itself</td></tr>
+  <tr><td>Market</td><td><code>entry.assetType</code> + <code>result.exchange</code></td><td>Two badges: asset type (coloured) + Yahoo exchange string (grey)</td></tr>
+  <tr><td>Price</td><td><code>result.price</code></td><td>Last close, 4 decimal places; <code>—</code> if not found</td></tr>
+  <tr><td>Change</td><td><code>result.change_pct</code></td><td>% vs previous close; green (↑) or red (↓)</td></tr>
+  <tr><td>Status</td><td><code>result.found</code></td><td><span style="color:#3fb950">Found</span> or greyed out "Not found"</td></tr>
+  <tr><td>(action)</td><td>—</td><td>"View →" button — only shown when <code>found: true</code>; reopens the modal</td></tr>
+</table>
+
+<hr>
+
+<h2>5. Analytics Modal</h2>
+
+<p>A full-viewport overlay (<code>80vw</code> wide) with scrollable content. Clicking the backdrop or the × button dismisses it. Opening the modal triggers three parallel API calls: Analysis Log, Fibonacci Chart, and Symbol Note.</p>
+
+<h3>5.1 Modal Header</h3>
+<ul>
+  <li>Symbol name (large, bold, monospace)</li>
+  <li>Asset type badge (coloured, matching the search tab)</li>
+  <li>Subtitle: "Candlestick · RSI · Stochastic · VRVP"</li>
+  <li>× close button</li>
+</ul>
+
+<h3>5.2 ECharts Chart Panel</h3>
+
+<p>The main chart uses Apache ECharts with four panes rendered in a single canvas:</p>
+
+<table>
+  <tr><th>Pane</th><th>Height</th><th>Content</th></tr>
+  <tr><td>Price (main)</td><td>~55%</td><td>Candlestick chart + VRVP histogram on the right Y-axis</td></tr>
+  <tr><td>Volume</td><td>~15%</td><td>Bar chart — green bars for up-candles, red for down-candles</td></tr>
+  <tr><td>RSI (14)</td><td>~15%</td><td>Line chart with 70 (overbought) and 30 (oversold) reference lines</td></tr>
+  <tr><td>Stochastic (9,3,3)</td><td>~15%</td><td>%K (fast) and %D (slow) lines with 80/20 reference levels</td></tr>
+</table>
+
+<h4>Interval selector</h4>
+<p>Four buttons above the chart switch the time interval. The selected interval is highlighted in brand colour.</p>
+<table>
+  <tr><th>Button</th><th>Interval value</th><th>History window</th><th>Notes</th></tr>
+  <tr><td>1H</td><td><code>1h</code></td><td>~2 years</td><td>Fetches 1h bars from yfinance</td></tr>
+  <tr><td>4H</td><td><code>4h</code></td><td>~2 years</td><td>Fetches 1h from yfinance, resampled to 4h on the backend</td></tr>
+  <tr><td>1D</td><td><code>1d</code></td><td>~2.5 years</td><td>Default interval on modal open</td></tr>
+  <tr><td>1W</td><td><code>1wk</code></td><td>~2.5 years</td><td>Weekly candles</td></tr>
+</table>
+
+<p>Changing the interval triggers a new <code>GET /analytics/chart</code> request. A loading overlay is shown while fetching. The chart includes a <strong>dataZoom</strong> slider at the bottom for panning/zooming the time axis.</p>
+
+<h4>VRVP (Volume Range Visible Profile)</h4>
+<p>A horizontal bar chart overlaid on the right side of the price pane. It shows volume distribution across 24 equal price buckets spanning the entire loaded history. Taller bars represent price levels with high historical trading activity — used to identify support/resistance.</p>
+
+<h3>5.3 Analysis Log Panel (collapsible)</h3>
+
+<ul>
+  <li>Visible only when an analysis log file exists for the symbol.</li>
+  <li>File discovery: the backend searches <code>/app/investment_agent/analysis_log/</code> for files matching <code>*{SYMBOL}*.html</code> and <code>*{SYMBOL}*.md</code>. The most recently modified file is used.</li>
+  <li><strong>HTML files</strong>: rendered inside a sandboxed <code>&lt;iframe&gt;</code> with an injected dark-theme CSS stylesheet. The panel is open by default for HTML files.</li>
+  <li><strong>Markdown files</strong>: rendered with <code>react-markdown</code> + <code>remark-gfm</code> inside a styled scrollable container. The panel is collapsed by default for MD files.</li>
+  <li>The filename is shown above the content in small grey text.</li>
+</ul>
+
+<h3>5.4 Fibonacci Chart Panel (collapsible)</h3>
+
+<ul>
+  <li>Visible only when a Fibonacci chart image file exists for the symbol.</li>
+  <li>File discovery: the backend searches <code>/app/investment_agent/charts/Fibo/</code> for <code>*{SYMBOL}*.png</code>, <code>*.jpg</code>, <code>*.jpeg</code>, <code>*.webp</code>. The most recently modified file is used.</li>
+  <li>The image is returned as a Base64 data URI and displayed in a <strong>pan/zoom viewer</strong>.</li>
+</ul>
+
+<h4>Pan/zoom viewer controls</h4>
+<table>
+  <tr><th>Interaction</th><th>Effect</th></tr>
+  <tr><td>Scroll wheel</td><td>Zoom in/out (1.15× per step, clamped 0.25× – 10×)</td></tr>
+  <tr><td>Click and drag</td><td>Pan the image</td></tr>
+  <tr><td>Two-finger pinch (touch)</td><td>Pinch-to-zoom</td></tr>
+  <tr><td>One-finger drag (touch)</td><td>Pan</td></tr>
+  <tr><td>+ Zoom in / − Zoom out buttons</td><td>Zoom by 1.3× per click</td></tr>
+  <tr><td>Reset button</td><td>Returns to 100% zoom, centred</td></tr>
+</table>
+
+<h3>5.5 Symbol Note Panel</h3>
+
+<ul>
+  <li>Always visible at the bottom of the modal (not collapsible).</li>
+  <li>A resizable <code>&lt;textarea&gt;</code> pre-populated with any previously saved note for this symbol.</li>
+  <li><strong>Save note</strong> button: calls <code>PUT /analytics/note</code> with the current text. On success, the button shows a green checkmark and "Saved" for 2.5 seconds.</li>
+  <li>Notes are per-user and per-symbol. The same symbol searched as SET and CRYPTO can have different notes (the <code>asset_type</code> field distinguishes them).</li>
+  <li>Empty / cleared notes: saving an empty textarea stores an empty string — it does not delete the note record.</li>
+</ul>
+
+<hr>
+
+<h2>6. File Naming Conventions for Knowledge Base Assets</h2>
+
+<p>For the Analysis Log and Fibonacci Chart panels to populate, files must exist in the investment agent directories with the symbol name somewhere in the filename.</p>
+
+<h3>Analysis logs — <code>/app/investment_agent/analysis_log/</code></h3>
+<ul>
+  <li>Accepted extensions: <code>.html</code>, <code>.md</code></li>
+  <li>The symbol must appear in the filename (case-insensitive glob: <code>*SYMBOL*.html</code>)</li>
+  <li>Example: <code>GULF_analysis_2026-05-30.html</code>, <code>BTC_weekly.md</code></li>
+  <li>Multiple files matching the same symbol: the most recently modified file is shown</li>
+</ul>
+
+<h3>Fibonacci charts — <code>/app/investment_agent/charts/Fibo/</code></h3>
+<ul>
+  <li>Accepted extensions: <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.webp</code></li>
+  <li>The symbol must appear in the filename</li>
+  <li>Example: <code>GULF_fibo_2026-05.png</code>, <code>BTC_fibonacci.jpg</code></li>
+  <li>Multiple files: most recently modified wins</li>
+</ul>
+
+<div class="callout warn">The symbol is validated before the filename glob runs. Symbols must match <code>^[A-Z0-9.\-]{1,20}$</code>. Any symbol containing path characters (slashes, dots used as path separators, etc.) will be rejected with HTTP 400. Additionally, all glob results are verified to be physically inside the base directory — files outside the directory are silently dropped even if the glob matches them.</div>
+
+<hr>
+
+<h2>7. User Flows</h2>
+
+<h3>7.1 Search and view chart</h3>
+<ol>
+  <li>Select asset type tab (SET / CRYPTO / DR)</li>
+  <li>Type symbol in the search box → press Enter or click Search</li>
+  <li>Symbol is added to the history table</li>
+  <li>Analytics Modal opens automatically on found symbols</li>
+  <li>Default chart interval is 1D</li>
+  <li>Switch interval with the tab buttons — chart reloads</li>
+  <li>Use dataZoom slider to focus on a time range</li>
+</ol>
+
+<h3>7.2 View analysis log for a symbol</h3>
+<ol>
+  <li>After modal opens, scroll down past the chart</li>
+  <li>If an analysis log exists, the "Analysis Log" panel appears</li>
+  <li>HTML logs are displayed in a dark-themed sandboxed iframe</li>
+  <li>MD logs are rendered as formatted markdown (collapsed by default)</li>
+  <li>Click the section header to toggle open/close</li>
+</ol>
+
+<h3>7.3 Save a note for a symbol</h3>
+<ol>
+  <li>Open Analytics Modal for any symbol</li>
+  <li>Type or edit text in the Note textarea at the bottom</li>
+  <li>Click <strong>Save note</strong></li>
+  <li>Confirmation animation shows for 2.5 s</li>
+  <li>Note persists across sessions — next time the modal is opened for this symbol, the note is pre-filled</li>
+</ol>
+
+<h3>7.4 Re-open a previous search from history</h3>
+<ol>
+  <li>Click the symbol name (monospace bold) in the history table, OR click "View →" on any found entry</li>
+  <li>Analytics Modal opens without making a new search API call</li>
+  <li>The cached <code>SearchResult</code> from the original search is used</li>
+</ol>
+
+</body>
+</html>
