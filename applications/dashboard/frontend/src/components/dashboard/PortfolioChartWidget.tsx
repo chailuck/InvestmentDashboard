@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import dynamic from 'next/dynamic'
 import { format, subMonths, subWeeks, subDays, startOfYear } from 'date-fns'
@@ -27,8 +27,20 @@ function periodToParams(p: Period): { from_date: string; period: 'daily' | 'week
   }
 }
 
+const PERIOD_KEY = 'perf-widget-period'
+
 export function PortfolioChartWidget({ config }: { config: WidgetConfig }) {
   const [period, setPeriod] = useState<Period>('3M')
+
+  useEffect(() => {
+    const saved = localStorage.getItem(PERIOD_KEY) as Period | null
+    if (saved && PERIODS.includes(saved)) setPeriod(saved)
+  }, [])
+
+  const handlePeriod = (p: Period) => {
+    setPeriod(p)
+    localStorage.setItem(PERIOD_KEY, p)
+  }
   const { from_date, period: apiPeriod } = periodToParams(period)
   const toDate = format(new Date(), 'yyyy-MM-dd')
 
@@ -116,7 +128,7 @@ export function PortfolioChartWidget({ config }: { config: WidgetConfig }) {
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-1 px-4 pt-2 pb-1">
         {PERIODS.map(p => (
-          <button key={p} onClick={() => setPeriod(p)}
+          <button key={p} onClick={() => handlePeriod(p)}
             className={cn(
               'px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150',
               period === p

@@ -17,6 +17,7 @@ import { AIInsightsWidget } from '@/components/dashboard/AIInsightsWidget'
 import { MarketPulseWidget } from '@/components/dashboard/MarketPulseWidget'
 import { ScanHeatTileWidget } from '@/components/dashboard/ScanHeatTileWidget'
 import { PnlWaterfallWidget } from '@/components/dashboard/PnlWaterfallWidget'
+import { TradingHistorySummaryWidget } from '@/components/dashboard/TradingHistorySummaryWidget'
 import type { WidgetConfig, WidgetType } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -31,9 +32,10 @@ const WIDGET_MAP: Record<WidgetType, React.ComponentType<{ config: WidgetConfig 
   performance_chart:  PortfolioChartWidget,
   watchlist:          () => null,
   news_feed:          () => null,
-  market_pulse:       MarketPulseWidget,
-  scan_heat_tile:     ScanHeatTileWidget,
-  pnl_waterfall:      PnlWaterfallWidget,
+  market_pulse:             MarketPulseWidget,
+  scan_heat_tile:           ScanHeatTileWidget,
+  pnl_waterfall:            PnlWaterfallWidget,
+  trading_history_summary:  TradingHistorySummaryWidget,
 }
 
 function useContainerWidth(ref: React.RefObject<HTMLDivElement>) {

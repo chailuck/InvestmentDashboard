@@ -204,6 +204,7 @@ export type WidgetType =
   | 'market_pulse'
   | 'scan_heat_tile'
   | 'pnl_waterfall'
+  | 'trading_history_summary'
 
 // ── API ───────────────────────────────────────────────────
 export interface ApiError {

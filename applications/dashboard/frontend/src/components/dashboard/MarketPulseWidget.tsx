@@ -2,70 +2,79 @@
 
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { motion, AnimatePresence } from 'framer-motion'
+import { TrendingUp, TrendingDown } from 'lucide-react'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { portfolioTrackerService, type SetIndex, type GlobalIndex } from '@/services/portfolioTracker'
 import { cn } from '@/lib/utils'
 import type { WidgetConfig } from '@/types'
 
-function PulseDot({ positive }: { positive: boolean }) {
-  return (
-    <span className="relative inline-flex h-2 w-2 shrink-0">
-      <span
-        className={cn(
-          'animate-ping absolute inline-flex h-2 w-2 rounded-full opacity-75',
-          positive ? 'bg-gain' : 'bg-loss',
-        )}
-      />
-      <span
-        className={cn(
-          'relative inline-flex h-2 w-2 rounded-full',
-          positive ? 'bg-gain' : 'bg-loss',
-        )}
-      />
-    </span>
-  )
+function fmtValue(v: number | null): string {
+  if (v == null) return '—'
+  if (Math.abs(v) >= 10_000) return v.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  if (Math.abs(v) >= 1_000)  return v.toLocaleString('en-US', { maximumFractionDigits: 1 })
+  return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-interface IndexPillProps {
+interface IndexCardProps {
   name: string
   value: number | null
+  change: number | null
   changePct: number | null
 }
 
-function IndexPill({ name, value, changePct }: IndexPillProps) {
-  const isPositive = (changePct ?? 0) >= 0
-  const fmtValue = value != null
-    ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : '—'
+function IndexCard({ name, value, change, changePct }: IndexCardProps) {
+  const up = (changePct ?? 0) >= 0
+  const Icon = up ? TrendingUp : TrendingDown
+
   const fmtPct = changePct != null
     ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`
     : '—'
+  const fmtChg = change != null
+    ? `${change >= 0 ? '+' : ''}${Math.abs(change) >= 1 ? change.toFixed(1) : change.toFixed(2)}`
+    : null
 
   return (
-    <div
-      className={cn(
-        'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs shrink-0',
-        'bg-surface-elevated border-border/40',
-      )}
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="card-elevated rounded-xl flex flex-col gap-0.5 p-2.5 sm:p-3 min-w-0"
     >
-      <PulseDot positive={isPositive} />
-      <span className="font-semibold text-ink-secondary">{name}</span>
-      <span className="text-ink-primary tabular-nums">{fmtValue}</span>
-      <span
-        className={cn(
-          'px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums',
-          isPositive ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss',
+      <div className="flex items-center justify-between gap-1">
+        <span className="metric-label text-[10px] sm:text-xs leading-tight font-semibold text-ink-muted uppercase tracking-wider truncate">
+          {name}
+        </span>
+        <Icon className={cn('w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0', up ? 'text-gain' : 'text-loss')} />
+      </div>
+      <AnimatePresence mode="wait">
+        <motion.span
+          key={String(value)}
+          initial={{ opacity: 0, y: 3 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -3 }}
+          className="font-bold tabular-nums leading-tight text-sm sm:text-base text-ink-primary"
+        >
+          {fmtValue(value)}
+        </motion.span>
+      </AnimatePresence>
+      <div className="flex items-center gap-1 flex-wrap">
+        <span className={cn(
+          'text-[10px] font-semibold px-1 py-0.5 rounded tabular-nums',
+          up ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss',
+        )}>
+          {fmtPct}
+        </span>
+        {fmtChg && (
+          <span className={cn('text-[10px] tabular-nums', up ? 'text-gain' : 'text-loss')}>
+            {fmtChg}
+          </span>
         )}
-      >
-        {fmtPct}
-      </span>
-    </div>
+      </div>
+    </motion.div>
   )
 }
 
 export function MarketPulseWidget({ config }: { config: WidgetConfig }) {
-  const fetchedAt = useMemo(() => new Date(), [])
-
   const { data: setIndices = [], isLoading: setLoading, dataUpdatedAt: setUpdatedAt } = useQuery<SetIndex[]>({
     queryKey: ['market-set-indices'],
     queryFn: () => portfolioTrackerService.getSetIndices(),
@@ -82,61 +91,56 @@ export function MarketPulseWidget({ config }: { config: WidgetConfig }) {
 
   const lastUpdated = useMemo(() => {
     const ts = Math.max(setUpdatedAt ?? 0, globalUpdatedAt ?? 0)
-    if (!ts) return null
-    return formatDistanceToNowStrict(new Date(ts), { addSuffix: true })
+    return ts ? formatDistanceToNowStrict(new Date(ts), { addSuffix: true }) : null
   }, [setUpdatedAt, globalUpdatedAt])
 
   const isLoading = setLoading && globalLoading
 
   if (isLoading) {
-    return <div className="skeleton h-full m-4 rounded-lg" />
+    return (
+      <div className="p-3 space-y-3">
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+          {[...Array(5)].map((_, i) => <div key={i} className="skeleton h-16 rounded-xl" />)}
+        </div>
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+          {[...Array(5)].map((_, i) => <div key={i} className="skeleton h-16 rounded-xl" />)}
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="flex flex-col h-full px-3 py-2 gap-1.5">
-      {/* Header row with timestamp */}
-      <div className="flex items-center justify-between shrink-0">
-        <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider">
-          Market Indices
-        </span>
-        {lastUpdated && (
-          <span className="text-[10px] text-ink-disabled">
-            Updated {lastUpdated}
-          </span>
-        )}
-      </div>
+    <div className="flex flex-col h-full px-3 py-2 gap-2 overflow-auto">
+      {/* Timestamp */}
+      {lastUpdated && (
+        <div className="flex justify-end shrink-0">
+          <span className="text-[10px] text-ink-disabled">Updated {lastUpdated}</span>
+        </div>
+      )}
 
-      {/* SET indices row */}
-      <div className="flex flex-wrap gap-1.5">
-        {setIndices.length === 0 ? (
-          <span className="text-[10px] text-ink-disabled italic">No SET data</span>
-        ) : (
-          setIndices.map((idx) => (
-            <IndexPill
-              key={idx.name}
-              name={idx.name}
-              value={idx.value}
-              changePct={idx.changePct}
-            />
-          ))
-        )}
-      </div>
+      {/* SET section */}
+      {setIndices.length > 0 && (
+        <div className="space-y-1 shrink-0">
+          <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider">Thai Market</span>
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${setIndices.length}, minmax(0, 1fr))` }}>
+            {setIndices.map(idx => (
+              <IndexCard key={idx.name} name={idx.name} value={idx.value} change={idx.change} changePct={idx.changePct} />
+            ))}
+          </div>
+        </div>
+      )}
 
-      {/* Global indices row */}
-      <div className="flex flex-wrap gap-1.5">
-        {globalIndices.length === 0 ? (
-          <span className="text-[10px] text-ink-disabled italic">No global data</span>
-        ) : (
-          globalIndices.map((idx) => (
-            <IndexPill
-              key={idx.name}
-              name={idx.name}
-              value={idx.value}
-              changePct={idx.changePct}
-            />
-          ))
-        )}
-      </div>
+      {/* Global section */}
+      {globalIndices.length > 0 && (
+        <div className="space-y-1 shrink-0">
+          <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider">Global Market</span>
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${globalIndices.length}, minmax(0, 1fr))` }}>
+            {globalIndices.map(idx => (
+              <IndexCard key={idx.name} name={idx.name} value={idx.value} change={idx.change} changePct={idx.changePct} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

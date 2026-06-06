@@ -243,12 +243,13 @@ def fetch_live_prices(symbols: list[str]) -> dict[str, float | None]:
 def fetch_set_indices() -> list[dict[str, Any]]:
     """Fetch live Thai SET market index prices."""
     def _fetch():
-        # ^SETI on Yahoo Finance maps to a US fund, not Thai SET.
-        # The Thai SET composite is unavailable; use SET50/SET100/sSET as proxies.
+        # ^SET.BK = Thai SET composite; ^SETI maps to a US fund so avoid it.
         indices = [
-            ("SET50", "^SET50.BK"),
+            ("SET",    "^SET.BK"),
+            ("SET50",  "^SET50.BK"),
             ("SET100", "^SET100.BK"),
-            ("sSET", "^sSET.BK"),
+            ("sSET",   "^sSET.BK"),
+            ("MAI",    "^MAI.BK"),
         ]
         tickers = [t for _, t in indices]
         quotes = _yahoo_quote_direct(tickers)
