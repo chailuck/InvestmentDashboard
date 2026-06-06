@@ -190,6 +190,7 @@ function AnalysisLogMd({ content }: { content: string }) {
 
 function AnalysisLogView({ html }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [height, setHeight] = useState(480)
 
   useEffect(() => {
     const iframe = iframeRef.current
@@ -202,7 +203,7 @@ function AnalysisLogView({ html }: { html: string }) {
       <meta charset="UTF-8">
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #0d1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.6; padding: 16px; }
+        body { background: #0d1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.6; padding: 16px; overflow: hidden; }
         h1,h2,h3,h4 { color: #f1f5f9; margin: 12px 0 6px; }
         h1 { font-size: 1.2em; border-bottom: 1px solid #2d3748; padding-bottom: 6px; }
         h2 { font-size: 1.05em; color: #93c5fd; }
@@ -225,13 +226,20 @@ function AnalysisLogView({ html }: { html: string }) {
     doc.open()
     doc.write(themed)
     doc.close()
+
+    // Expand iframe to full content height — no scrollbar
+    const measure = () => {
+      const body = iframe.contentDocument?.body
+      if (body) setHeight(body.scrollHeight + 32)
+    }
+    requestAnimationFrame(() => requestAnimationFrame(measure))
   }, [html])
 
   return (
     <iframe
       ref={iframeRef}
       className="w-full rounded-lg border border-border/30"
-      style={{ height: 480, background: '#0d1117' }}
+      style={{ height, background: '#0d1117', display: 'block' }}
       sandbox="allow-same-origin"
       title="Analysis log"
     />
@@ -327,7 +335,7 @@ export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
           />
         </div>
 
-        {/* Analysis log — open by default for HTML, collapsed for MD */}
+        {/* Analysis log — expanded for HTML, collapsed for MD */}
         {analysisLog?.found && (
           <Section title="Analysis Log" icon={FileText} defaultOpen={analysisLog.file_type === 'html'}>
             <div className="p-4">
@@ -340,9 +348,9 @@ export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
           </Section>
         )}
 
-        {/* Fibo chart */}
+        {/* Fibo chart — always collapsed, hidden when not found */}
         {fiboChart?.found && (
-          <Section title="Fibonacci Chart" icon={ImageIcon}>
+          <Section title="Fibonacci Chart" icon={ImageIcon} defaultOpen={false}>
             <div className="p-4">
               <p className="text-[10px] text-ink-muted mb-2">{fiboChart.filename}</p>
               <PanZoomImage src={fiboChart.image!} alt="Fibo chart" />

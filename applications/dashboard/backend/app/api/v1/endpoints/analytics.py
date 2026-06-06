@@ -300,6 +300,15 @@ async def search_symbol(
     return result
 
 
+def _log_sort_key(path: str) -> tuple:
+    """Sort key: (date DESC, html preferred). Filenames are expected to start with YYYY-MM-DD."""
+    name = os.path.basename(path)
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})", name)
+    date_str = m.group(1) if m else "0000-00-00"
+    is_html = 1 if name.lower().endswith(".html") else 0
+    return (date_str, is_html)
+
+
 @router.get("/analysis-log")
 async def get_analysis_log(
     _: UserId,
@@ -307,20 +316,20 @@ async def get_analysis_log(
 ) -> dict[str, Any]:
     log_path, _ = _get_paths()
     sym = _validate_symbol(symbol)  # raises HTTP 400 on path traversal or invalid chars
-    # Search HTML first, then MD; pick the most recently modified overall
     all_files: list[str] = []
     for ext in ["html", "md"]:
         all_files.extend(_safe_glob(log_path, os.path.join(log_path, f"*{sym}*.{ext}")))
     if not all_files:
         return {"found": False, "content": None, "filename": None, "file_type": None}
-    latest = max(all_files, key=os.path.getmtime)
+    # Pick the most recent date; for same date prefer HTML over MD
+    best = max(all_files, key=_log_sort_key)
     try:
-        content = Path(latest).read_text(encoding="utf-8", errors="replace")
-        file_type = "html" if latest.endswith(".html") else "md"
+        content = Path(best).read_text(encoding="utf-8", errors="replace")
+        file_type = "html" if best.lower().endswith(".html") else "md"
         return {
             "found": True,
             "content": content,
-            "filename": os.path.basename(latest),
+            "filename": os.path.basename(best),
             "file_type": file_type,
         }
     except Exception as e:
