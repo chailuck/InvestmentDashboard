@@ -615,6 +615,74 @@ function ScanListSection() {
   )
 }
 
+function IndicatorConfigSection() {
+  const queryClient = useQueryClient()
+  const { data: cfg } = useQuery({ queryKey: ['app-config'], queryFn: appConfigService.get })
+
+  const [peThreshold,    setPeThreshold]    = useState<string>('')
+  const [priceThreshold, setPriceThreshold] = useState<string>('')
+  const [initialized, setInitialized] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (cfg && !initialized) {
+      setPeThreshold(String(cfg.pe_threshold ?? 0.5))
+      setPriceThreshold(String(cfg.price_threshold ?? 3))
+      setInitialized(true)
+    }
+  }, [cfg, initialized])
+
+  const save = async () => {
+    const pe    = parseFloat(peThreshold)
+    const price = parseFloat(priceThreshold)
+    if (isNaN(pe) || isNaN(price) || pe <= 0 || price <= 0) {
+      toast.error('Thresholds must be positive numbers')
+      return
+    }
+    setSaving(true)
+    try {
+      await appConfigService.update({ pe_threshold: pe, price_threshold: price })
+      queryClient.invalidateQueries({ queryKey: ['app-config'] })
+      toast.success('Indicator thresholds saved')
+    } catch {
+      toast.error('Failed to save thresholds')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Section title="Indicator Thresholds" icon={Settings2}>
+      <p className="text-xs text-ink-muted">
+        Minimum % change (intra-week) required to classify PE or price direction as Up/Down. Below this value is treated as Stable.
+      </p>
+      <div className="grid grid-cols-2 gap-4">
+        {[
+          { label: 'PE Threshold (%)', value: peThreshold, onChange: setPeThreshold, hint: 'e.g. 0.5' },
+          { label: 'Price Threshold (%)', value: priceThreshold, onChange: setPriceThreshold, hint: 'e.g. 3' },
+        ].map(({ label, value, onChange, hint }) => (
+          <div key={label} className="space-y-1.5">
+            <label className="text-xs font-medium text-ink-secondary">{label}</label>
+            <input
+              type="number" step="0.1" min="0.1"
+              value={value} onChange={e => onChange(e.target.value)}
+              placeholder={hint}
+              className="w-full bg-surface-elevated border border-border/60 rounded-lg px-3 py-2 text-sm text-ink-primary outline-none focus:border-brand-500/60 transition-colors"
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-end">
+        <button onClick={save} disabled={saving}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-brand-500/15 text-brand-400 border border-brand-500/20 hover:bg-brand-500/25 transition-colors disabled:opacity-50">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          Save Thresholds
+        </button>
+      </div>
+    </Section>
+  )
+}
+
 export default function SettingsPage() {
   const { user, setUser } = useAuthStore()
   const portfolioMode = usePortfolioMode()
@@ -750,6 +818,9 @@ export default function SettingsPage() {
 
       {/* Scan list config */}
       <ScanListSection />
+
+      {/* Indicator thresholds */}
+      <IndicatorConfigSection />
 
       {/* Account Info */}
       <Section title="Account Details" icon={Shield}>

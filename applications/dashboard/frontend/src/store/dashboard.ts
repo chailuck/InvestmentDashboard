@@ -8,7 +8,7 @@ const DEFAULT_WIDGETS: WidgetConfig[] = [
   { id: 'portfolio-chart',           type: 'portfolio_chart',           title: 'Performance',               x: 0, y: 6,  w: 8,  h: 5, minW: 4, minH: 3 },
   { id: 'allocation',                type: 'allocation_chart',          title: 'Allocation',                x: 8, y: 6,  w: 4,  h: 5, minW: 3, minH: 3 },
   { id: 'holdings',                  type: 'holdings_table',            title: 'Holdings',                  x: 0, y: 11, w: 12, h: 6, minW: 4, minH: 4 },
-  { id: 'market-pulse',              type: 'market_pulse',              title: 'Market Pulse',              x: 0, y: 17, w: 12, h: 5, minW: 6, minH: 4 },
+  { id: 'market-pulse',              type: 'market_pulse',              title: 'Market Pulse',              x: 0, y: 17, w: 12, h: 8, minW: 6, minH: 6 },
   { id: 'scan-heat-tile',            type: 'scan_heat_tile',            title: 'Scan Heat Tile',            x: 0, y: 19, w: 6,  h: 5, minW: 4, minH: 3 },
   { id: 'pnl-waterfall',             type: 'pnl_waterfall',             title: 'P&L by Ticker',             x: 6, y: 19, w: 6,  h: 5, minW: 4, minH: 3 },
 ]
@@ -47,6 +47,6 @@ export const useDashboardStore = create<DashboardState>()(
 
       resetLayout: () => set({ widgets: DEFAULT_WIDGETS }),
     }),
-    { name: 'dashboard-layout-v6' }
+    { name: 'dashboard-layout-v8' }
   )
 )

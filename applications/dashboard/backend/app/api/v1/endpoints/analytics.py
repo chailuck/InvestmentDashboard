@@ -300,6 +300,149 @@ async def search_symbol(
     return result
 
 
+def _fetch_pe_history(symbol: str, asset_type: str) -> dict:
+    """Fetch ~2-year weekly PE ratio history.
+
+    Tries (in order):
+    1. quarterly_earnings – older yfinance API, Earnings column = quarterly EPS
+    2. quarterly_income_stmt / quarterly_financials – look for EPS row
+    3. trailingEps from ticker.info – constant EPS applied to price history
+    """
+    start = (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
+
+    for t in _ticker_sym(symbol, asset_type):
+        try:
+            tk = yf.Ticker(t)
+            price_df = tk.history(start=start, interval="1d",
+                                  auto_adjust=False, back_adjust=False)
+            if price_df.empty:
+                continue
+            price_df.index = pd.to_datetime(price_df.index).tz_localize(None)
+
+            eps_series: "pd.Series | None" = None
+
+            try:
+                qe = tk.quarterly_earnings
+                if qe is not None and not qe.empty and "Earnings" in qe.columns:
+                    eps_series = qe["Earnings"].sort_index().dropna()
+            except Exception:
+                pass
+
+            if eps_series is None:
+                try:
+                    for attr in ("quarterly_income_stmt", "quarterly_financials"):
+                        qf = getattr(tk, attr, None)
+                        if qf is None or qf.empty:
+                            continue
+                        for label in ("Diluted EPS", "Basic EPS", "EPS Diluted", "Normalized EPS"):
+                            if label in qf.index:
+                                raw = qf.loc[label].sort_index().dropna()
+                                eps_series = raw
+                                break
+                        if eps_series is not None:
+                            break
+                except Exception:
+                    pass
+
+            trailing_eps: "float | None" = None
+            if eps_series is None:
+                try:
+                    info = tk.info
+                    raw_eps = info.get("trailingEps")
+                    if raw_eps and float(raw_eps) > 0:
+                        trailing_eps = float(raw_eps)
+                except Exception:
+                    pass
+
+            rows: list[dict] = []
+
+            if eps_series is not None and not eps_series.empty:
+                for date, row in price_df.iterrows():
+                    price = float(row["Close"])
+                    past = eps_series[eps_series.index <= date]
+                    if len(past) >= 4:
+                        ttm = float(past.iloc[-4:].sum())
+                    elif len(past) > 0:
+                        ttm = float(past.sum()) * (4.0 / len(past))
+                    else:
+                        continue
+                    if ttm > 0.001:
+                        pe = round(price / ttm, 2)
+                        if 0 < pe < 2000:
+                            rows.append({"date": date, "pe": pe})
+            elif trailing_eps:
+                for date, row in price_df.iterrows():
+                    pe = round(float(row["Close"]) / trailing_eps, 2)
+                    if 0 < pe < 2000:
+                        rows.append({"date": date, "pe": pe})
+
+            if not rows:
+                continue
+
+            pe_df = pd.DataFrame(rows).set_index("date")
+            pe_df.index = pd.to_datetime(pe_df.index)
+            pe_close  = pe_df["pe"].resample("W").last()
+            pe_open   = pe_df["pe"].resample("W").first()
+            pe_weekly = pd.DataFrame({"pe": pe_close, "pe_open": pe_open}).dropna()
+
+            data = [
+                {
+                    "date":    idx.strftime("%Y-%m-%d"),
+                    "pe":      round(float(row["pe"]), 2),
+                    "pe_open": round(float(row["pe_open"]), 2),
+                }
+                for idx, row in pe_weekly.iterrows()
+            ]
+
+            if not data:
+                continue
+
+            # Weekly price series: open = first of week, close = last of week
+            price_weekly = price_df[["Open", "Close"]].resample("W").agg(
+                {"Open": "first", "Close": "last"}
+            ).dropna()
+            price_data = [
+                {
+                    "date": idx.strftime("%Y-%m-%d"),
+                    "price": round(float(row["Close"]), 4),
+                    "open": round(float(row["Open"]), 4),
+                }
+                for idx, row in price_weekly.iterrows()
+            ]
+
+            # Earnings announcement dates (when quarterly results were published)
+            earnings_dates: list[str] = []
+            try:
+                ed = tk.earnings_dates
+                if ed is not None and not ed.empty:
+                    cutoff = datetime.now() - timedelta(days=730)
+                    past = ed[ed.index.tz_localize(None) <= datetime.now()]
+                    past = past[past.index.tz_localize(None) >= cutoff]
+                    earnings_dates = [
+                        d.strftime("%Y-%m-%d")
+                        for d in sorted(past.index.tz_localize(None))
+                    ]
+            except Exception:
+                pass
+
+            vals = [d["pe"] for d in data]
+            return {
+                "found": True,
+                "data": data,
+                "price_data": price_data,
+                "earnings_dates": earnings_dates,
+                "ticker": t,
+                "current_pe": round(vals[-1], 2),
+                "avg_pe": round(sum(vals) / len(vals), 2),
+                "min_pe": round(min(vals), 2),
+                "max_pe": round(max(vals), 2),
+            }
+        except Exception:
+            continue
+
+    return {"found": False, "data": [], "price_data": [], "earnings_dates": [], "current_pe": None, "avg_pe": None, "min_pe": None, "max_pe": None}
+
+
 def _log_sort_key(path: str) -> tuple:
     """Sort key: (date DESC, html preferred). Filenames are expected to start with YYYY-MM-DD."""
     name = os.path.basename(path)
@@ -363,6 +506,19 @@ async def get_fibo_chart(
         return {"found": True, "image": f"data:image/{mime};base64,{data}", "filename": os.path.basename(latest)}
     except Exception as e:
         return {"found": False, "image": None, "filename": None, "error": str(e)}
+
+
+@router.get("/pe-ratio")
+async def get_pe_ratio(
+    _: UserId,
+    symbol: str = Query(...),
+    asset_type: str = Query("SET"),
+) -> dict[str, Any]:
+    sym = _validate_symbol(symbol)
+    result = await asyncio.get_running_loop().run_in_executor(
+        None, _fetch_pe_history, sym, asset_type
+    )
+    return result
 
 
 # â"€â"€ Symbol notes â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€

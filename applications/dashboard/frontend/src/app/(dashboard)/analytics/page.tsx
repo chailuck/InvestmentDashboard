@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import { Search, BarChart2, TrendingUp, TrendingDown, AlertCircle, Loader2 } from 'lucide-react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { useState, useEffect, useRef } from 'react'
+import { Search, BarChart2, TrendingUp, TrendingDown, AlertCircle, Loader2, RefreshCw } from 'lucide-react'
+import { AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { analyticsService, type AssetType, type SearchResult } from '@/services/analytics'
 import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
@@ -15,25 +15,70 @@ const ASSET_TYPES: { label: string; value: AssetType; color: string }[] = [
   { label: 'DR', value: 'DR', color: 'text-purple-400 border-purple-500/30 bg-purple-500/10' },
 ]
 
+const HISTORY_KEY = 'analytics-history-v1'
+const MAX_HISTORY = 10
+
 // ── Search history ─────────────────────────────────────────────────────────────
 
 interface HistoryEntry {
   symbol: string
   assetType: AssetType
   result: SearchResult
-  searchedAt: Date
+  searchedAt: string // ISO string for localStorage serialisation
 }
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function AnalyticsPage() {
-  const [query, setQuery] = useState('')
-  const [assetType, setAssetType] = useState<AssetType>('SET')
-  const [searching, setSearching] = useState(false)
+  const [query, setQuery]           = useState('')
+  const [assetType, setAssetType]   = useState<AssetType>('SET')
+  const [searching, setSearching]   = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
-  const [results, setResults] = useState<HistoryEntry[]>([])
+  const [results, setResults]       = useState<HistoryEntry[]>([])
   const [modalSymbol, setModalSymbol] = useState<{ symbol: string; assetType: AssetType } | null>(null)
 
+  // ── Load persisted history on mount and auto-refresh prices ───────────────
+  const hasRefreshed = useRef(false)
+
+  useEffect(() => {
+    if (hasRefreshed.current) return
+    hasRefreshed.current = true
+
+    const raw = localStorage.getItem(HISTORY_KEY)
+    if (!raw) return
+    try {
+      const stored: HistoryEntry[] = JSON.parse(raw)
+      setResults(stored)
+
+      // Refresh price / change% for every stored entry in the background
+      setRefreshing(true)
+      Promise.allSettled(
+        stored.map(entry =>
+          analyticsService.search(entry.symbol, entry.assetType).then(fresh => {
+            setResults(prev =>
+              prev.map(r =>
+                r.symbol === entry.symbol && r.assetType === entry.assetType
+                  ? { ...r, result: { ...r.result, price: fresh.price, change_pct: fresh.change_pct, found: fresh.found } }
+                  : r,
+              ),
+            )
+          }),
+        ),
+      ).finally(() => setRefreshing(false))
+    } catch {
+      // corrupted storage — ignore
+    }
+  }, [])
+
+  // ── Persist history whenever it changes ───────────────────────────────────
+  useEffect(() => {
+    if (results.length > 0) {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(results))
+    }
+  }, [results])
+
+  // ── Search ────────────────────────────────────────────────────────────────
   const handleSearch = async (e?: React.FormEvent) => {
     e?.preventDefault()
     const q = query.trim().toUpperCase()
@@ -43,10 +88,13 @@ export default function AnalyticsPage() {
     setSearchError(null)
     try {
       const result = await analyticsService.search(q, assetType)
-      // Add to history (deduplicate by symbol+type)
       setResults(prev => {
+        // Remove existing entry for this symbol+type (dedup), prepend fresh entry, cap at 10
         const filtered = prev.filter(r => !(r.symbol === q && r.assetType === assetType))
-        return [{ symbol: q, assetType, result, searchedAt: new Date() }, ...filtered].slice(0, 20)
+        return [
+          { symbol: q, assetType, result, searchedAt: new Date().toISOString() },
+          ...filtered,
+        ].slice(0, MAX_HISTORY)
       })
       if (result.found) {
         setModalSymbol({ symbol: q, assetType })
@@ -126,8 +174,16 @@ export default function AnalyticsPage() {
       {/* Search history / results */}
       {results.length > 0 && (
         <div className="card overflow-hidden">
-          <div className="px-4 py-3 border-b border-border/40">
-            <span className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">Search Results</span>
+          <div className="px-4 py-3 border-b border-border/40 flex items-center justify-between">
+            <span className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">
+              Recent Searches
+            </span>
+            {refreshing && (
+              <span className="flex items-center gap-1 text-[10px] text-ink-muted">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                Refreshing prices…
+              </span>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -143,7 +199,7 @@ export default function AnalyticsPage() {
                   const r = entry.result
                   const typeStyle = ASSET_TYPES.find(t => t.value === entry.assetType)?.color ?? ''
                   return (
-                    <tr key={i} className="border-b border-border/20 hover:bg-surface-elevated/40 transition-colors">
+                    <tr key={`${entry.symbol}-${entry.assetType}-${i}`} className="border-b border-border/20 hover:bg-surface-elevated/40 transition-colors">
                       <td className="px-4 py-2.5">
                         <button
                           onClick={() => setModalSymbol({ symbol: entry.symbol, assetType: entry.assetType })}

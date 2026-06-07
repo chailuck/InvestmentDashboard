@@ -1,13 +1,19 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
-import { X, Loader2, Save, CheckCircle2, ChevronDown, ChevronUp, Image as ImageIcon, FileText } from 'lucide-react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { X, Loader2, Save, CheckCircle2, ChevronDown, ChevronUp, Image as ImageIcon, FileText, LineChart as LineChartIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import dynamic from 'next/dynamic'
 import { cn } from '@/lib/utils'
-import { analyticsService, type AssetType } from '@/services/analytics'
+import { useQuery } from '@tanstack/react-query'
+import { analyticsService, type AssetType, type PeRatioData } from '@/services/analytics'
+import { appConfigService } from '@/services/appConfig'
+import { INDICATOR_CONFIG } from '@/config/indicators'
 import { EChartsChart, type ChartInterval } from './EChartsChart'
+
+const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false })
 
 // ── Section collapser ─────────────────────────────────────────────────────────
 
@@ -236,15 +242,624 @@ function AnalysisLogView({ html }: { html: string }) {
   }, [html])
 
   return (
-    <iframe
-      ref={iframeRef}
-      className="w-full rounded-lg border border-border/30"
-      style={{ height, background: '#0d1117', display: 'block' }}
-      sandbox="allow-same-origin"
-      title="Analysis log"
-    />
+    <div className="max-h-[72vh] overflow-y-auto rounded-lg border border-border/30"
+         style={{ scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent' }}>
+      <iframe
+        ref={iframeRef}
+        className="w-full"
+        style={{ height, background: '#0d1117', display: 'block' }}
+        sandbox="allow-same-origin"
+        title="Analysis log"
+      />
+    </div>
   )
 }
+
+// ── PE ratio line chart (stacked dual-panel, shared time axis) ───────────────
+
+const COMBINED_CHART_H = 600
+
+function makeCombinedOption(
+  priceData: { date: string; price: number }[],
+  peData: { date: string; pe: number }[],
+  avg_pe: number | null,
+  earningsDates: string[] = [],
+  timeline: TimelinePoint[] = [],
+) {
+  const dates        = priceData.map(d => d.date)
+  const priceValues  = priceData.map(d => d.price)
+  const tickInterval = Math.max(1, Math.floor(dates.length / 7))
+
+  const peMap    = new Map(peData.map(d => [d.date, d.pe]))
+  const peValues = dates.map(d => peMap.get(d) ?? null)
+
+  const firstPrice     = priceValues[0] ?? 1
+  const lastPrice      = priceValues[priceValues.length - 1] ?? firstPrice
+  const priceLineColor = lastPrice >= firstPrice ? '#10B981' : '#EF4444'
+  const priceAreaColor = lastPrice >= firstPrice ? 'rgba(16,185,129,0.07)' : 'rgba(239,68,68,0.07)'
+
+  const validPe      = peValues.filter((v): v is number => v != null)
+  const avg          = avg_pe ?? (validPe.length ? validPe.reduce((a, b) => a + b, 0) / validPe.length : 15)
+  const lastPe       = validPe[validPe.length - 1] ?? avg
+  const expensive    = lastPe > avg * 1.05
+  const cheap        = lastPe < avg * 0.95
+  const peLineColor  = expensive ? '#EF4444' : cheap ? '#10B981' : '#60A5FA'
+  const peAreaColor  = expensive ? 'rgba(239,68,68,0.07)' : cheap ? 'rgba(16,185,129,0.07)' : 'rgba(96,165,250,0.07)'
+
+  // Shared x-axis base (strips use boundaryGap true for bar, charts use false for line)
+  const stripAxisBase = {
+    type: 'category' as const, data: dates,
+    axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
+    axisLabel: { show: false }, boundaryGap: true,
+  }
+  const lineAxisBase = {
+    type: 'category' as const, data: dates,
+    axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
+    boundaryGap: false,
+  }
+
+  // Build a timeline map keyed by date for fast tooltip lookup
+  const tlMap = new Map(timeline.map(pt => [pt.date, pt]))
+
+  return {
+    backgroundColor: 'transparent',
+    // 5 grids (top→bottom): Overall | Price chart | Price slope | PE chart | PE slope
+    // All grids share the same left so strips and chart plot areas start at the same x position.
+    grid: [
+      { left: 68, right: 8, top: '1%',  height: '5%'  }, // 0: Overall state
+      { left: 68, right: 8, top: '8%',  height: '35%' }, // 1: Price chart
+      { left: 68, right: 8, top: '44%', height: '3%'  }, // 2: Price slope
+      { left: 68, right: 8, top: '49%', height: '35%' }, // 3: PE chart
+      { left: 68, right: 8, top: '85%', height: '3%'  }, // 4: PE slope
+    ],
+    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1C2333', borderColor: '#2A3450', borderWidth: 1,
+      textStyle: { color: '#E2E8F0', fontSize: 11 },
+      formatter: (params: any[]) => {
+        const date = params[0]?.name ?? params[0]?.axisValueLabel ?? ''
+        const idx  = params[0]?.dataIndex ?? 0
+        const pt   = tlMap.get(date) ?? tlMap.get(dates[idx])
+        let html = `<div style="color:#94A3B8;font-size:10px;margin-bottom:4px">${date}</div>`
+        if (pt) {
+          const stateLevel = PE_INDICATOR_LEVELS.find(l => l.key === pt.state)
+          html += `<div style="margin-bottom:3px"><span style="color:#94A3B8">State </span><span style="color:${INDICATOR_DOT[pt.state]};font-weight:700">${stateLevel?.label ?? pt.state}</span></div>`
+          const peVal  = pt.peChg != null ? `${pt.peChg >= 0 ? '+' : ''}${pt.peChg.toFixed(1)}%` : 'n/a'
+          const prcVal = `${pt.priceChg >= 0 ? '+' : ''}${pt.priceChg.toFixed(1)}%`
+          html += `<div><span style="color:#94A3B8">PE slope </span><span style="color:${DIR_COLOR[pt.peDir]}">${DIR_ARROW[pt.peDir]} ${peVal}</span></div>`
+          html += `<div><span style="color:#94A3B8">Price slope </span><span style="color:${DIR_COLOR[pt.priceDir]}">${DIR_ARROW[pt.priceDir]} ${prcVal}</span></div>`
+        }
+        for (const p of params) {
+          // series 2 = Price line, series 4 = PE line
+          if (p.value == null || (p.seriesIndex !== 2 && p.seriesIndex !== 4)) continue
+          const isPrice = p.seriesIndex === 2
+          const label   = isPrice ? 'Price' : 'P/E'
+          const val     = isPrice
+            ? Number(p.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : `${Number(p.value).toFixed(2)}×`
+          html += `<div style="color:#F1F5F9"><span style="color:#94A3B8">${label} </span>${val}</div>`
+        }
+        return html
+      },
+    },
+    // Grid order: 0=Overall, 1=Price chart, 2=Price slope, 3=PE chart, 4=PE slope
+    xAxis: [
+      { ...stripAxisBase, gridIndex: 0 },
+      { ...lineAxisBase,  gridIndex: 1, axisLabel: { show: false } },
+      { ...stripAxisBase, gridIndex: 2 },
+      { ...lineAxisBase,  gridIndex: 3, axisLabel: { show: false } },
+      { ...stripAxisBase, gridIndex: 4, axisLabel: { show: true, color: '#475569', fontSize: 9, interval: tickInterval, formatter: (v: string) => v.slice(0, 7) } },
+    ],
+    yAxis: [
+      // Strip y-axes: 0–1 scale, no ticks/lines, with side label
+      { gridIndex: 0, type: 'value', min: 0, max: 1, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
+        name: 'Overall', nameLocation: 'middle' as const, nameRotate: 0, nameGap: 50, nameTextStyle: { color: '#475569', fontSize: 8 } },
+      // Price chart y-axis
+      {
+        gridIndex: 1, type: 'value', scale: true,
+        name: 'Price', nameTextStyle: { color: '#475569', fontSize: 9 }, nameGap: 4,
+        axisLabel: { color: '#475569', fontSize: 9, formatter: (v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v) },
+        splitLine: { lineStyle: { color: '#1a2235', type: 'dashed' } },
+        axisLine: { show: false }, axisTick: { show: false },
+      },
+      { gridIndex: 2, type: 'value', min: 0, max: 1, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
+        name: 'Price slope', nameLocation: 'middle' as const, nameRotate: 0, nameGap: 50, nameTextStyle: { color: '#475569', fontSize: 8 } },
+      // PE chart y-axis
+      {
+        gridIndex: 3, type: 'value', scale: true,
+        name: 'P/E', nameTextStyle: { color: '#475569', fontSize: 9 }, nameGap: 4,
+        axisLabel: { color: '#475569', fontSize: 9, formatter: (v: number) => `${v}×` },
+        splitLine: { lineStyle: { color: '#1a2235', type: 'dashed' } },
+        axisLine: { show: false }, axisTick: { show: false },
+      },
+      { gridIndex: 4, type: 'value', min: 0, max: 1, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
+        name: 'PE slope', nameLocation: 'middle' as const, nameRotate: 0, nameGap: 50, nameTextStyle: { color: '#475569', fontSize: 8 } },
+    ],
+    series: [
+      // ── Strip 0: Overall state ────────────────────────────────────────────
+      {
+        type: 'bar', xAxisIndex: 0, yAxisIndex: 0,
+        barWidth: '100%', barCategoryGap: '0%', silent: true,
+        data: timeline.map(pt => ({ value: 1, itemStyle: { color: INDICATOR_DOT[pt.state] } })),
+      },
+      // ── Strip 2: Price slope (below price chart) ─────────────────────────
+      {
+        type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
+        barWidth: '100%', barCategoryGap: '0%', silent: true,
+        label: {
+          show: true, position: 'inside' as const,
+          fontSize: 7, fontWeight: 'bold', color: '#1e293b', overflow: 'truncate' as const,
+          formatter: (p: any) => {
+            const chg: number = p.data.priceChg
+            return `${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`
+          },
+        },
+        data: timeline.map(pt => ({
+          value: 1, priceChg: pt.priceChg,
+          itemStyle: { color: DIR_COLOR_LIGHT[pt.priceDir] },
+        })),
+      },
+      // ── Price line chart ──────────────────────────────────────────────────
+      {
+        name: 'Price', type: 'line', xAxisIndex: 1, yAxisIndex: 1,
+        data: priceValues, smooth: 0.4, symbol: 'none',
+        lineStyle: { color: priceLineColor, width: 2 },
+        areaStyle: { color: priceAreaColor },
+        ...(earningsDates.length ? {
+          markLine: {
+            silent: true, symbol: ['none', 'none'],
+            lineStyle: { color: '#F59E0B', type: 'dashed', width: 1, opacity: 0.6 },
+            label: { show: true, color: '#F59E0B', fontSize: 8, position: 'insideStartTop', formatter: 'Q' },
+            data: earningsDates.map(d => ({ xAxis: d })),
+          },
+        } : {}),
+      },
+      // ── Strip 4: PE slope (below PE chart) ───────────────────────────────
+      {
+        type: 'bar', xAxisIndex: 4, yAxisIndex: 4,
+        barWidth: '100%', barCategoryGap: '0%', silent: true,
+        label: {
+          show: true, position: 'inside' as const,
+          fontSize: 7, fontWeight: 'bold', color: '#1e293b', overflow: 'truncate' as const,
+          formatter: (p: any) => {
+            const chg: number | null = p.data.peChg
+            if (chg == null) return '—'
+            return `${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`
+          },
+        },
+        data: timeline.map(pt => ({
+          value: 1, peChg: pt.peChg,
+          itemStyle: { color: DIR_COLOR_LIGHT[pt.peDir] },
+        })),
+      },
+      // ── PE line chart ─────────────────────────────────────────────────────
+      {
+        name: 'P/E', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
+        data: peValues, smooth: 0.4, symbol: 'none', connectNulls: false,
+        lineStyle: { color: peLineColor, width: 2 },
+        areaStyle: { color: peAreaColor },
+        markLine: {
+          silent: true, symbol: ['none', 'none'],
+          data: [
+            {
+              yAxis: avg,
+              lineStyle: { color: '#60A5FA', type: 'dashed', width: 1, opacity: 0.6 },
+              label: { show: true, color: '#60A5FA', fontSize: 9, position: 'end', formatter: `Avg ${avg.toFixed(1)}×` },
+            },
+            ...earningsDates.map(d => ({
+              xAxis: d,
+              lineStyle: { color: '#F59E0B', type: 'dashed' as const, width: 1, opacity: 0.5 },
+              label: { show: true, color: '#F59E0B', fontSize: 7, position: 'insideStartTop' as const, formatter: 'Q' },
+            })),
+          ],
+        },
+      },
+    ],
+  }
+}
+
+// ── PE indicator ─────────────────────────────────────────────────────────────
+
+type PeIndicator = 'very_good' | 'good' | 'normal' | 'bad' | 'very_bad'
+
+const PE_INDICATOR_LEVELS: {
+  key: PeIndicator
+  label: string
+  desc: string
+  activeColor: string
+  activeBg: string
+  dot: string
+}[] = [
+  {
+    key: 'very_bad',
+    label: 'Very Bad',
+    desc: 'PE = 0 · no earnings, or PE ↑ while price ↓',
+    activeColor: 'text-loss',
+    activeBg: 'bg-loss/12 border-loss/30',
+    dot: '#EF4444',
+  },
+  {
+    key: 'bad',
+    label: 'Bad',
+    desc: 'PE stable + price ↓ · valuation pressure without earnings change',
+    activeColor: 'text-orange-400',
+    activeBg: 'bg-orange-500/10 border-orange-500/25',
+    dot: '#FB923C',
+  },
+  {
+    key: 'normal',
+    label: 'Normal',
+    desc: 'PE ↑↑ or ↓↓ with price (aligned), or both stable',
+    activeColor: 'text-ink-secondary',
+    activeBg: 'bg-surface-elevated border-border/50',
+    dot: '#94A3B8',
+  },
+  {
+    key: 'good',
+    label: 'Good',
+    desc: 'Not used in current model',
+    activeColor: 'text-brand-400',
+    activeBg: 'bg-brand-500/10 border-brand-500/25',
+    dot: '#60A5FA',
+  },
+  {
+    key: 'very_good',
+    label: 'Very Good',
+    desc: 'PE ↑/↓/stable favourable · price not rising against it',
+    activeColor: 'text-gain',
+    activeBg: 'bg-gain/10 border-gain/25',
+    dot: '#10B981',
+  },
+]
+
+function calcPeIndicator(
+  currentPe: number | null,
+  rangeAvg: number | null,
+  filteredPrice: { price: number }[],
+): PeIndicator {
+  if (!currentPe || currentPe <= 0.5) return 'very_bad'
+  if (!rangeAvg || rangeAvg <= 0) return 'normal'
+
+  const last  = filteredPrice[filteredPrice.length - 1]?.price ?? 0
+  const first = filteredPrice[0]?.price ?? last
+  const priceChangePct = first ? ((last - first) / first) * 100 : 0
+  const peVsAvgPct     = ((currentPe - rangeAvg) / rangeAvg) * 100
+
+  const peLow    = peVsAvgPct < -10   // PE is 10%+ below period avg
+  const peHigh   = peVsAvgPct > 10    // PE is 10%+ above period avg
+  const priceDown   = priceChangePct < -5   // price fell >5%
+  const priceStable = priceChangePct >= -5 && priceChangePct < 10
+  const priceHigh   = priceChangePct >= 10  // price rose 10%+
+
+  if (peLow && (priceStable || priceDown)) return 'very_good'
+  if (peLow && priceHigh)                  return 'good'
+  if (peHigh && priceDown)                 return 'bad'
+  return 'normal'
+}
+
+const INDICATOR_DOT: Record<PeIndicator, string> = {
+  very_bad: '#EF4444',
+  bad:      '#FB923C',
+  normal:   '#475569',
+  good:     '#60A5FA',
+  very_good:'#10B981',
+}
+
+type PeDir    = 'up' | 'down' | 'stable' | 'zero'
+type PriceDir = 'up' | 'down' | 'stable'
+
+const INDICATOR_TABLE: Record<`${PeDir}-${PriceDir}`, PeIndicator> = {
+  'up-up':       'normal',
+  'up-stable':   'very_good',
+  'up-down':     'very_bad',
+  'down-up':     'very_good',
+  'down-stable': 'very_good',
+  'down-down':   'normal',
+  'stable-up':   'very_good',
+  'stable-stable':'normal',
+  'stable-down': 'bad',
+  'zero-up':     'very_bad',
+  'zero-stable': 'very_bad',
+  'zero-down':   'very_bad',
+}
+
+
+function peDirection(chg: number): PeDir {
+  const t = INDICATOR_CONFIG.peThreshold
+  if (chg > t)  return 'up'
+  if (chg < -t) return 'down'
+  return 'stable'
+}
+
+function priceDirection(chg: number): PriceDir {
+  const t = INDICATOR_CONFIG.priceThreshold
+  if (chg > t)  return 'up'
+  if (chg < -t) return 'down'
+  return 'stable'
+}
+
+interface TimelinePoint {
+  date: string
+  state: PeIndicator
+  peDir: PeDir
+  priceDir: PriceDir
+  peChg: number | null   // % vs period average (for PE) or intra-week open→close (for price)
+  priceChg: number
+}
+
+function computeWeeklyIndicators(
+  priceData: { date: string; price: number; open?: number }[],
+  peData: { date: string; pe: number; pe_open?: number }[],
+  thresholds: { peThreshold: number; priceThreshold: number } = { peThreshold: INDICATOR_CONFIG.peThreshold, priceThreshold: INDICATOR_CONFIG.priceThreshold },
+): TimelinePoint[] {
+  if (!priceData.length) return []
+
+  const peMap = new Map(peData.map(d => [d.date, d]))
+
+  return priceData.map((d, i) => {
+    const peEntry  = peMap.get(d.date)
+    const pe       = peEntry?.pe ?? null
+
+    // Price direction: slope from previous week's close → this week's close
+    const prevPrice = i > 0 ? priceData[i - 1].price : d.price
+    const priceChg  = prevPrice ? ((d.price - prevPrice) / prevPrice) * 100 : 0
+    const pt        = thresholds.priceThreshold
+    const priceDir: PriceDir = priceChg > pt ? 'up' : priceChg < -pt ? 'down' : 'stable'
+
+    if (!pe || pe <= 0.5) {
+      return { date: d.date, state: INDICATOR_TABLE[`zero-${priceDir}`], peDir: 'zero' as PeDir, priceDir, peChg: null, priceChg }
+    }
+
+    // PE direction: slope from previous week's PE close → this week's PE close
+    const prevPeEntry = i > 0 ? peMap.get(priceData[i - 1].date) : undefined
+    const prevPe      = prevPeEntry?.pe ?? pe
+    const peChg       = prevPe > 0 ? ((pe - prevPe) / prevPe) * 100 : 0
+    const pp          = thresholds.peThreshold
+    const peDir: PeDir = peChg > pp ? 'up' : peChg < -pp ? 'down' : 'stable'
+
+    return { date: d.date, state: INDICATOR_TABLE[`${peDir}-${priceDir}`], peDir, priceDir, peChg, priceChg }
+  })
+}
+
+const DIR_COLOR: Record<PeDir | PriceDir, string> = {
+  up: '#10B981', down: '#EF4444', stable: '#475569', zero: '#EF4444',
+}
+const DIR_COLOR_LIGHT: Record<PeDir | PriceDir, string> = {
+  up: '#6EE7B7', down: '#FCA5A5', stable: '#64748B', zero: '#FCA5A5',
+}
+const DIR_ARROW: Record<PeDir | PriceDir, string> = {
+  up: '↑', down: '↓', stable: '→', zero: '—',
+}
+
+function PeIndicatorTimeline({ timeline }: { timeline: TimelinePoint[] }) {
+  const [hovered, setHovered] = useState<TimelinePoint | null>(null)
+  const display = hovered ?? timeline[timeline.length - 1] ?? null
+
+  return (
+    <div className="space-y-1.5">
+      {/* Header + hover date/state */}
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] text-ink-disabled uppercase tracking-wider">Indicator History</span>
+        {display && (
+          <span className="text-[9px] text-ink-muted tabular-nums">
+            {display.date} —{' '}
+            <span className="font-semibold" style={{ color: INDICATOR_DOT[display.state] }}>
+              {PE_INDICATOR_LEVELS.find(l => l.key === display.state)?.label}
+            </span>
+            {' · '}
+            <span style={{ color: DIR_COLOR[display.peDir] }}>PE {DIR_ARROW[display.peDir]}{display.peChg != null ? ` ${display.peChg >= 0 ? '+' : ''}${display.peChg.toFixed(1)}%` : ''}</span>
+            {' · '}
+            <span style={{ color: DIR_COLOR[display.priceDir] }}>Price {DIR_ARROW[display.priceDir]} {display.priceChg >= 0 ? '+' : ''}{display.priceChg.toFixed(1)}%</span>
+          </span>
+        )}
+      </div>
+
+      {/* Legend — one row with dot + label + description */}
+      <div className="flex items-center gap-4 flex-wrap">
+        {PE_INDICATOR_LEVELS.map(({ key, label, desc, dot }) => (
+          <div key={key} className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dot }} />
+            <span className="text-[9px] font-semibold shrink-0" style={{ color: dot }}>{label}</span>
+            <span className="text-[9px] text-ink-disabled">{desc}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Indicator strip + per-period direction strips */}
+      <div className="space-y-px">
+        {/* Main state strip */}
+        <div className="flex h-5 gap-px rounded-t overflow-hidden">
+          {timeline.map(pt => (
+            <div
+              key={pt.date}
+              className="flex-1 min-w-0 cursor-default"
+              style={{ backgroundColor: INDICATOR_DOT[pt.state] }}
+              onMouseEnter={() => setHovered(pt)}
+              onMouseLeave={() => setHovered(null)}
+            />
+          ))}
+        </div>
+
+        {/* PE direction strip */}
+        <div className="flex items-center gap-px">
+          <span className="text-[8px] text-ink-disabled w-5 shrink-0 text-right pr-1">PE</span>
+          <div className="flex h-5 gap-px flex-1 overflow-hidden">
+            {timeline.map(pt => {
+              const val = pt.peChg != null ? `${pt.peChg >= 0 ? '+' : ''}${pt.peChg.toFixed(1)}%` : 'n/a'
+              return (
+                <div
+                  key={pt.date}
+                  className="flex-1 min-w-0 cursor-default relative overflow-hidden"
+                  style={{ backgroundColor: DIR_COLOR[pt.peDir], opacity: 0.8 }}
+                  title={`${pt.date}  PE slope: ${val}`}
+                  onMouseEnter={() => setHovered(pt)}
+                  onMouseLeave={() => setHovered(null)}
+                >
+                  <span className="absolute inset-0 flex items-center justify-center text-[7px] font-bold text-white leading-none select-none whitespace-nowrap">
+                    {val}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Price direction strip */}
+        <div className="flex items-center gap-px">
+          <span className="text-[8px] text-ink-disabled w-5 shrink-0 text-right pr-1">$</span>
+          <div className="flex h-5 gap-px flex-1 rounded-b overflow-hidden">
+            {timeline.map(pt => {
+              const val = `${pt.priceChg >= 0 ? '+' : ''}${pt.priceChg.toFixed(1)}%`
+              return (
+                <div
+                  key={pt.date}
+                  className="flex-1 min-w-0 cursor-default relative overflow-hidden"
+                  style={{ backgroundColor: DIR_COLOR[pt.priceDir], opacity: 0.8 }}
+                  title={`${pt.date}  Price open→close: ${val}`}
+                  onMouseEnter={() => setHovered(pt)}
+                  onMouseLeave={() => setHovered(null)}
+                >
+                  <span className="absolute inset-0 flex items-center justify-center text-[7px] font-bold text-white leading-none select-none whitespace-nowrap">
+                    {val}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+type PeRange = '2Y' | '1Y' | '6M'
+const PE_RANGES: PeRange[] = ['2Y', '1Y', '6M']
+const PE_RANGE_DAYS: Record<PeRange, number> = { '2Y': 730, '1Y': 365, '6M': 182 }
+
+function filterByRange<T extends { date: string }>(items: T[], days: number): T[] {
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - days)
+  const cutoffStr = cutoff.toISOString().slice(0, 10)
+  return items.filter(d => d.date >= cutoffStr)
+}
+
+function PeLineChart({ peData }: { peData: PeRatioData }) {
+  const { data, price_data = [], earnings_dates = [], current_pe, avg_pe, min_pe, max_pe } = peData
+  const [range, setRange] = useState<PeRange>('2Y')
+
+  const { data: globalCfg } = useQuery({ queryKey: ['app-config'], queryFn: appConfigService.get, staleTime: 60_000 })
+  const thresholds = {
+    peThreshold:    globalCfg?.pe_threshold    ?? INDICATOR_CONFIG.peThreshold,
+    priceThreshold: globalCfg?.price_threshold ?? INDICATOR_CONFIG.priceThreshold,
+  }
+
+  const filteredPrice = useMemo(
+    () => filterByRange(price_data, PE_RANGE_DAYS[range]),
+    [price_data, range],
+  )
+  const filteredPe = useMemo(
+    () => filterByRange(data, PE_RANGE_DAYS[range]),
+    [data, range],
+  )
+  const filteredEarnings = useMemo(() => {
+    if (!earnings_dates.length) return []
+    const cutoff = filteredPrice[0]?.date ?? ''
+    return earnings_dates.filter(d => d >= cutoff)
+  }, [earnings_dates, filteredPrice])
+
+  const rangeAvg  = useMemo(() => {
+    const vals = filteredPe.map(d => d.pe)
+    return vals.length ? round2(vals.reduce((a, b) => a + b, 0) / vals.length) : avg_pe
+  }, [filteredPe, avg_pe])
+  const rangeLow  = useMemo(() => filteredPe.length ? round2(Math.min(...filteredPe.map(d => d.pe))) : min_pe, [filteredPe, min_pe])
+  const rangeHigh = useMemo(() => filteredPe.length ? round2(Math.max(...filteredPe.map(d => d.pe))) : max_pe, [filteredPe, max_pe])
+
+  const timeline = useMemo(
+    () => computeWeeklyIndicators(filteredPrice, filteredPe, thresholds),
+    [filteredPrice, filteredPe, thresholds],
+  )
+
+  const option = useMemo(
+    () => filteredPrice.length
+      ? makeCombinedOption(filteredPrice, filteredPe, rangeAvg, filteredEarnings, timeline)
+      : null,
+    [filteredPrice, filteredPe, rangeAvg, filteredEarnings, timeline],
+  )
+
+  const curColor = current_pe != null && rangeAvg != null
+    ? current_pe > rangeAvg * 1.05 ? 'text-loss'
+    : current_pe < rangeAvg * 0.95 ? 'text-gain'
+    : 'text-ink-primary'
+    : 'text-ink-primary'
+
+  const stats = [
+    { label: 'Current',       value: current_pe, colorClass: curColor },
+    { label: `${range} Avg`,  value: rangeAvg,   colorClass: 'text-ink-primary' },
+    { label: `${range} Low`,  value: rangeLow,   colorClass: 'text-ink-primary' },
+    { label: `${range} High`, value: rangeHigh,  colorClass: 'text-ink-primary' },
+  ]
+
+  return (
+    <div className="p-4 space-y-3">
+      {/* Stats + range toggle */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid grid-cols-4 gap-2 flex-1">
+          {stats.map(({ label, value, colorClass }) => (
+            <div key={label} className="bg-surface-elevated rounded-lg px-3 py-2 text-center">
+              <div className="text-[9px] text-ink-disabled uppercase tracking-wider mb-0.5">{label}</div>
+              <div className={cn('text-sm font-bold tabular-nums', colorClass)}>
+                {value != null ? `${value.toFixed(1)}×` : '—'}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {PE_RANGES.map(r => (
+            <button key={r} onClick={() => setRange(r)}
+              className={cn(
+                'px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150',
+                range === r
+                  ? 'bg-brand-500/15 text-brand-400 border border-brand-500/20'
+                  : 'text-ink-muted hover:text-ink-secondary',
+              )}>
+              {r}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Legend */}
+      {timeline.length > 0 && (
+        <div className="flex items-center gap-4 flex-wrap">
+          {PE_INDICATOR_LEVELS.map(({ key, label, desc, dot }) => (
+            <div key={key} className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dot }} />
+              <span className="text-[9px] font-semibold shrink-0" style={{ color: dot }}>{label}</span>
+              <span className="text-[9px] text-ink-disabled">{desc}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Unified chart — 3 indicator strips + price + PE, all aligned on same time axis */}
+      {option ? (
+        <ReactECharts
+          option={option}
+          style={{ height: COMBINED_CHART_H, width: '100%' }}
+          opts={{ renderer: 'canvas' }}
+          notMerge
+        />
+      ) : (
+        <div className="flex items-center justify-center text-ink-disabled text-xs" style={{ height: 200 }}>
+          No price data available
+        </div>
+      )}
+    </div>
+  )
+}
+
+function round2(n: number) { return Math.round(n * 100) / 100 }
 
 // ── Main modal ────────────────────────────────────────────────────────────────
 
@@ -264,6 +879,9 @@ export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
     found: boolean; image: string | null; filename: string | null
   } | null>(null)
 
+  const [peRatio, setPeRatio]     = useState<PeRatioData | null>(null)
+  const [peLoading, setPeLoading] = useState(false)
+
   const [note, setNote] = useState('')
   const [noteSaving, setNoteSaving] = useState(false)
   const [noteSaved, setNoteSaved] = useState(false)
@@ -271,12 +889,14 @@ export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
 
   // Load side data on mount
   useEffect(() => {
+    setPeLoading(true)
     Promise.all([
       analyticsService.getAnalysisLog(symbol).then(setAnalysisLog),
       analyticsService.getFiboChart(symbol).then(setFiboChart),
       analyticsService.getNote(symbol).then(r => setNote(r.note)),
+      analyticsService.getPeRatio(symbol, assetType).then(setPeRatio).finally(() => setPeLoading(false)),
     ])
-  }, [symbol])
+  }, [symbol, assetType])
 
   const saveNote = async () => {
     setNoteSaving(true)
@@ -357,6 +977,19 @@ export function AnalyticsModal({ symbol, assetType, onClose }: Props) {
             </div>
           </Section>
         )}
+
+        {/* P/E Ratio chart */}
+        <Section title="P/E Ratio (2 Years)" icon={LineChartIcon} defaultOpen>
+          {peLoading ? (
+            <div className="p-4"><div className="skeleton h-52 rounded-lg" /></div>
+          ) : !peRatio?.found ? (
+            <div className="flex items-center justify-center h-20 text-sm text-ink-muted">
+              No P/E data available for this symbol
+            </div>
+          ) : (
+            <PeLineChart peData={peRatio} />
+          )}
+        </Section>
 
         {/* Symbol notes */}
         <div className="card p-4 space-y-2">

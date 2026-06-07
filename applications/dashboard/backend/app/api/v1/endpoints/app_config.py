@@ -15,6 +15,8 @@ router = APIRouter(prefix="/app-config", tags=["App Config"])
 class AppConfigUpdate(BaseModel):
     excel_source_path: str | None = None
     excel_working_path: str | None = None
+    pe_threshold: float | None = None
+    price_threshold: float | None = None
 
 
 @router.get("")

@@ -208,6 +208,55 @@ def _yahoo_quote_direct(symbols: list[str]) -> dict[str, dict]:
     return {}
 
 
+def _yahoo_chart_v8_ohlc(symbol: str, client) -> dict | None:
+    """Extract 5-day OHLC summary from Yahoo Finance v8 chart API (reuses existing 5d/1d call)."""
+    try:
+        resp = client.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+            params={"interval": "1d", "range": "5d"},
+        )
+        if resp.status_code != 200:
+            return None
+        result = resp.json().get("chart", {}).get("result") or []
+        if not result:
+            return None
+        q = (result[0].get("indicators", {}).get("quote") or [{}])[0]
+        opens  = [x for x in (q.get("open")  or []) if x is not None]
+        closes = [x for x in (q.get("close") or []) if x is not None]
+        highs  = [x for x in (q.get("high")  or []) if x is not None]
+        lows   = [x for x in (q.get("low")   or []) if x is not None]
+        if not opens or not closes or not highs or not lows:
+            return None
+        return {
+            "open":  round(float(opens[0]),   2),
+            "close": round(float(closes[-1]), 2),
+            "high":  round(float(max(highs)), 2),
+            "low":   round(float(min(lows)),  2),
+        }
+    except Exception:
+        return None
+
+
+def _fetch_5day_ohlc_batch(tickers: list[str]) -> dict[str, dict | None]:
+    """Fetch last-5-trading-day OHLC summary for a list of tickers."""
+    import httpx
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://finance.yahoo.com",
+        "Referer": "https://finance.yahoo.com/",
+    }
+    result: dict[str, dict | None] = {t: None for t in tickers}
+    try:
+        with httpx.Client(headers=headers, timeout=15, follow_redirects=True) as client:
+            for ticker in tickers:
+                result[ticker] = _yahoo_chart_v8_ohlc(ticker, client)
+    except Exception:
+        pass
+    return result
+
+
 def fetch_live_prices(symbols: list[str]) -> dict[str, float | None]:
     """Fetch latest close prices for Thai SET stocks (.BK suffix)."""
     if not symbols:
@@ -241,9 +290,8 @@ def fetch_live_prices(symbols: list[str]) -> dict[str, float | None]:
 
 
 def fetch_set_indices() -> list[dict[str, Any]]:
-    """Fetch live Thai SET market index prices."""
+    """Fetch live Thai SET market index prices with 5-day OHLC summary."""
     def _fetch():
-        # ^SET.BK = Thai SET composite; ^SETI maps to a US fund so avoid it.
         indices = [
             ("SET",    "^SET.BK"),
             ("SET50",  "^SET50.BK"),
@@ -253,18 +301,20 @@ def fetch_set_indices() -> list[dict[str, Any]]:
         ]
         tickers = [t for _, t in indices]
         quotes = _yahoo_quote_direct(tickers)
+        ohlc_map = _fetch_5day_ohlc_batch(tickers)
 
         result: list[dict[str, Any]] = []
         for name, ticker in indices:
             q = quotes.get(ticker) or {}
-            price = q.get("regularMarketPrice")
-            chg = q.get("regularMarketChange")
+            price   = q.get("regularMarketPrice")
+            chg     = q.get("regularMarketChange")
             chg_pct = q.get("regularMarketChangePercent")
             result.append({
-                "name": name,
-                "value": round(float(price), 2) if price is not None else None,
-                "change": round(float(chg), 2) if chg is not None else None,
+                "name":      name,
+                "value":     round(float(price),   2) if price   is not None else None,
+                "change":    round(float(chg),     2) if chg     is not None else None,
                 "changePct": round(float(chg_pct), 2) if chg_pct is not None else None,
+                "ohlc":      ohlc_map.get(ticker),
             })
         return result
 
@@ -272,7 +322,7 @@ def fetch_set_indices() -> list[dict[str, Any]]:
 
 
 def fetch_global_indices() -> list[dict[str, Any]]:
-    """Fetch S&P 500, NASDAQ, Dow Jones, BTC, and Gold prices."""
+    """Fetch S&P 500, NASDAQ, Dow Jones, BTC, and Gold prices with 5-day OHLC summary."""
     def _fetch():
         indices = [
             ("S&P 500", "^GSPC"),
@@ -283,18 +333,20 @@ def fetch_global_indices() -> list[dict[str, Any]]:
         ]
         tickers = [t for _, t in indices]
         quotes = _yahoo_quote_direct(tickers)
+        ohlc_map = _fetch_5day_ohlc_batch(tickers)
 
         result: list[dict[str, Any]] = []
         for name, ticker in indices:
             q = quotes.get(ticker) or {}
-            price = q.get("regularMarketPrice")
+            price   = q.get("regularMarketPrice")
+            chg     = q.get("regularMarketChange")
             chg_pct = q.get("regularMarketChangePercent")
-            chg = q.get("regularMarketChange")
             result.append({
-                "name": name,
-                "value": round(float(price), 2) if price is not None else None,
-                "change": round(float(chg), 2) if chg is not None else None,
+                "name":      name,
+                "value":     round(float(price),   2) if price   is not None else None,
+                "change":    round(float(chg),     2) if chg     is not None else None,
                 "changePct": round(float(chg_pct), 2) if chg_pct is not None else None,
+                "ohlc":      ohlc_map.get(ticker),
             })
         return result
 

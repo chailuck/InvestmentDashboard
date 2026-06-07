@@ -67,11 +67,19 @@ export interface PeriodTransaction {
   remarks: string | null
 }
 
+export interface IndexOhlc {
+  open: number
+  close: number
+  high: number
+  low: number
+}
+
 export interface SetIndex {
   name: string
   value: number | null
   change: number | null
   changePct: number | null
+  ohlc: IndexOhlc | null
 }
 
 export interface GlobalIndex {
@@ -79,6 +87,7 @@ export interface GlobalIndex {
   value: number | null
   change: number | null
   changePct: number | null
+  ohlc: IndexOhlc | null
 }
 
 export type Period = 'daily' | 'weekly' | 'monthly'

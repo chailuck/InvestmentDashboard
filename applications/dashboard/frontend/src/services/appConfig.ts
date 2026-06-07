@@ -3,6 +3,8 @@ import { apiClient } from './api'
 export interface AppConfig {
   excel_source_path: string
   excel_working_path: string
+  pe_threshold: number
+  price_threshold: number
 }
 
 export const appConfigService = {

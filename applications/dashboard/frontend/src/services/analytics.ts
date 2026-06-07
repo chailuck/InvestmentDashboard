@@ -25,6 +25,18 @@ export interface SearchResult {
   found: boolean
 }
 
+export interface PeRatioData {
+  found: boolean
+  data: { date: string; pe: number; pe_open?: number }[]
+  price_data: { date: string; price: number; open?: number }[]
+  earnings_dates: string[]
+  ticker?: string
+  current_pe: number | null
+  avg_pe: number | null
+  min_pe: number | null
+  max_pe: number | null
+}
+
 export const analyticsService = {
   async getChartData(symbol: string, assetType: AssetType, interval = '1d'): Promise<ChartData> {
     const { data } = await apiClient.get('/analytics/chart', {
@@ -57,5 +69,12 @@ export const analyticsService = {
 
   async saveNote(symbol: string, assetType: AssetType, note: string): Promise<void> {
     await apiClient.put('/analytics/note', { symbol, asset_type: assetType, note })
+  },
+
+  async getPeRatio(symbol: string, assetType: AssetType): Promise<PeRatioData> {
+    const { data } = await apiClient.get('/analytics/pe-ratio', {
+      params: { symbol, asset_type: assetType },
+    })
+    return data as PeRatioData
   },
 }

@@ -13,6 +13,8 @@ def _defaults() -> dict:
     s = get_settings()
     return {
         "excel_source_path": s.investment_excel_source_path or s.investment_excel_path,
+        "pe_threshold": 0.5,
+        "price_threshold": 3.0,
     }
 
 
