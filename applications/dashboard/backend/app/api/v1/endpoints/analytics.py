@@ -508,6 +508,43 @@ async def get_fibo_chart(
         return {"found": False, "image": None, "filename": None, "error": str(e)}
 
 
+class PeScanRequest(BaseModel):
+    symbols: list[str]
+    asset_type: str = "SET"
+
+
+@router.post("/pe-scan")
+async def pe_scan(body: PeScanRequest, _: UserId) -> dict[str, Any]:
+    """Batch PE history fetch for the PE Scanner page.
+
+    Validates each symbol, then fetches PE+price data concurrently (max 5 at a time).
+    Returns a map of symbol → {found, pe_data, price_data}.
+    Capped at 60 symbols per request.
+    """
+    validated: list[str] = []
+    for s in body.symbols[:60]:
+        try:
+            validated.append(_validate_symbol(s))
+        except HTTPException:
+            pass
+
+    semaphore = asyncio.Semaphore(5)
+
+    async def _one(sym: str) -> tuple[str, dict]:
+        async with semaphore:
+            result = await asyncio.get_running_loop().run_in_executor(
+                None, _fetch_pe_history, sym, body.asset_type
+            )
+        return sym, {
+            "found":      result["found"],
+            "pe_data":    result.get("data", []),
+            "price_data": result.get("price_data", []),
+        }
+
+    pairs = await asyncio.gather(*[_one(s) for s in validated], return_exceptions=False)
+    return {"results": dict(pairs)}
+
+
 @router.get("/pe-ratio")
 async def get_pe_ratio(
     _: UserId,

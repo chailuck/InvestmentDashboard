@@ -8,12 +8,13 @@ import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
-  Database, ShoppingCart, Briefcase, ArrowUpRight, FlaskConical, HardDriveDownload, GitBranch,
+  ShoppingCart, Briefcase, ArrowUpRight, FlaskConical, HardDriveDownload, GitBranch, ScanLine, Search,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
 import { portfolioDbService } from '@/services/portfolioDb'
 import { actionPlanService } from '@/services/actionPlan'
+import { weeklyScanService, type ScanListSummary } from '@/services/weeklyScan'
 import dynamic from 'next/dynamic'
 
 const AnalyticsModal = dynamic(
@@ -45,6 +46,68 @@ const SETTINGS_SUB = [
 ] as const
 
 // ── Sidebar widgets ────────────────────────────────────────────────────────────
+
+const DOT_COLORS: Record<string, string> = {
+  CYAN:   '#22d3ee',
+  GREEN:  '#10b981',
+  YELLOW: '#f59e0b',
+  RED:    '#ef4444',
+  PURPLE: '#a855f7',
+}
+const DOT_ORDER = ['CYAN', 'GREEN', 'YELLOW', 'RED', 'PURPLE']
+
+function WeeklyScanWidget() {
+  const { data: scans } = useQuery<ScanListSummary[]>({
+    queryKey: ['sidebar-weekly-scans'],
+    queryFn: weeklyScanService.listScans,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  })
+
+  const latest = scans?.[0]
+  if (!latest) return null
+
+  const dots = (Object.entries(latest.color_counts) as [string, number][])
+    .filter(([key, count]) => key !== 'NONE' && count > 0)
+    .sort((a, b) => DOT_ORDER.indexOf(a[0]) - DOT_ORDER.indexOf(b[0]))
+
+  const total = latest.total ?? Object.values(latest.color_counts).reduce((s, n) => s + n, 0)
+
+  return (
+    <div className="px-3 py-2 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <BarChart3 className="w-3 h-3 text-brand-400 shrink-0" />
+        <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider flex-1 truncate">
+          Weekly Scan
+        </span>
+        <Link
+          href={`/weekly-scan/${latest.id}`}
+          className="text-ink-disabled hover:text-brand-400 transition-colors shrink-0"
+          title="Open latest scan"
+        >
+          <ArrowUpRight className="w-3 h-3" />
+        </Link>
+      </div>
+      <Link
+        href={`/weekly-scan/${latest.id}`}
+        className="block pl-1 space-y-0.5 group"
+      >
+        <div className="text-[10px] text-ink-secondary group-hover:text-ink-primary transition-colors truncate">
+          {latest.name}
+        </div>
+        <div className="flex items-center gap-1">
+          {dots.map(([key, count]) => (
+            <span key={key} className="flex items-center gap-0.5" title={`${key}: ${count}`}>
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: DOT_COLORS[key] }} />
+              <span className="text-[9px] text-ink-muted tabular-nums">{count}</span>
+            </span>
+          ))}
+          <span className="text-[9px] text-ink-disabled tabular-nums ml-0.5">{total}</span>
+        </div>
+      </Link>
+    </div>
+  )
+}
 
 function PurchasePlanWidget() {
   const [modalSymbol, setModalSymbol] = useState<string | null>(null)
@@ -288,7 +351,8 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
 
   const inSettingsSection = pathname.startsWith('/settings') || pathname.startsWith('/admin')
 
-  const [settingsOpen, setSettingsOpen] = useState(inSettingsSection)
+  const [settingsOpen,  setSettingsOpen]  = useState(inSettingsSection)
+  const [analyticsOpen, setAnalyticsOpen] = useState(pathname.startsWith('/analytics'))
 
   const { data: modeData } = useQuery({
     queryKey: ['portfolio-mode'],
@@ -410,7 +474,15 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
         <NavLink href="/portfolio" label="Portfolio" icon={TrendingUp} />
 
         <NavLink href="/action-plan" label="Action Plan" icon={ClipboardList} />
-        <NavLink href="/analytics"   label="Analytics"   icon={BarChart3} />
+        <AccordionGroup
+          label="Analytics" icon={BarChart3}
+          active={pathname.startsWith('/analytics')}
+          open={analyticsOpen}
+          onToggle={() => setAnalyticsOpen(o => !o)}
+        >
+          <SubLink href="/analytics"             label="Search"     icon={Search} />
+          <SubLink href="/analytics/pe-scanner"  label="PE Scanner" icon={ScanLine} />
+        </AccordionGroup>
         <NavLink href="/ai-copilot"  label="AI Copilot"  icon={Bot} badge="AI" />
 
         <AccordionGroup
@@ -429,7 +501,8 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
 
       {/* Bottom widgets — hidden when collapsed */}
       {!collapsed && (
-        <div className="shrink-0 border-t border-border/30 divide-y divide-border/20 max-h-[280px] overflow-y-auto no-scrollbar">
+        <div className="shrink-0 border-t border-border/30 divide-y divide-border/20 max-h-[320px] overflow-y-auto no-scrollbar">
+          <WeeklyScanWidget />
           <PurchasePlanWidget />
           <PortfolioWidget isDbMode={isDbMode} />
         </div>

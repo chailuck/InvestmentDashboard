@@ -607,11 +607,19 @@ export default function WeeklyScanPage() {
     if (!scan || savingConfig === 'saving') return
     setSavingConfig('saving')
     try {
-      const symbols = (activeListTab
+      const filteredItems = activeListTab
         ? scan.items.filter(i => i.list_name === activeListTab)
         : scan.items
-      ).map(i => i.symbol)
+      const symbols = filteredItems.map(i => i.symbol)
       await weeklyScanService.updateConfig(symbols)
+      // Also sync the UserSymbolList so that refresh-scan picks up the same symbols
+      if (activeListTab) {
+        const matchingList = symbolLists.find(l => l.name === activeListTab)
+        if (matchingList) {
+          await weeklyScanService.updateSymbolList(matchingList.id, { symbols })
+          queryClient.invalidateQueries({ queryKey: ['symbol-lists'] })
+        }
+      }
       setSavingConfig('done')
       setTimeout(() => setSavingConfig('idle'), 2000)
     } catch { setSavingConfig('idle') }

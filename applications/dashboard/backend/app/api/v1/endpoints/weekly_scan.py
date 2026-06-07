@@ -531,6 +531,11 @@ async def refresh_scan(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
                 assigned.add(sym)
                 next_order += 1
 
+    # Remove items whose symbols are no longer in any symbol list
+    for sym, item in existing.items():
+        if sym not in assigned:
+            await db.delete(item)
+
     await db.execute(text("UPDATE weekly_scans SET updated_at = now() WHERE id = :id"), {"id": scan.id})
     await db.commit()
 

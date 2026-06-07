@@ -37,6 +37,12 @@ export interface PeRatioData {
   max_pe: number | null
 }
 
+export interface PeScanEntry {
+  found: boolean
+  pe_data:    { date: string; pe: number; pe_open?: number }[]
+  price_data: { date: string; price: number; open?: number }[]
+}
+
 export const analyticsService = {
   async getChartData(symbol: string, assetType: AssetType, interval = '1d'): Promise<ChartData> {
     const { data } = await apiClient.get('/analytics/chart', {
@@ -76,5 +82,10 @@ export const analyticsService = {
       params: { symbol, asset_type: assetType },
     })
     return data as PeRatioData
+  },
+
+  async peScan(symbols: string[], assetType: AssetType = 'SET'): Promise<Record<string, PeScanEntry>> {
+    const { data } = await apiClient.post('/analytics/pe-scan', { symbols, asset_type: assetType })
+    return data.results as Record<string, PeScanEntry>
   },
 }
