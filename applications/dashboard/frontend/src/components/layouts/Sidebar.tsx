@@ -14,6 +14,12 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
 import { portfolioDbService } from '@/services/portfolioDb'
 import { actionPlanService } from '@/services/actionPlan'
+import dynamic from 'next/dynamic'
+
+const AnalyticsModal = dynamic(
+  () => import('@/components/analytics/AnalyticsModal').then(m => ({ default: m.AnalyticsModal })),
+  { ssr: false, loading: () => null },
+)
 
 interface SidebarProps {
   collapsed: boolean
@@ -41,6 +47,8 @@ const SETTINGS_SUB = [
 // ── Sidebar widgets ────────────────────────────────────────────────────────────
 
 function PurchasePlanWidget() {
+  const [modalSymbol, setModalSymbol] = useState<string | null>(null)
+
   const { data: plans } = useQuery({
     queryKey: ['sidebar-purchase-plans'],
     queryFn: () => actionPlanService.list('purchase', null),
@@ -74,6 +82,7 @@ function PurchasePlanWidget() {
           <ArrowUpRight className="w-3 h-3" />
         </Link>
       </div>
+
       {/* Items */}
       {items.length === 0 ? (
         <p className="text-[10px] text-ink-disabled pl-4">No items</p>
@@ -81,13 +90,18 @@ function PurchasePlanWidget() {
         <div className="space-y-0.5 pl-1">
           {items.map((item, i) => (
             <div key={i} className="flex items-center gap-1 text-[9px] tabular-nums">
-              {/* Symbol */}
-              <span className={cn(
-                'font-mono font-bold text-[10px] shrink-0 w-[46px] truncate',
-                item.triggered ? 'text-gain' : 'text-ink-secondary',
-              )}>
+              {/* Clickable symbol */}
+              <button
+                onClick={() => setModalSymbol(item.stock)}
+                className={cn(
+                  'font-mono font-bold text-[10px] shrink-0 w-[46px] truncate text-left',
+                  'hover:text-brand-400 transition-colors cursor-pointer',
+                  item.triggered ? 'text-gain' : 'text-ink-secondary',
+                )}
+                title={`Open analytics for ${item.stock}`}
+              >
                 {item.stock}{item.triggered ? '✓' : ''}
-              </span>
+              </button>
               {/* SL ← Buy → TP */}
               {item.sl != null && <span className="text-loss font-semibold shrink-0">{item.sl.toFixed(1)}</span>}
               {item.sl != null && <span className="text-ink-disabled shrink-0">←</span>}
@@ -105,11 +119,33 @@ function PurchasePlanWidget() {
           )}
         </div>
       )}
+
+      {/* Latest list name link */}
+      <Link
+        href={`/action-plan/purchase/${latest.id}`}
+        className="block text-[9px] text-ink-disabled hover:text-brand-400 transition-colors truncate pl-1"
+        title={latest.name}
+      >
+        {latest.name}
+      </Link>
+
+      {/* Analytics modal */}
+      <AnimatePresence>
+        {modalSymbol && (
+          <AnalyticsModal
+            symbol={modalSymbol}
+            assetType="SET"
+            onClose={() => setModalSymbol(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
 
 function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
+  const [modalSymbol, setModalSymbol] = useState<string | null>(null)
+
   // DB mode: live positions from portfolio manager
   const { data: dbPositions } = useQuery({
     queryKey: ['sidebar-portfolio-positions'],
@@ -168,6 +204,8 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
   const linkHref = isDbMode ? '/settings/portfolio-db'
     : latestPlan ? `/action-plan/portfolio/${latestPlan.id}` : '/action-plan'
 
+  const listLabel = isDbMode ? 'DB Portfolio' : (latestPlan?.name ?? '')
+
   return (
     <div className="px-3 py-2 space-y-1.5">
       <div className="flex items-center gap-1.5">
@@ -181,10 +219,18 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
           <ArrowUpRight className="w-3 h-3" />
         </Link>
       </div>
+
       <div className="space-y-0.5 pl-1">
         {rows.map(row => (
           <div key={row.key} className="flex items-center gap-1.5 text-[10px]">
-            <span className="font-mono font-bold text-ink-secondary shrink-0 w-[52px] truncate">{row.symbol}</span>
+            {/* Clickable symbol */}
+            <button
+              onClick={() => setModalSymbol(row.symbol)}
+              className="font-mono font-bold text-ink-secondary shrink-0 w-[52px] truncate text-left hover:text-brand-400 transition-colors cursor-pointer"
+              title={`Open analytics for ${row.symbol}`}
+            >
+              {row.symbol}
+            </button>
             {row.pnlPct !== null ? (
               <>
                 <span className={cn(
@@ -208,6 +254,28 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
           </div>
         ))}
       </div>
+
+      {/* Latest list name link */}
+      {listLabel && (
+        <Link
+          href={linkHref}
+          className="block text-[9px] text-ink-disabled hover:text-brand-400 transition-colors truncate pl-1"
+          title={listLabel}
+        >
+          {listLabel}
+        </Link>
+      )}
+
+      {/* Analytics modal */}
+      <AnimatePresence>
+        {modalSymbol && (
+          <AnalyticsModal
+            symbol={modalSymbol}
+            assetType="SET"
+            onClose={() => setModalSymbol(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

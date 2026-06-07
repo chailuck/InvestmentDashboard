@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Bell, Search, RefreshCw, Menu, Wifi, WifiOff } from 'lucide-react'
+import { Bell, Search, RefreshCw, Menu, Wifi, WifiOff, BarChart3 } from 'lucide-react'
 import { useWebSocket } from '@/websocket/hooks'
 import { useNotificationStore } from '@/store/notifications'
 import {
@@ -11,6 +12,7 @@ import {
   type SetIndex,
   type GlobalIndex,
 } from '@/services/portfolioTracker'
+import { weeklyScanService, type ScanListSummary, COLOR_MARKS } from '@/services/weeklyScan'
 import { cn } from '@/lib/utils'
 
 interface HeaderProps {
@@ -26,18 +28,23 @@ export function Header({ onMobileMenuOpen, pageTitle = 'Dashboard' }: HeaderProp
   const unreadCount = notifications.filter(n => !n.read).length
 
   return (
-    <header className="h-[60px] bg-surface-card/80 backdrop-blur-sm border-b border-border/50 flex items-center px-4 gap-4 shrink-0 sticky top-0 z-30">
+    <header className="h-[60px] bg-surface-card/80 backdrop-blur-sm border-b border-border/50 flex items-center px-4 gap-3 shrink-0 sticky top-0 z-30">
       {/* Mobile menu button */}
       <button onClick={onMobileMenuOpen} className="btn-icon lg:hidden">
         <Menu className="w-4 h-4" />
       </button>
 
-      {/* Page title */}
+      {/* Page title (small screens only) */}
       <div className="flex-1 min-w-0 hidden sm:block lg:hidden">
         <h1 className="text-sm font-semibold text-ink-primary truncate">{pageTitle}</h1>
       </div>
 
-      {/* Market ticker strip — two-row layout on large screens */}
+      {/* Latest weekly scan chip */}
+      <div className="hidden lg:block shrink-0">
+        <WeeklyScanChip />
+      </div>
+
+      {/* Market ticker strip — two-row layout */}
       <div className="hidden lg:flex items-center justify-center flex-1 min-w-0 overflow-hidden py-1">
         <MarketTicker />
       </div>
@@ -111,6 +118,63 @@ export function Header({ onMobileMenuOpen, pageTitle = 'Dashboard' }: HeaderProp
         </div>
       </div>
     </header>
+  )
+}
+
+// ── Weekly scan chip ───────────────────────────────────────────────────────────
+
+// Color dot metadata keyed by mark value for fast lookup
+const DOT_COLORS: Record<string, string> = {
+  CYAN:   '#22d3ee',
+  GREEN:  '#10b981',
+  YELLOW: '#f59e0b',
+  RED:    '#ef4444',
+  PURPLE: '#a855f7',
+}
+
+function WeeklyScanChip() {
+  const { data: scans } = useQuery<ScanListSummary[]>({
+    queryKey: ['header-weekly-scans'],
+    queryFn: weeklyScanService.listScans,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  })
+
+  const latest = scans?.[0]
+  if (!latest) return null
+
+  const dots = (Object.entries(latest.color_counts) as [string, number][])
+    .filter(([key, count]) => key !== 'NONE' && count > 0)
+    .sort((a, b) => {
+      const order = ['CYAN', 'GREEN', 'YELLOW', 'RED', 'PURPLE']
+      return order.indexOf(a[0]) - order.indexOf(b[0])
+    })
+
+  const total = latest.total ?? Object.values(latest.color_counts).reduce((s, n) => s + n, 0)
+
+  return (
+    <Link
+      href={`/weekly-scan/${latest.id}`}
+      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border/40 bg-surface-elevated/40 hover:bg-surface-elevated hover:border-brand-500/30 transition-colors group"
+      title={`Go to ${latest.name}`}
+    >
+      <BarChart3 className="w-3 h-3 text-brand-400 shrink-0" />
+      <span className="text-[10px] font-semibold text-ink-secondary group-hover:text-ink-primary transition-colors truncate max-w-[90px]">
+        {latest.name}
+      </span>
+      <div className="flex items-center gap-1 shrink-0">
+        {dots.map(([key, count]) => (
+          <span key={key} className="flex items-center gap-0.5" title={`${key}: ${count}`}>
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ backgroundColor: DOT_COLORS[key] }}
+            />
+            <span className="text-[9px] text-ink-muted tabular-nums">{count}</span>
+          </span>
+        ))}
+      </div>
+      <span className="text-[9px] text-ink-disabled tabular-nums shrink-0">{total}</span>
+    </Link>
   )
 }
 
