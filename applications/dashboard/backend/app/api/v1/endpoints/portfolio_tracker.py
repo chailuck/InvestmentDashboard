@@ -1,14 +1,16 @@
-"""Portfolio tracker endpoints -- routes to Excel or DB based on user's portfolio_mode."""
+"""Portfolio tracker endpoints — routes to Excel or DB based on portfolio's data source mode."""
 
+from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user_id
 from app.database.session import get_db
+from app.models.portfolio import Portfolio
 
 router = APIRouter(prefix="/portfolio-tracker", tags=["Portfolio Tracker"])
 
@@ -22,33 +24,44 @@ def _svc_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
 
-async def _mode(user_id: str, db: AsyncSession) -> str:
-    from app.api.v1.endpoints.portfolio_db import get_user_portfolio_mode
-    return await get_user_portfolio_mode(user_id, db)
+async def _resolve_portfolio(user_id: str, db: AsyncSession, portfolio_id: str | None) -> Portfolio | None:
+    """Return the Portfolio row for this user (given portfolio_id or default)."""
+    from app.api.v1.endpoints.portfolios import get_portfolio_by_id_or_default
+    return await get_portfolio_by_id_or_default(portfolio_id, user_id, db)
 
 
-# ""- Refresh """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""-
+def _portfolio_mode(p: Portfolio | None) -> str:
+    if p and p.portfolio_mode:
+        return p.portfolio_mode
+    return "excel"
 
-async def _user_excel_paths(user_id: str, db: AsyncSession) -> tuple[str | None, str | None]:
-    """Return (excel_source_path, excel_working_path) from the user's record."""
-    import uuid as _uuid
-    from sqlalchemy import select as _select
-    from app.models.user import User as _User
-    result = await db.execute(_select(_User).where(_User.id == _uuid.UUID(user_id)))
-    u = result.scalar_one_or_none()
-    if u:
-        return u.excel_source_path, u.excel_working_path
-    return None, None
 
+def _excel_working(p: Portfolio | None) -> str | None:
+    return p.excel_working_path if p else None
+
+
+def _excel_source(p: Portfolio | None) -> str | None:
+    return p.excel_source_path if p else None
+
+
+# ── Refresh ───────────────────────────────────────────────────────────────────
 
 @router.post("/refresh")
-async def refresh_portfolio(user_id: UserId, db: DB) -> dict[str, Any]:
-    if await _mode(user_id, db) == "db":
-        return {"status": "ok", "message": "Database mode -- no file to refresh. Data is managed directly in the database."}
+async def refresh_portfolio(
+    user_id: UserId,
+    db: DB,
+    portfolio_id: Optional[str] = Query(None),
+) -> dict[str, Any]:
+    p = await _resolve_portfolio(user_id, db, portfolio_id)
+    if _portfolio_mode(p) == "db":
+        return {"status": "ok", "message": "Database mode — no file to refresh. Data is managed directly in the database."}
+
     from app.services.portfolio_excel import copy_excel_from_source, _source_path, _working_path
-    src_override, wk_override = await _user_excel_paths(user_id, db)
+    src_override = _excel_source(p)
+    wk_override = _excel_working(p)
     src = _source_path(src_override)
     dst = _working_path(wk_override)
+
     if not src.exists():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail=f"Source file not found: {src}")
@@ -57,7 +70,8 @@ async def refresh_portfolio(user_id: UserId, db: DB) -> dict[str, Any]:
         copy_excel_from_source(src_override, wk_override)
         dst_size_kb = round(dst.stat().st_size / 1024, 1) if dst.exists() else 0
         from app.api.v1.endpoints.portfolio_db import sync_excel_positions_to_db
-        sync_result = await sync_excel_positions_to_db(user_id, db)
+        p_id_str = str(p.id) if p else None
+        sync_result = await sync_excel_positions_to_db(user_id, db, portfolio_id=p_id_str)
         return {
             "status": "ok",
             "source": str(src),
@@ -71,38 +85,50 @@ async def refresh_portfolio(user_id: UserId, db: DB) -> dict[str, Any]:
         raise _svc_error(exc)
 
 
-# ""- Raw data """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""-
+# ── Raw data ──────────────────────────────────────────────────────────────────
 
 @router.get("/raw-data")
-async def get_raw_data(user_id: UserId, db: DB) -> dict[str, Any]:
-    if await _mode(user_id, db) == "db":
+async def get_raw_data(
+    user_id: UserId,
+    db: DB,
+    portfolio_id: Optional[str] = Query(None),
+) -> dict[str, Any]:
+    p = await _resolve_portfolio(user_id, db, portfolio_id)
+    if _portfolio_mode(p) == "db":
         from app.api.v1.endpoints.portfolio_db import list_positions_db
-        data = await list_positions_db(user_id, db, None, None, "all")
+        p_id_str = str(p.id) if p else None
+        data = await list_positions_db(user_id, db, None, None, "all", portfolio_id=p_id_str)
         positions = data["positions"]
         if not positions:
             return {"file": "database", "columns": [], "rows": [], "total": 0}
         columns = list(positions[0].keys())
-        rows = [[p[c] for c in columns] for p in positions]
+        rows = [[pos[c] for c in columns] for pos in positions]
         return {"file": "database", "columns": columns, "rows": rows, "total": len(rows)}
     import pandas as pd
     from app.services.portfolio_excel import _ensure_working_copy, _working_path
+    wk = _excel_working(p)
     try:
-        path = _ensure_working_copy()
+        path = _ensure_working_copy(working_override=wk)
         df = pd.read_excel(str(path), sheet_name="Sheet1")
         df = df.where(pd.notna(df), None)
         for col in df.select_dtypes(include=["datetime64[ns]", "datetimetz"]).columns:
             df[col] = df[col].astype(str).where(df[col].notna(), None)
-        return {"file": str(_working_path()), "columns": list(df.columns),
+        return {"file": str(_working_path(wk)), "columns": list(df.columns),
                 "rows": df.values.tolist(), "total": len(df)}
     except Exception as exc:
         raise _svc_error(exc)
 
 
 @router.get("/raw-source-data")
-async def get_raw_source_data(user_id: UserId, db: DB) -> dict[str, Any]:
+async def get_raw_source_data(
+    user_id: UserId,
+    db: DB,
+    portfolio_id: Optional[str] = Query(None),
+) -> dict[str, Any]:
     import pandas as pd
+    p = await _resolve_portfolio(user_id, db, portfolio_id)
     from app.services.portfolio_excel import _source_path
-    src = _source_path()
+    src = _source_path(_excel_source(p))
     if not src.exists():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail=f"Source file not found: {src}")
@@ -117,7 +143,7 @@ async def get_raw_source_data(user_id: UserId, db: DB) -> dict[str, Any]:
         raise _svc_error(exc)
 
 
-# ---- Summary ----------------------------------------------------------------------------------------------------------------------------------------------
+# ── Summary ───────────────────────────────────────────────────────────────────
 
 @router.get("/summary")
 async def get_summary(
@@ -125,17 +151,19 @@ async def get_summary(
     db: DB,
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
+    portfolio_id: Optional[str] = Query(None),
 ) -> dict[str, Any]:
     today = date.today()
     to_d = to_date or today
     from_d = from_date or (today - timedelta(days=30))
-
     _empty = {"accumulated_pnl": 0, "win_rate": 0.0, "avg_pnl": 0.0,
               "avg_pnl_pct": 0.0, "total_trades": 0, "wins": 0, "losses": 0}
 
-    if await _mode(user_id, db) == "db":
+    p = await _resolve_portfolio(user_id, db, portfolio_id)
+    if _portfolio_mode(p) == "db":
         from app.api.v1.endpoints.portfolio_db import _get_closed_positions, _pos_net_pnl
-        rows = await _get_closed_positions(user_id, db, from_d, to_d)
+        p_id_str = str(p.id) if p else None
+        rows = await _get_closed_positions(user_id, db, from_d, to_d, portfolio_id=p_id_str)
         if not rows:
             return _empty
         nets = [_pos_net_pnl(r) for r in rows]
@@ -158,7 +186,7 @@ async def get_summary(
 
     import pandas as pd
     from app.services.portfolio_excel import _load_df
-    df = _load_df()
+    df = _load_df(_excel_working(p))
     closed = df[df["Exit Price"].notna()].copy()
     records: list[dict] = []
     for _, r in closed.iterrows():
@@ -166,12 +194,12 @@ async def get_summary(
         if edate < from_d or edate > to_d:
             continue
         entry = float(r["Entry Price"]) if pd.notna(r["Entry Price"]) else 0.0
-        exit_p = float(r["Exit Price"]) if pd.notna(r["Exit Price"]) else entry
+        exit_price = float(r["Exit Price"]) if pd.notna(r["Exit Price"]) else entry
         size = float(r["Position Size"]) if pd.notna(r["Position Size"]) else 0.0
         direction = str(r.get("Position (Long/Short)", "Long"))
         mult = -1 if "short" in direction.lower() else 1
-        net = round((exit_p - entry) * size * mult, 0)
-        pct = round((exit_p - entry) / entry * 100 * mult, 2) if entry != 0 else 0.0
+        net = round((exit_price - entry) * size * mult, 0)
+        pct = round((exit_price - entry) / entry * 100 * mult, 2) if entry != 0 else 0.0
         records.append({"net": net, "pct": pct})
 
     total = len(records)
@@ -188,7 +216,7 @@ async def get_summary(
     }
 
 
-# ---- Positions ------------------------------------------------------------------------------------------------------------------------------------------
+# ── Positions ─────────────────────────────────────────────────────────────────
 
 @router.get("/positions")
 async def list_positions(
@@ -197,20 +225,24 @@ async def list_positions(
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
     status: str = Query("active"),
+    portfolio_id: Optional[str] = Query(None),
 ) -> dict[str, Any]:
-    if await _mode(user_id, db) == "db":
+    p = await _resolve_portfolio(user_id, db, portfolio_id)
+    if _portfolio_mode(p) == "db":
         from app.api.v1.endpoints.portfolio_db import list_positions_db
-        return await list_positions_db(user_id, db, from_date, to_date, status)
+        p_id_str = str(p.id) if p else None
+        return await list_positions_db(user_id, db, from_date, to_date, status, portfolio_id=p_id_str)
     from app.services.portfolio_excel import get_positions
     try:
-        positions = get_positions(from_date=from_date, to_date=to_date, status=status)
+        positions = get_positions(from_date=from_date, to_date=to_date, status=status,
+                                  working_override=_excel_working(p))
     except Exception as exc:
         raise _svc_error(exc)
-    total_pnl = sum(p["netPnl"] for p in positions)
+    total_pnl = sum(pos["netPnl"] for pos in positions)
     return {"positions": positions, "total": len(positions), "totalNetPnl": round(total_pnl, 0)}
 
 
-# ""- Performance chart """""""""""""""""""""""""""""""""""""""""""""""""""""""""-
+# ── Performance chart ─────────────────────────────────────────────────────────
 
 @router.get("/performance")
 async def get_performance(
@@ -219,18 +251,22 @@ async def get_performance(
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
     period: str = Query("daily"),
+    portfolio_id: Optional[str] = Query(None),
 ) -> list[dict[str, Any]]:
-    if await _mode(user_id, db) == "db":
+    p = await _resolve_portfolio(user_id, db, portfolio_id)
+    if _portfolio_mode(p) == "db":
         from app.api.v1.endpoints.portfolio_db import get_performance_db
-        return await get_performance_db(user_id, db, from_date, to_date, period)
+        p_id_str = str(p.id) if p else None
+        return await get_performance_db(user_id, db, from_date, to_date, period, portfolio_id=p_id_str)
     from app.services.portfolio_excel import get_daily_performance
     try:
-        return get_daily_performance(from_date=from_date, to_date=to_date, period=period)
+        return get_daily_performance(from_date=from_date, to_date=to_date, period=period,
+                                     working_override=_excel_working(p))
     except Exception as exc:
         raise _svc_error(exc)
 
 
-# ""- Performance by date (table) """""""""""""""""""""""""""""""""""""""""""""""-
+# ── Performance by date ───────────────────────────────────────────────────────
 
 @router.get("/performance/by-date")
 async def get_performance_by_date(
@@ -239,18 +275,22 @@ async def get_performance_by_date(
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
     period: str = Query("daily"),
+    portfolio_id: Optional[str] = Query(None),
 ) -> list[dict[str, Any]]:
-    if await _mode(user_id, db) == "db":
+    p = await _resolve_portfolio(user_id, db, portfolio_id)
+    if _portfolio_mode(p) == "db":
         from app.api.v1.endpoints.portfolio_db import get_performance_by_date_db
-        return await get_performance_by_date_db(user_id, db, from_date, to_date, period)
+        p_id_str = str(p.id) if p else None
+        return await get_performance_by_date_db(user_id, db, from_date, to_date, period, portfolio_id=p_id_str)
     from app.services.portfolio_excel import get_performance_by_date
     try:
-        return get_performance_by_date(from_date=from_date, to_date=to_date, period=period)
+        return get_performance_by_date(from_date=from_date, to_date=to_date, period=period,
+                                       working_override=_excel_working(p))
     except Exception as exc:
         raise _svc_error(exc)
 
 
-# ""- Transactions drill-down """""""""""""""""""""""""""""""""""""""""""""""""""-
+# ── Transactions drill-down ───────────────────────────────────────────────────
 
 @router.get("/performance/transactions")
 async def get_period_transactions(
@@ -260,19 +300,24 @@ async def get_period_transactions(
     period: str = Query("daily"),
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
+    portfolio_id: Optional[str] = Query(None),
 ) -> list[dict[str, Any]]:
-    if await _mode(user_id, db) == "db":
+    p = await _resolve_portfolio(user_id, db, portfolio_id)
+    if _portfolio_mode(p) == "db":
         from app.api.v1.endpoints.portfolio_db import get_period_transactions_db
-        return await get_period_transactions_db(user_id, db, period_key, period, from_date, to_date)
+        p_id_str = str(p.id) if p else None
+        return await get_period_transactions_db(user_id, db, period_key, period, from_date, to_date,
+                                                portfolio_id=p_id_str)
     from app.services.portfolio_excel import get_period_transactions
     try:
         return get_period_transactions(period_key=period_key, period=period,
-                                       from_date=from_date, to_date=to_date)
+                                       from_date=from_date, to_date=to_date,
+                                       working_override=_excel_working(p))
     except Exception as exc:
         raise _svc_error(exc)
 
 
-# ""- Performance by stock """"""""""""""""""""""""""""""""""""""""""""""""""""""-
+# ── Performance by stock ──────────────────────────────────────────────────────
 
 @router.get("/performance/by-stock")
 async def get_performance_by_stock(
@@ -280,18 +325,22 @@ async def get_performance_by_stock(
     db: DB,
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
+    portfolio_id: Optional[str] = Query(None),
 ) -> list[dict[str, Any]]:
-    if await _mode(user_id, db) == "db":
+    p = await _resolve_portfolio(user_id, db, portfolio_id)
+    if _portfolio_mode(p) == "db":
         from app.api.v1.endpoints.portfolio_db import get_performance_by_stock_db
-        return await get_performance_by_stock_db(user_id, db, from_date, to_date)
+        p_id_str = str(p.id) if p else None
+        return await get_performance_by_stock_db(user_id, db, from_date, to_date, portfolio_id=p_id_str)
     from app.services.portfolio_excel import get_performance_by_stock
     try:
-        return get_performance_by_stock(from_date=from_date, to_date=to_date)
+        return get_performance_by_stock(from_date=from_date, to_date=to_date,
+                                        working_override=_excel_working(p))
     except Exception as exc:
         raise _svc_error(exc)
 
 
-# ""- Market indices (same regardless of mode) """"""""""""""""""""""""""""""""""-
+# ── Market indices (same regardless of portfolio) ─────────────────────────────
 
 @router.get("/market/set-indices")
 async def get_set_indices(_: UserId) -> list[dict[str, Any]]:

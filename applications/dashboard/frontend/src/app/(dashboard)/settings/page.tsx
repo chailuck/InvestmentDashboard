@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { User, Lock, Shield, Settings2, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink, ListChecks, Upload, Download, Plus, Trash2, ChevronDown, ChevronUp, GripVertical, RefreshCw } from 'lucide-react'
+import { User, Lock, Shield, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink, ListChecks, Upload, Download, Plus, Trash2, ChevronDown, ChevronUp, GripVertical, RefreshCw, Wallet, Star } from 'lucide-react'
 import Link from 'next/link'
 import { useAuthStore } from '@/store/auth'
 import { apiClient } from '@/services/api'
@@ -11,6 +11,7 @@ import { usersService } from '@/services/users'
 import { appConfigService } from '@/services/appConfig'
 import { portfolioDbService } from '@/services/portfolioDb'
 import { weeklyScanService } from '@/services/weeklyScan'
+import { portfolioService, type UserPortfolio, type PortfolioCreate, type PortfolioUpdate } from '@/services/portfolio'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -37,117 +38,299 @@ function Section({ title, icon: Icon, children }: { title: string; icon: React.E
   )
 }
 
-function PortfolioDataSourceSection() {
-  const queryClient = useQueryClient()
-  const [mode, setMode] = useState<'excel' | 'db' | null>(null)
-  const [saving, setSaving] = useState(false)
+// ── Portfolio Management Section ────────────────────────────────────────────────
 
-  useEffect(() => {
-    portfolioDbService.getMode().then(m => setMode(m as 'excel' | 'db'))
-  }, [])
+function PortfolioCard({
+  portfolio,
+  canDelete,
+  onSetDefault,
+  onUpdate,
+  onDelete,
+}: {
+  portfolio: UserPortfolio
+  canDelete: boolean
+  onSetDefault: (id: string) => Promise<void>
+  onUpdate: (id: string, data: PortfolioUpdate) => Promise<void>
+  onDelete: (id: string) => Promise<void>
+}) {
+  const [expanded, setExpanded]       = useState(portfolio.is_default)
+  const [name, setName]               = useState(portfolio.name)
+  const [mode, setMode]               = useState<'excel' | 'db'>(portfolio.portfolio_mode)
+  const [sourcePath, setSourcePath]   = useState(portfolio.excel_source_path ?? '')
+  const [workingPath, setWorkingPath] = useState(portfolio.excel_working_path ?? '')
+  const [saving, setSaving]           = useState(false)
+  const [deleting, setDeleting]       = useState(false)
+  const [settingDefault, setSettingDefault] = useState(false)
+  const [testState, setTestState]     = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [testMsg, setTestMsg]         = useState('')
 
-  const switchMode = async (next: 'excel' | 'db') => {
-    if (next === mode) return
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault()
     setSaving(true)
     try {
-      await portfolioDbService.setMode(next)
-      setMode(next)
-      // Invalidate sidebar's portfolio-mode cache so it updates immediately
-      queryClient.invalidateQueries({ queryKey: ['portfolio-mode'] })
-      toast.success(`Switched to ${next === 'excel' ? 'Excel' : 'Database'} mode`)
+      await onUpdate(portfolio.id, {
+        name: name.trim() || portfolio.name,
+        portfolio_mode: mode,
+        excel_source_path: mode === 'excel' ? sourcePath.trim() || null : null,
+        excel_working_path: mode === 'excel' ? workingPath.trim() || null : null,
+      })
+      toast.success(`Portfolio "${name}" saved`)
     } catch {
-      toast.error('Failed to switch mode')
-    } finally {
-      setSaving(false)
+      toast.error('Failed to save portfolio')
+    } finally { setSaving(false) }
+  }
+
+  const doDelete = async () => {
+    if (!confirm(`Delete portfolio "${portfolio.name}"? This cannot be undone.`)) return
+    setDeleting(true)
+    try { await onDelete(portfolio.id) }
+    catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? 'Failed to delete')
+      setDeleting(false)
     }
   }
 
-  return (
-    <Section title="Portfolio Data Source" icon={Database}>
-      <p className="text-xs text-ink-muted -mt-3">
-        Choose how your portfolio data is stored and managed.
-      </p>
-      {mode === null ? (
-        <div className="flex items-center gap-2 text-ink-muted text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
-      ) : (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Excel mode */}
-            <button
-              onClick={() => switchMode('excel')}
-              disabled={saving}
-              className={cn(
-                'flex flex-col items-start gap-2 p-4 rounded-xl border-2 transition-all text-left',
-                mode === 'excel'
-                  ? 'border-brand-500/50 bg-brand-500/8'
-                  : 'border-border hover:border-border-focus',
-              )}
-            >
-              <div className="flex items-center justify-between w-full">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet className={cn('w-5 h-5', mode === 'excel' ? 'text-brand-400' : 'text-ink-muted')} />
-                  <span className={cn('font-semibold text-sm', mode === 'excel' ? 'text-brand-400' : 'text-ink-secondary')}>
-                    Excel File
-                  </span>
-                </div>
-                {mode === 'excel' && <CheckCircle2 className="w-4 h-4 text-brand-400" />}
-              </div>
-              <p className="text-xs text-ink-muted leading-relaxed">
-                Read positions from the Investment Tracking Excel file. Requires configuring file paths below.
-              </p>
-            </button>
+  const testPath = async () => {
+    if (!sourcePath.trim()) return
+    setTestState('testing'); setTestMsg('')
+    try {
+      const r = await appConfigService.testPath(sourcePath.trim())
+      setTestState(r.ok ? 'ok' : 'fail'); setTestMsg(r.message)
+    } catch { setTestState('fail'); setTestMsg('Could not reach backend.') }
+  }
 
-            {/* DB mode */}
-            <button
-              onClick={() => switchMode('db')}
-              disabled={saving}
-              className={cn(
-                'flex flex-col items-start gap-2 p-4 rounded-xl border-2 transition-all text-left',
-                mode === 'db'
-                  ? 'border-brand-500/50 bg-brand-500/8'
-                  : 'border-border hover:border-border-focus',
-              )}
-            >
-              <div className="flex items-center justify-between w-full">
-                <div className="flex items-center gap-2">
-                  <Database className={cn('w-5 h-5', mode === 'db' ? 'text-brand-400' : 'text-ink-muted')} />
-                  <span className={cn('font-semibold text-sm', mode === 'db' ? 'text-brand-400' : 'text-ink-secondary')}>
-                    Database
-                  </span>
-                </div>
-                {mode === 'db' && <CheckCircle2 className="w-4 h-4 text-brand-400" />}
-              </div>
-              <p className="text-xs text-ink-muted leading-relaxed">
-                Manage positions directly in the database. No Excel file needed.
-              </p>
-            </button>
+  return (
+    <div className={cn(
+      'border rounded-xl overflow-hidden',
+      portfolio.is_default ? 'border-brand-500/30 bg-brand-500/4' : 'border-border',
+    )}>
+      {/* Card header */}
+      <div className="flex items-center gap-2 px-4 py-3">
+        <Wallet className={cn('w-4 h-4 shrink-0', portfolio.is_default ? 'text-brand-400' : 'text-ink-muted')} />
+        <span className={cn('font-semibold text-sm flex-1', portfolio.is_default ? 'text-brand-400' : 'text-ink-primary')}>
+          {portfolio.name}
+        </span>
+        {portfolio.is_default && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-brand-500/20 text-brand-400 font-bold border border-brand-500/30">
+            DEFAULT
+          </span>
+        )}
+        <span className={cn(
+          'text-[10px] px-1.5 py-0.5 rounded border',
+          mode === 'excel'
+            ? 'text-amber-400 border-amber-500/30 bg-amber-500/8'
+            : 'text-brand-400 border-brand-500/30 bg-brand-500/8',
+        )}>
+          {mode === 'excel' ? 'Excel' : 'DB'}
+        </span>
+        {!portfolio.is_default && (
+          <button
+            onClick={async () => { setSettingDefault(true); await onSetDefault(portfolio.id).finally(() => setSettingDefault(false)) }}
+            disabled={settingDefault}
+            title="Set as default"
+            className="text-ink-disabled hover:text-amber-400 transition-colors disabled:opacity-40"
+          >
+            {settingDefault ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Star className="w-3.5 h-3.5" />}
+          </button>
+        )}
+        <button onClick={() => setExpanded(v => !v)} className="text-ink-muted hover:text-ink-primary transition-colors">
+          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
+        {canDelete && (
+          <button onClick={doDelete} disabled={deleting}
+            className="text-ink-disabled hover:text-loss transition-colors disabled:opacity-40">
+            {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+          </button>
+        )}
+      </div>
+
+      {/* Expanded editor */}
+      {expanded && (
+        <form onSubmit={save} className="px-4 pb-4 space-y-4 border-t border-border/40">
+          {/* Name */}
+          <div className="pt-4 space-y-1">
+            <label className="text-xs font-medium text-ink-secondary">Portfolio Name</label>
+            <input className="input text-sm w-full" value={name} onChange={e => setName(e.target.value)} required />
           </div>
+
+          {/* Mode toggle */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-ink-secondary">Data Source</label>
+            <div className="grid grid-cols-2 gap-2">
+              {(['excel', 'db'] as const).map(m => (
+                <button key={m} type="button" onClick={() => setMode(m)}
+                  className={cn(
+                    'flex items-center gap-2 px-3 py-2.5 rounded-lg border-2 text-left transition-all text-xs',
+                    mode === m
+                      ? 'border-brand-500/50 bg-brand-500/8'
+                      : 'border-border hover:border-brand-500/30',
+                  )}>
+                  {m === 'excel'
+                    ? <FileSpreadsheet className={cn('w-4 h-4', mode === 'excel' ? 'text-brand-400' : 'text-ink-muted')} />
+                    : <Database className={cn('w-4 h-4', mode === 'db' ? 'text-brand-400' : 'text-ink-muted')} />}
+                  <span className={cn('font-medium', mode === m ? 'text-brand-400' : 'text-ink-secondary')}>
+                    {m === 'excel' ? 'Excel File' : 'Database'}
+                  </span>
+                  {mode === m && <CheckCircle2 className="w-3.5 h-3.5 text-brand-400 ml-auto" />}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Excel paths — only when excel mode */}
+          {mode === 'excel' && (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-ink-secondary flex items-center gap-1.5">
+                  <FolderOpen className="w-3.5 h-3.5 text-brand-400" />
+                  Source File Path
+                  <span className="ml-auto text-[10px] text-ink-disabled font-normal">container path</span>
+                </label>
+                <div className="flex gap-2">
+                  <input className="input font-mono text-xs flex-1" value={sourcePath}
+                    onChange={e => { setSourcePath(e.target.value); setTestState('idle') }}
+                    placeholder="/app/investment_data/Investment tracking.xlsx" spellCheck={false} />
+                  <button type="button" onClick={testPath}
+                    disabled={!sourcePath.trim() || testState === 'testing'}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-xs font-medium
+                               text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors disabled:opacity-40 shrink-0">
+                    {testState === 'testing'
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <FlaskConical className="w-3.5 h-3.5" />}
+                    Test
+                  </button>
+                </div>
+                {testState !== 'idle' && testState !== 'testing' && (
+                  <div className={cn(
+                    'flex items-start gap-2 text-xs px-3 py-2 rounded-lg border',
+                    testState === 'ok' ? 'text-gain bg-gain/5 border-gain/20' : 'text-loss bg-loss/5 border-loss/20',
+                  )}>
+                    {testState === 'ok'
+                      ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      : <XCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
+                    {testMsg}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-ink-secondary flex items-center gap-1.5">
+                  <FolderOpen className="w-3.5 h-3.5 text-ink-muted" />
+                  Working Copy Path
+                  <span className="ml-auto text-[10px] text-ink-disabled font-normal">writable</span>
+                </label>
+                <input className="input font-mono text-xs" value={workingPath}
+                  onChange={e => setWorkingPath(e.target.value)}
+                  placeholder="/app/uploads/investment_tracking.xlsx" spellCheck={false} />
+              </div>
+            </div>
+          )}
 
           {mode === 'db' && (
             <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-brand-500/8 border border-brand-500/20 text-brand-400 text-xs">
               <Database className="w-3.5 h-3.5 shrink-0" />
-              <span>Using database mode. Manage your positions in </span>
+              <span>Database mode. Manage positions in </span>
               <Link href="/settings/portfolio-db" className="font-medium underline underline-offset-2 flex items-center gap-1">
                 Portfolio Manager <ExternalLink className="w-3 h-3" />
               </Link>
             </div>
           )}
+
+          <button type="submit" disabled={saving}
+            className="btn-primary flex items-center gap-2 px-4 py-1.5 text-sm">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Portfolio
+          </button>
+        </form>
+      )}
+    </div>
+  )
+}
+
+function PortfolioManagementSection() {
+  const queryClient = useQueryClient()
+  const { data: portfolios = [], isLoading } = useQuery({
+    queryKey: ['portfolios'],
+    queryFn: portfolioService.list,
+  })
+
+  const [newName, setNewName] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['portfolios'] })
+    queryClient.invalidateQueries({ queryKey: ['portfolio-mode'] })
+  }
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return
+    setCreating(true)
+    try {
+      await portfolioService.create({ name: newName.trim() })
+      setNewName('')
+      invalidate()
+      toast.success(`Portfolio "${newName.trim()}" created`)
+    } catch {
+      toast.error('Failed to create portfolio')
+    } finally { setCreating(false) }
+  }
+
+  const handleUpdate = async (id: string, data: PortfolioUpdate) => {
+    await portfolioService.update(id, data)
+    invalidate()
+  }
+
+  const handleDelete = async (id: string) => {
+    await portfolioService.delete(id)
+    invalidate()
+  }
+
+  const handleSetDefault = async (id: string) => {
+    await portfolioService.setDefault(id)
+    invalidate()
+  }
+
+  return (
+    <Section title="Portfolios" icon={Wallet}>
+      <p className="text-xs text-ink-muted -mt-3">
+        Manage your portfolios. Each portfolio has its own data source and Excel paths.
+        Set one as default to use across all features.
+      </p>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-ink-muted text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading portfolios…
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {portfolios.map(p => (
+            <PortfolioCard
+              key={p.id}
+              portfolio={p}
+              canDelete={portfolios.length > 1 && !p.is_default}
+              onSetDefault={handleSetDefault}
+              onUpdate={handleUpdate}
+              onDelete={handleDelete}
+            />
+          ))}
+
+          {/* Add new portfolio */}
+          <div className="flex gap-2 pt-1">
+            <input value={newName} onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              placeholder="New portfolio name…"
+              className="input flex-1 text-sm py-1.5" />
+            <button onClick={handleCreate} disabled={!newName.trim() || creating}
+              className="btn-primary flex items-center gap-1.5 px-4 py-1.5 text-sm disabled:opacity-40">
+              {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+              Add Portfolio
+            </button>
+          </div>
         </div>
       )}
     </Section>
   )
 }
-
-// Reactive — invalidated by switchMode() so the page re-renders immediately
-function usePortfolioMode() {
-  const { data } = useQuery({
-    queryKey: ['portfolio-mode'],
-    queryFn: portfolioDbService.getMode,
-    staleTime: 60_000,
-  })
-  return data ?? null
-}
-
 
 function PortfolioPrefsSection() {
   const [months, setMonths] = useState(3)
@@ -464,156 +647,8 @@ function ScanListSection() {
   )
 }
 
-function AppConfigSection() {
-  const queryClient = useQueryClient()
-  const { data: cfg, isLoading } = useQuery({
-    queryKey: ['app-config'],
-    queryFn: appConfigService.get,
-  })
-
-  const [sourcePath,  setSourcePath]  = useState('')
-  const [workingPath, setWorkingPath] = useState('')
-  const [initialized, setInitialized] = useState(false)
-  const [testState,   setTestState]   = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
-  const [testMsg,     setTestMsg]     = useState('')
-
-  useEffect(() => {
-    if (cfg && !initialized) {
-      setSourcePath(cfg.excel_source_path ?? '')
-      setWorkingPath(cfg.excel_working_path ?? '')
-      setInitialized(true)
-    }
-  }, [cfg, initialized])
-
-  const saveMutation = useMutation({
-    mutationFn: () => appConfigService.update({
-      excel_source_path: sourcePath,
-      excel_working_path: workingPath,
-    }),
-    onSuccess: () => {
-      toast.success('Excel paths saved')
-      queryClient.invalidateQueries({ queryKey: ['app-config'] })
-      setTestState('idle')
-    },
-    onError: () => toast.error('Failed to save paths'),
-  })
-
-  const testPath = async () => {
-    if (!sourcePath.trim()) return
-    setTestState('testing')
-    setTestMsg('')
-    try {
-      const result = await appConfigService.testPath(sourcePath.trim())
-      setTestState(result.ok ? 'ok' : 'fail')
-      setTestMsg(result.message)
-    } catch {
-      setTestState('fail')
-      setTestMsg('Could not reach backend.')
-    }
-  }
-
-  return (
-    <Section title="Excel File Paths" icon={FolderOpen}>
-      <p className="text-xs text-ink-muted -mt-3">
-        Configure the Excel file paths for your account. Only relevant when using Excel as portfolio data source.
-      </p>
-      {isLoading ? (
-        <div className="space-y-3">
-          <div className="skeleton h-10 rounded-lg" />
-          <div className="skeleton h-10 rounded-lg" />
-        </div>
-      ) : (
-        <form onSubmit={e => { e.preventDefault(); saveMutation.mutate() }} className="space-y-5">
-          {/* Source path */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-ink-secondary flex items-center gap-1.5">
-              <FolderOpen className="w-3.5 h-3.5 text-brand-400" />
-              Source File Path
-              <span className="ml-auto text-[10px] text-ink-disabled font-normal">container path</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                className="input font-mono text-xs flex-1"
-                value={sourcePath}
-                onChange={e => { setSourcePath(e.target.value); setTestState('idle') }}
-                placeholder="/app/investment_data/Investment tracking.xlsx"
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                onClick={testPath}
-                disabled={!sourcePath.trim() || testState === 'testing'}
-                title="Test if file exists"
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-xs font-medium
-                           text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors disabled:opacity-40 shrink-0"
-              >
-                {testState === 'testing'
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  : <FlaskConical className="w-3.5 h-3.5" />}
-                Test
-              </button>
-            </div>
-            {testState !== 'idle' && testState !== 'testing' && (
-              <div className={cn(
-                'flex items-start gap-2 text-xs px-3 py-2 rounded-lg border',
-                testState === 'ok'
-                  ? 'text-gain bg-gain/5 border-gain/20'
-                  : 'text-loss bg-loss/5 border-loss/20',
-              )}>
-                {testState === 'ok'
-                  ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  : <XCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
-                {testMsg}
-              </div>
-            )}
-            <div className="bg-surface-elevated/60 border border-border/40 rounded-lg p-3 space-y-1.5 text-[11px] text-ink-muted">
-              <p className="font-medium text-ink-secondary">How this works</p>
-              <p>The backend runs inside Docker. Your Windows path is mounted into the container via <code className="text-brand-300 bg-surface-card px-1 rounded">docker-compose.yml</code> volumes.</p>
-              <p className="font-mono text-[10px] text-ink-disabled break-all">
-                D:/Documents/Pop/AI Agents/InvestmentAgent01/investmentPlan
-                <span className="text-brand-400 mx-1">→</span>
-                /app/investment_data
-              </p>
-              <p>So a file at <span className="font-mono text-[10px]">…\investmentPlan\Investment tracking.xlsx</span> becomes <span className="font-mono text-[10px] text-brand-300">/app/investment_data/Investment tracking.xlsx</span> inside the container.</p>
-            </div>
-          </div>
-
-          {/* Working copy path */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-ink-secondary flex items-center gap-1.5">
-              <FolderOpen className="w-3.5 h-3.5 text-ink-muted" />
-              Working Copy Path
-              <span className="ml-auto text-[10px] text-ink-disabled font-normal">writable · inside container</span>
-            </label>
-            <input
-              className="input font-mono text-xs opacity-75"
-              value={workingPath}
-              onChange={e => setWorkingPath(e.target.value)}
-              placeholder="/app/uploads/investment_tracking.xlsx"
-              spellCheck={false}
-            />
-            <p className="text-[11px] text-ink-disabled">
-              Where the backend stores its writable copy. Default: <code className="text-brand-300">/app/uploads/investment_tracking.xlsx</code>
-            </p>
-          </div>
-
-          <button
-            type="submit"
-            disabled={saveMutation.isPending}
-            className="btn-primary flex items-center gap-2 px-4 py-2 text-sm"
-          >
-            {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Save Paths
-          </button>
-        </form>
-      )}
-    </Section>
-  )
-}
-
 export default function SettingsPage() {
   const { user, setUser } = useAuthStore()
-  const portfolioMode = usePortfolioMode()
 
   // Profile form
   const [name, setName] = useState(user?.name ?? '')
@@ -738,11 +773,8 @@ export default function SettingsPage() {
       {/* Portfolio preferences — all users */}
       <PortfolioPrefsSection />
 
-      {/* Portfolio data source toggle */}
-      <PortfolioDataSourceSection />
-
-      {/* App Config — only shown in Excel mode */}
-      {portfolioMode !== 'db' && <AppConfigSection />}
+      {/* Multi-portfolio management (data source + Excel paths per portfolio) */}
+      <PortfolioManagementSection />
 
       {/* Scan list config */}
       <ScanListSection />

@@ -129,10 +129,13 @@ async def list_positions_db(
     from_date: date | None = None,
     to_date: date | None = None,
     status_filter: str = "active",
+    portfolio_id: str | None = None,
 ) -> dict[str, Any]:
     uid = uuid.UUID(user_id)
     q = select(PortfolioDbPosition).where(PortfolioDbPosition.user_id == uid)
 
+    if portfolio_id:
+        q = q.where(PortfolioDbPosition.portfolio_id == uuid.UUID(portfolio_id))
     if status_filter != "all":
         q = q.where(PortfolioDbPosition.status == status_filter)
     if from_date:
@@ -195,13 +198,18 @@ def _period_label(key: str, period: str) -> str:
         return key
 
 
-async def _get_closed_positions(user_id: str, db: AsyncSession,
-                                from_date: date | None, to_date: date | None):
+async def _get_closed_positions(
+    user_id: str, db: AsyncSession,
+    from_date: date | None, to_date: date | None,
+    portfolio_id: str | None = None,
+):
     uid = uuid.UUID(user_id)
     q = select(PortfolioDbPosition).where(
         PortfolioDbPosition.user_id == uid,
         PortfolioDbPosition.status == "closed",
     )
+    if portfolio_id:
+        q = q.where(PortfolioDbPosition.portfolio_id == uuid.UUID(portfolio_id))
     if from_date:
         q = q.where(PortfolioDbPosition.exit_date >= from_date)
     if to_date:
@@ -222,9 +230,9 @@ def _pos_net_pnl(pos: PortfolioDbPosition) -> float:
 
 async def get_performance_db(user_id: str, db: AsyncSession,
                              from_date: date | None, to_date: date | None,
-                             period: str) -> list[dict]:
+                             period: str, portfolio_id: str | None = None) -> list[dict]:
     """Returns DailyPerformance shape: {date, label, dailyPnl, cumulativePnl}."""
-    rows = await _get_closed_positions(user_id, db, from_date, to_date)
+    rows = await _get_closed_positions(user_id, db, from_date, to_date, portfolio_id)
     buckets: dict[str, float] = defaultdict(float)
     for r in rows:
         if r.exit_date is None:
@@ -248,9 +256,9 @@ async def get_performance_db(user_id: str, db: AsyncSession,
 
 async def get_performance_by_date_db(user_id: str, db: AsyncSession,
                                      from_date: date | None, to_date: date | None,
-                                     period: str) -> list[dict]:
+                                     period: str, portfolio_id: str | None = None) -> list[dict]:
     """Returns PerformanceByDate shape: {period, label, net, wins, losses, total, winRate}."""
-    rows = await _get_closed_positions(user_id, db, from_date, to_date)
+    rows = await _get_closed_positions(user_id, db, from_date, to_date, portfolio_id)
     buckets: dict[str, list] = defaultdict(list)
     for r in rows:
         if r.exit_date is None:
@@ -279,10 +287,11 @@ async def get_performance_by_date_db(user_id: str, db: AsyncSession,
 
 async def get_period_transactions_db(user_id: str, db: AsyncSession,
                                      period_key_val: str, period: str,
-                                     from_date: date | None, to_date: date | None) -> list[dict]:
+                                     from_date: date | None, to_date: date | None,
+                                     portfolio_id: str | None = None) -> list[dict]:
     """Returns PeriodTransaction shape: {symbol, direction, entryDate, exitDate,
        entryPrice, exitPrice, positionSize, netPnl, pnlPct, sl, tp, remarks}."""
-    rows = await _get_closed_positions(user_id, db, from_date, to_date)
+    rows = await _get_closed_positions(user_id, db, from_date, to_date, portfolio_id)
     matched = [r for r in rows if r.exit_date and _period_key(r.exit_date, period) == period_key_val]
     result = []
     for r in matched:
@@ -309,15 +318,28 @@ async def get_period_transactions_db(user_id: str, db: AsyncSession,
 
 # ── Excel → DB sync ───────────────────────────────────────────────────────────────
 
-async def sync_excel_positions_to_db(user_id: str, db: AsyncSession) -> dict:
-    """Replace all portfolio_positions_db rows for the user with data from the working Excel copy.
+async def sync_excel_positions_to_db(
+    user_id: str, db: AsyncSession, portfolio_id: str | None = None
+) -> dict:
+    """Replace portfolio_positions_db rows for the user (and portfolio) with data from working Excel.
     Called automatically after each Excel refresh so the DB mirrors the source of truth.
     """
     import pandas as pd
     from app.services.portfolio_excel import _ensure_working_copy
 
+    # Resolve the portfolio to get the correct working path
+    pid: uuid.UUID | None = None
+    working_override: str | None = None
+    if portfolio_id:
+        from app.api.v1.endpoints.portfolios import get_portfolio_by_id_or_default
+        from app.database.session import get_db as _get_db
+        p = await get_portfolio_by_id_or_default(portfolio_id, user_id, db)
+        if p:
+            pid = p.id
+            working_override = p.excel_working_path
+
     uid = uuid.UUID(user_id)
-    path = _ensure_working_copy()
+    path = _ensure_working_copy(working_override=working_override)
 
     df = pd.read_excel(str(path), sheet_name="Sheet1")
     df["Entry Date"] = pd.to_datetime(df["Entry Date"], errors="coerce")
@@ -329,8 +351,11 @@ async def sync_excel_positions_to_db(user_id: str, db: AsyncSession) -> dict:
     has_remark = "Remark" in df.columns
     has_remark_sell = "Remark sell" in df.columns
 
-    # Full replace — delete all existing rows for this user then re-insert
-    await db.execute(sa_delete(PortfolioDbPosition).where(PortfolioDbPosition.user_id == uid))
+    # Full replace — delete existing rows for this user (and portfolio if specified)
+    del_q = sa_delete(PortfolioDbPosition).where(PortfolioDbPosition.user_id == uid)
+    if pid:
+        del_q = del_q.where(PortfolioDbPosition.portfolio_id == pid)
+    await db.execute(del_q)
 
     count = 0
     for _, row in df.iterrows():
@@ -358,6 +383,7 @@ async def sync_excel_positions_to_db(user_id: str, db: AsyncSession) -> dict:
 
         db.add(PortfolioDbPosition(
             user_id=uid,
+            portfolio_id=pid,
             symbol=symbol,
             direction=direction,
             entry_date=entry_date,
@@ -377,10 +403,11 @@ async def sync_excel_positions_to_db(user_id: str, db: AsyncSession) -> dict:
 
 
 async def get_performance_by_stock_db(user_id: str, db: AsyncSession,
-                                      from_date: date | None, to_date: date | None) -> list[dict]:
+                                      from_date: date | None, to_date: date | None,
+                                      portfolio_id: str | None = None) -> list[dict]:
     """Returns PerformanceByStock shape: {symbol, net, investment, currentValue,
        pnlPct, wins, losses, total, winRate}."""
-    rows = await _get_closed_positions(user_id, db, from_date, to_date)
+    rows = await _get_closed_positions(user_id, db, from_date, to_date, portfolio_id)
     by_stock: dict[str, list] = defaultdict(list)
     for r in rows:
         by_stock[r.symbol].append(r)

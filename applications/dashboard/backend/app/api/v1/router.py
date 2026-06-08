@@ -16,6 +16,7 @@ from .endpoints.docs_content import router as docs_router
 from .endpoints.health import router as health_router
 from .endpoints.portfolio_tracker import router as portfolio_tracker_router
 from .endpoints.portfolios import router as portfolios_router
+from .endpoints.investment_transactions import router as investment_transactions_router
 from .endpoints.users import router as users_router
 
 v1_router = APIRouter(prefix="/api/v1")
@@ -24,6 +25,7 @@ v1_router.include_router(health_router)
 v1_router.include_router(auth_router)
 v1_router.include_router(users_router)
 v1_router.include_router(portfolios_router)
+v1_router.include_router(investment_transactions_router)
 v1_router.include_router(portfolio_tracker_router)
 v1_router.include_router(app_config_router)
 v1_router.include_router(docs_router)

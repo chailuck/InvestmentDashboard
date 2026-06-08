@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.models.action_plan import ActionPlan, PurchasePlanItem, PortfolioPlanItem  # noqa: F401
     from app.models.symbol_note import SymbolNote  # noqa: F401
     from app.models.portfolio_db import PortfolioDbPosition  # noqa: F401
+    from app.models.portfolio import Portfolio, Holding, InvestmentTransaction  # noqa: F401
     from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem, UserSymbolList, PeScanResult  # noqa: F401
     from app.models.dr_mapping import DrMapping  # noqa: F401
     from app.auth.jwt import hash_password
@@ -57,6 +58,73 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await conn.execute(text("ALTER TABLE user_symbol_lists ADD COLUMN IF NOT EXISTS is_dr BOOLEAN NOT NULL DEFAULT false"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS excel_source_path VARCHAR(1024)"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS excel_working_path VARCHAR(1024)"))
+        # Portfolio columns added to existing portfolios table
+        await conn.execute(text("ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false"))
+        await conn.execute(text("ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS portfolio_mode VARCHAR(10) NOT NULL DEFAULT 'excel'"))
+        await conn.execute(text("ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS excel_source_path VARCHAR(1024)"))
+        await conn.execute(text("ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS excel_working_path VARCHAR(1024)"))
+        await conn.execute(text("ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0"))
+        # Add unique constraint on (user_id, name) if not exists
+        await conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'uq_portfolio_user_name'
+                ) THEN
+                    ALTER TABLE portfolios ADD CONSTRAINT uq_portfolio_user_name UNIQUE (user_id, name);
+                END IF;
+            END $$
+        """))
+        # Add portfolio_id to positions table
+        await conn.execute(text("ALTER TABLE portfolio_positions_db ADD COLUMN IF NOT EXISTS portfolio_id UUID REFERENCES portfolios(id) ON DELETE SET NULL"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_portfolio_positions_db_portfolio_id ON portfolio_positions_db (portfolio_id)"))
+
+    # Seed default portfolios for existing users (idempotent)
+    async with engine.begin() as conn:
+        # Ensure every user has at least one portfolio — use ON CONFLICT DO NOTHING
+        await conn.execute(text("""
+            INSERT INTO portfolios (id, user_id, name, currency, benchmark_symbol, cash, is_default, portfolio_mode, excel_source_path, excel_working_path, sort_order)
+            SELECT
+                uuid_generate_v4(),
+                u.id,
+                'Default',
+                'USD',
+                'SPY',
+                0.0,
+                true,
+                COALESCE(u.portfolio_mode, 'excel'),
+                u.excel_source_path,
+                u.excel_working_path,
+                0
+            FROM users u
+            WHERE NOT EXISTS (
+                SELECT 1 FROM portfolios p WHERE p.user_id = u.id
+            )
+            ON CONFLICT (user_id, name) DO NOTHING
+        """))
+        # Ensure exactly one portfolio is default per user (in case is_default was never set)
+        await conn.execute(text("""
+            UPDATE portfolios p
+            SET is_default = true
+            WHERE p.id = (
+                SELECT p2.id FROM portfolios p2
+                WHERE p2.user_id = p.user_id
+                ORDER BY p2.created_at ASC
+                LIMIT 1
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM portfolios p3 WHERE p3.user_id = p.user_id AND p3.is_default = true
+            )
+        """))
+        # Assign default portfolio to positions without portfolio_id
+        await conn.execute(text("""
+            UPDATE portfolio_positions_db pos
+            SET portfolio_id = (
+                SELECT p.id FROM portfolios p
+                WHERE p.user_id = pos.user_id AND p.is_default = true
+                LIMIT 1
+            )
+            WHERE pos.portfolio_id IS NULL
+        """))
 
     # Seed first admin from env vars (skipped if ADMIN_EMAIL not set)
     if settings.admin_email and settings.admin_password:

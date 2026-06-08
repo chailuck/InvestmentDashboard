@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 import { format, subMonths } from 'date-fns'
-import { RefreshCw, AlertCircle, ChevronDown, ChevronRight, X, Loader2, CheckCircle2, XCircle, FileText, Copy, Trash2, RotateCcw, Table2, Database, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
+import { RefreshCw, AlertCircle, ChevronDown, ChevronRight, X, Loader2, CheckCircle2, XCircle, FileText, Copy, Trash2, RotateCcw, Table2, Database, ArrowUpDown, ArrowUp, ArrowDown, Wallet, Plus, Pencil, TrendingUp } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import {
@@ -15,6 +16,13 @@ import {
   type PeriodTransaction,
 } from '@/services/portfolioTracker'
 import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
+import { portfolioService, type UserPortfolio } from '@/services/portfolio'
+import {
+  investmentTransactionService,
+  type InvestmentTransaction,
+  type InvestmentAction,
+  INVESTMENT_ACTIONS,
+} from '@/services/investmentTransaction'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -918,6 +926,319 @@ function PerformanceByStockTable({ data }: {
   )
 }
 
+// ── Investment tab helpers ─────────────────────────────────────────────────────
+
+function fmtThb(n: number) {
+  return n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function todayIso() { return format(new Date(), 'yyyy-MM-dd') }
+
+function ActionBadge({ action }: { action: InvestmentAction }) {
+  const meta = INVESTMENT_ACTIONS.find(a => a.value === action)!
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border',
+      action === 'CASH_IN'  && 'bg-gain/10 text-gain border-gain/20',
+      action === 'CASH_OUT' && 'bg-loss/10 text-loss border-loss/20',
+      action === 'ADJUST'   && 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+    )}>
+      {meta.label}
+    </span>
+  )
+}
+
+interface TxFormProps {
+  portfolioId: string
+  initial?: InvestmentTransaction | null
+  onClose: () => void
+  onSaved: () => void
+}
+
+function TransactionForm({ portfolioId, initial, onClose, onSaved }: TxFormProps) {
+  const [date, setDate]         = useState(initial?.date ?? todayIso())
+  const [action, setAction]     = useState<InvestmentAction>(initial?.action ?? 'CASH_IN')
+  const [amount, setAmount]     = useState(initial ? String(initial.amount) : '')
+  const [currency, setCurrency] = useState(initial?.currency ?? 'THB')
+  const [note, setNote]         = useState(initial?.note ?? '')
+  const [saving, setSaving]     = useState(false)
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const amt = parseFloat(amount)
+    if (isNaN(amt) || amt <= 0) { toast.error('Amount must be a positive number'); return }
+    setSaving(true)
+    try {
+      if (initial) {
+        await investmentTransactionService.update(initial.id, { date, action, amount: amt, currency, note: note || null })
+      } else {
+        await investmentTransactionService.create({ portfolio_id: portfolioId, date, action, amount: amt, currency, note: note || null })
+      }
+      toast.success(initial ? 'Transaction updated' : 'Transaction added')
+      onSaved()
+    } catch { toast.error('Failed to save transaction') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      className="card p-5 border border-brand-500/20 space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-ink-primary">{initial ? 'Edit Transaction' : 'New Transaction'}</h3>
+        <button onClick={onClose} className="text-ink-muted hover:text-ink-primary transition-colors">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <form onSubmit={save} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-ink-secondary">Date</label>
+            <input type="date" className="input text-sm w-full" value={date} onChange={e => setDate(e.target.value)} required />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-ink-secondary">Action</label>
+            <div className="flex gap-1">
+              {INVESTMENT_ACTIONS.map(a => (
+                <button key={a.value} type="button" onClick={() => setAction(a.value)}
+                  className={cn(
+                    'flex-1 py-2 text-[11px] font-medium rounded-lg border transition-colors',
+                    action === a.value
+                      ? a.value === 'CASH_IN'  ? 'bg-gain/15 text-gain border-gain/30'
+                        : a.value === 'CASH_OUT' ? 'bg-loss/15 text-loss border-loss/30'
+                        : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                      : 'border-border text-ink-muted hover:text-ink-primary',
+                  )}>
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="col-span-2 space-y-1">
+            <label className="text-xs font-medium text-ink-secondary">Amount</label>
+            <input type="number" step="0.01" min="0.01" className="input text-sm w-full"
+              value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" required />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-ink-secondary">Currency</label>
+            <select className="input text-sm w-full" value={currency} onChange={e => setCurrency(e.target.value)}>
+              {['THB', 'USD', 'HKD', 'BTC'].map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-ink-secondary">Note <span className="text-ink-disabled">(optional)</span></label>
+          <input className="input text-sm w-full" value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. Monthly contribution" />
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button type="button" onClick={onClose}
+            className="px-4 py-1.5 text-sm text-ink-muted border border-border rounded-lg hover:text-ink-primary transition-colors">
+            Cancel
+          </button>
+          <button type="submit" disabled={saving}
+            className="btn-primary flex items-center gap-2 px-4 py-1.5 text-sm">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {initial ? 'Update' : 'Add'}
+          </button>
+        </div>
+      </form>
+    </motion.div>
+  )
+}
+
+function InvestmentTab({ portfolioId }: { portfolioId: string }) {
+  const queryClient = useQueryClient()
+  const [showForm, setShowForm]     = useState(false)
+  const [editTx,   setEditTx]       = useState<InvestmentTransaction | null>(null)
+  const [filterAction, setFilterAction] = useState<InvestmentAction | ''>('')
+  const [deleting, setDeleting]     = useState<string | null>(null)
+
+  const { data: txData, isLoading } = useQuery({
+    queryKey: ['investment-transactions', portfolioId, filterAction],
+    queryFn: () => investmentTransactionService.list({ portfolio_id: portfolioId, action: filterAction || undefined }),
+    enabled: !!portfolioId,
+  })
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['investment-transactions'] })
+    setShowForm(false); setEditTx(null)
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Delete this transaction?')) return
+    setDeleting(id)
+    try { await investmentTransactionService.delete(id); toast.success('Deleted'); invalidate() }
+    catch { toast.error('Failed to delete') }
+    finally { setDeleting(null) }
+  }
+
+  const transactions = txData?.transactions ?? []
+  const summary = txData?.summary
+
+  return (
+    <div className="space-y-4 pt-2">
+      {/* Summary cards */}
+      {summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: 'Cash In',        value: summary.total_cash_in,    color: 'text-gain' },
+            { label: 'Cash Out',       value: summary.total_cash_out,   color: 'text-loss' },
+            { label: 'Adjustments',    value: summary.total_adjust,     color: 'text-amber-400' },
+            { label: 'Net Investment', value: summary.net_investment,   color: summary.net_investment >= 0 ? 'text-brand-400' : 'text-loss' },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="card p-4">
+              <p className="text-xs text-ink-muted mb-1">{label}</p>
+              <p className={cn('text-lg font-bold font-mono', color)}>{fmtThb(value)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Toolbar */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-ink-muted">Filter:</span>
+          {(['', 'CASH_IN', 'CASH_OUT', 'ADJUST'] as const).map(a => (
+            <button key={a} onClick={() => setFilterAction(a)}
+              className={cn(
+                'px-2.5 py-1 text-xs rounded-lg border transition-colors',
+                filterAction === a
+                  ? 'bg-brand-500/15 text-brand-400 border-brand-500/30'
+                  : 'border-border text-ink-muted hover:text-ink-primary',
+              )}>
+              {a === '' ? 'All' : INVESTMENT_ACTIONS.find(x => x.value === a)?.label}
+            </button>
+          ))}
+        </div>
+        <button onClick={() => { setEditTx(null); setShowForm(s => !s) }}
+          className="btn-primary flex items-center gap-1.5 px-4 py-1.5 text-sm">
+          <Plus className="w-4 h-4" /> Add Transaction
+        </button>
+      </div>
+
+      {/* Form */}
+      <AnimatePresence>
+        {(showForm || editTx) && (
+          <TransactionForm key={editTx?.id ?? 'new'} portfolioId={portfolioId}
+            initial={editTx} onClose={() => { setShowForm(false); setEditTx(null) }} onSaved={invalidate} />
+        )}
+      </AnimatePresence>
+
+      {/* Table */}
+      <div className="card overflow-hidden">
+        {isLoading ? (
+          <div className="p-8 flex items-center justify-center gap-2 text-ink-muted">
+            <Loader2 className="w-5 h-5 animate-spin" /> Loading transactions…
+          </div>
+        ) : transactions.length === 0 ? (
+          <div className="p-8 text-center text-ink-muted text-sm">
+            No transactions yet.{' '}
+            <button onClick={() => setShowForm(true)} className="text-brand-400 hover:underline">Add your first one.</button>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border/60 text-xs text-ink-muted">
+                <th className="text-left px-4 py-3 font-medium">Date</th>
+                <th className="text-left px-4 py-3 font-medium">Action</th>
+                <th className="text-right px-4 py-3 font-medium">Amount</th>
+                <th className="text-left px-4 py-3 font-medium">CCY</th>
+                <th className="text-left px-4 py-3 font-medium">Note</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/40">
+              {transactions.map(tx => (
+                <tr key={tx.id} className="hover:bg-surface-elevated/40 transition-colors">
+                  <td className="px-4 py-3 font-mono text-xs text-ink-secondary">{tx.date}</td>
+                  <td className="px-4 py-3"><ActionBadge action={tx.action} /></td>
+                  <td className={cn('px-4 py-3 text-right font-mono font-semibold text-xs',
+                    tx.action === 'CASH_IN' ? 'text-gain' : tx.action === 'CASH_OUT' ? 'text-loss' : 'text-amber-400')}>
+                    {fmtThb(tx.amount)}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-ink-muted">{tx.currency}</td>
+                  <td className="px-4 py-3 text-xs text-ink-muted max-w-[200px] truncate">
+                    {tx.note ?? <span className="text-ink-disabled">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1 justify-end">
+                      <button onClick={() => { setEditTx(tx); setShowForm(false) }}
+                        className="p-1.5 rounded text-ink-disabled hover:text-brand-400 transition-colors">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => handleDelete(tx.id)} disabled={deleting === tx.id}
+                        className="p-1.5 rounded text-ink-disabled hover:text-loss transition-colors disabled:opacity-40">
+                        {deleting === tx.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {transactions.length > 0 && (
+        <p className="text-xs text-ink-disabled text-right">{transactions.length} transaction{transactions.length !== 1 ? 's' : ''}</p>
+      )}
+    </div>
+  )
+}
+
+// ── Portfolio dropdown ─────────────────────────────────────────────────────────
+
+function PortfolioDropdown({
+  portfolios, selected, onChange,
+}: {
+  portfolios: UserPortfolio[]; selected: string | null; onChange: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const current = portfolios.find(p => p.id === selected) ?? portfolios.find(p => p.is_default) ?? portfolios[0]
+  if (!current) return null
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-elevated
+                   text-sm font-medium text-ink-primary hover:border-brand-500/50 transition-colors"
+      >
+        <Wallet className="w-3.5 h-3.5 text-brand-400" />
+        {current.name}
+        {current.is_default && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-400 font-bold">DEFAULT</span>
+        )}
+        <ChevronDown className={cn('w-3.5 h-3.5 text-ink-muted transition-transform', open && 'rotate-180')} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+            className="absolute left-0 top-full mt-1 min-w-[180px] bg-surface-card border border-border rounded-xl shadow-xl z-50 overflow-hidden"
+            onMouseLeave={() => setOpen(false)}
+          >
+            {portfolios.map(p => (
+              <button
+                key={p.id}
+                onClick={() => { onChange(p.id); setOpen(false) }}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-surface-elevated transition-colors',
+                  p.id === current.id && 'bg-brand-500/8 text-brand-400',
+                )}
+              >
+                {p.name}
+                {p.is_default && <span className="ml-auto text-[9px] text-brand-400 font-bold">DEFAULT</span>}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function PortfolioPage() {
@@ -932,40 +1253,64 @@ export default function PortfolioPage() {
   const [showRawData, setShowRawData] = useState(false)
   const [showRawSourceData, setShowRawSourceData] = useState(false)
   const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'overview' | 'investment'>('overview')
+
+  // Load portfolios
+  const { data: portfolios = [] } = useQuery({
+    queryKey: ['portfolios'],
+    queryFn: portfolioService.list,
+    staleTime: 60_000,
+  })
+
+  // Auto-select default
+  useEffect(() => {
+    if (!selectedPortfolioId && portfolios.length > 0) {
+      const def = portfolios.find(p => p.is_default) ?? portfolios[0]
+      setSelectedPortfolioId(def.id)
+    }
+  }, [portfolios, selectedPortfolioId])
+
+  const portfolioId = selectedPortfolioId ?? portfolios.find(p => p.is_default)?.id ?? portfolios[0]?.id
 
   // Persist criteria on change
   useEffect(() => { saveCriteria(fromDate, toDate, statusFilter) }, [fromDate, toDate, statusFilter])
 
-  const params = { from_date: fromDate, to_date: toDate }
+  const params = { from_date: fromDate, to_date: toDate, portfolio_id: portfolioId }
 
   const posQuery = useQuery({
-    queryKey: ['portfolio-positions', fromDate, toDate, statusFilter],
+    queryKey: ['portfolio-positions', fromDate, toDate, statusFilter, portfolioId],
     queryFn: () => portfolioTrackerService.getPositions({ ...params, status: statusFilter }),
     refetchInterval: 60_000,
+    enabled: !!portfolioId,
   })
 
   const perfQuery = useQuery({
-    queryKey: ['portfolio-performance', fromDate, toDate, period],
+    queryKey: ['portfolio-performance', fromDate, toDate, period, portfolioId],
     queryFn: () => portfolioTrackerService.getPerformance({ ...params, period }),
     refetchInterval: 60_000,
+    enabled: !!portfolioId,
   })
 
   const byDateQuery = useQuery({
-    queryKey: ['portfolio-by-date', fromDate, toDate, period],
+    queryKey: ['portfolio-by-date', fromDate, toDate, period, portfolioId],
     queryFn: () => portfolioTrackerService.getPerformanceByDate({ ...params, period }),
     refetchInterval: 60_000,
+    enabled: !!portfolioId,
   })
 
   const byStockQuery = useQuery({
-    queryKey: ['portfolio-by-stock', fromDate, toDate],
+    queryKey: ['portfolio-by-stock', fromDate, toDate, portfolioId],
     queryFn: () => portfolioTrackerService.getPerformanceByStock(params),
     refetchInterval: 60_000,
+    enabled: !!portfolioId,
   })
 
   const summaryQuery = useQuery({
-    queryKey: ['portfolio-summary', fromDate, toDate],
+    queryKey: ['portfolio-summary', fromDate, toDate, portfolioId],
     queryFn: () => portfolioTrackerService.getSummary(params),
     refetchInterval: 60_000,
+    enabled: !!portfolioId,
   })
 
 
@@ -982,12 +1327,21 @@ export default function PortfolioPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-ink-primary">Portfolio</h1>
           <p className="text-xs text-ink-muted mt-0.5">Thai SET · Investment tracking</p>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          {portfolios.length > 0 && (
+            <PortfolioDropdown
+              portfolios={portfolios}
+              selected={portfolioId ?? null}
+              onChange={setSelectedPortfolioId}
+            />
+          )}
+          {activeTab === 'overview' && (
+          <div className="flex items-center gap-1">
           <button
             onClick={() => setShowRawSourceData(true)}
             className="btn-icon"
@@ -1010,8 +1364,37 @@ export default function PortfolioPage() {
           >
             <RefreshCw className={cn('w-4 h-4', showRefresh && 'animate-spin')} />
           </button>
+          </div>
+          )}
         </div>
       </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-border/50">
+        {[
+          { key: 'overview',   label: 'Portfolio Overview', icon: TrendingUp },
+          { key: 'investment', label: 'Investment',          icon: Wallet },
+        ].map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => setActiveTab(key as 'overview' | 'investment')}
+            className={cn(
+              'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors',
+              activeTab === key
+                ? 'border-brand-400 text-brand-400'
+                : 'border-transparent text-ink-muted hover:text-ink-primary',
+            )}>
+            <Icon className="w-3.5 h-3.5" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Investment tab */}
+      {activeTab === 'investment' && portfolioId && (
+        <InvestmentTab portfolioId={portfolioId} />
+      )}
+
+      {/* Overview tab content */}
+      {activeTab === 'overview' && <>
 
       {/* Filters */}
       <div className="card p-4 flex flex-wrap items-end gap-4">
@@ -1105,7 +1488,9 @@ export default function PortfolioPage() {
       {/* Raw source data viewer modal */}
       {showRawSourceData && <RawSourceDataModal onClose={() => setShowRawSourceData(false)} />}
 
-      {/* Analytics modal */}
+      </>}
+
+      {/* Analytics modal — always mounted */}
       <AnimatePresence>
         {analyticsSymbol && (
           <AnalyticsModal

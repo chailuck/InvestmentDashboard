@@ -109,8 +109,8 @@ def _ensure_working_copy(
     return wp
 
 
-def _load_df() -> pd.DataFrame:
-    path = _ensure_working_copy()
+def _load_df(working_override: str | None = None) -> pd.DataFrame:
+    path = _ensure_working_copy(working_override=working_override)
     df = pd.read_excel(path, sheet_name=SHEET)
     df["Entry Date"] = pd.to_datetime(df["Entry Date"], errors="coerce")
     df["Exit Date"] = pd.to_datetime(df["Exit Date"], errors="coerce")
@@ -369,8 +369,9 @@ def get_positions(
     from_date: date | None = None,
     to_date: date | None = None,
     status: str = "active",
+    working_override: str | None = None,
 ) -> list[dict[str, Any]]:
-    df = _load_df()
+    df = _load_df(working_override)
     today = date.today()
     open_mask = df["Exit Price"].isna()
 
@@ -451,9 +452,11 @@ def get_positions(
 
 # ── Performance chart + tables (CLOSED positions only) ────────────────────────
 
-def _closed_rows(from_date: date, to_date: date) -> list[tuple[date, float]]:
+def _closed_rows(
+    from_date: date, to_date: date, working_override: str | None = None
+) -> list[tuple[date, float]]:
     """Return (exit_date, net_pnl) for all CLOSED positions in the date range."""
-    df = _load_df()
+    df = _load_df(working_override)
     today = date.today()
     closed_mask = df["Exit Price"].notna()
     closed = df[closed_mask].copy()
@@ -475,13 +478,14 @@ def get_daily_performance(
     from_date: date | None = None,
     to_date: date | None = None,
     period: str = "daily",
+    working_override: str | None = None,
 ) -> list[dict[str, Any]]:
     """Performance history — CLOSED (realized) trades only."""
     today = date.today()
     to_date = to_date or today
     from_date = from_date or (today - timedelta(days=30))
 
-    rows = _closed_rows(from_date, to_date)
+    rows = _closed_rows(from_date, to_date, working_override)
     if not rows:
         return []
 
@@ -510,13 +514,14 @@ def get_performance_by_date(
     from_date: date | None = None,
     to_date: date | None = None,
     period: str = "daily",
+    working_override: str | None = None,
 ) -> list[dict[str, Any]]:
     """Performance by period table — CLOSED trades only."""
     today = date.today()
     to_date = to_date or today
     from_date = from_date or (today - timedelta(days=30))
 
-    rows = _closed_rows(from_date, to_date)
+    rows = _closed_rows(from_date, to_date, working_override)
     if not rows:
         return []
 
@@ -564,13 +569,14 @@ def get_period_transactions(
     period: str,
     from_date: date | None = None,
     to_date: date | None = None,
+    working_override: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return individual CLOSED transactions that fall within a specific period bucket."""
     today = date.today()
     to_date = to_date or today
     from_date = from_date or (today - timedelta(days=30))
 
-    df = _load_df()
+    df = _load_df(working_override)
     closed_mask = df["Exit Price"].notna()
     closed = df[closed_mask].copy()
 
@@ -617,9 +623,10 @@ def get_period_transactions(
 def get_performance_by_stock(
     from_date: date | None = None,
     to_date: date | None = None,
+    working_override: str | None = None,
 ) -> list[dict[str, Any]]:
     """Performance grouped by stock symbol — includes open + closed positions."""
-    df = _load_df()
+    df = _load_df(working_override)
     today = date.today()
     to_date = to_date or today
     from_date = from_date or (today - timedelta(days=30))

@@ -1,39 +1,72 @@
 import { apiClient } from './api'
-import type { Portfolio, Holding, PerformanceSeries, PortfolioMetrics, PaginatedResponse } from '@/types'
+
+export interface UserPortfolio {
+  id: string
+  name: string
+  description: string | null
+  is_default: boolean
+  portfolio_mode: 'excel' | 'db'
+  excel_source_path: string | null
+  excel_working_path: string | null
+  sort_order: number
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface PortfolioCreate {
+  name: string
+  portfolio_mode?: 'excel' | 'db'
+  excel_source_path?: string | null
+  excel_working_path?: string | null
+  description?: string | null
+}
+
+export interface PortfolioUpdate {
+  name?: string
+  portfolio_mode?: 'excel' | 'db'
+  excel_source_path?: string | null
+  excel_working_path?: string | null
+  description?: string | null
+  sort_order?: number
+}
+
+export interface PortfolioRiskMetrics {
+  sharpeRatio: number
+  sortinoRatio: number
+  maxDrawdown: number
+  volatility: number
+  beta: number
+  alpha: number
+  var95: number
+  calmarRatio: number
+}
 
 export const portfolioService = {
-  async list(): Promise<Portfolio[]> {
+  async list(): Promise<UserPortfolio[]> {
     const { data } = await apiClient.get('/portfolios')
     return data
   },
 
-  async get(id: string): Promise<Portfolio> {
-    const { data } = await apiClient.get(`/portfolios/${id}`)
+  async getMetrics(_portfolioId: string): Promise<PortfolioRiskMetrics | null> {
+    return null
+  },
+
+  async create(body: PortfolioCreate): Promise<UserPortfolio> {
+    const { data } = await apiClient.post('/portfolios', body)
     return data
   },
 
-  async getHoldings(id: string): Promise<Holding[]> {
-    const { data } = await apiClient.get(`/portfolios/${id}/holdings`)
+  async update(id: string, body: PortfolioUpdate): Promise<UserPortfolio> {
+    const { data } = await apiClient.put(`/portfolios/${id}`, body)
     return data
   },
 
-  async getPerformance(id: string, period: '1D' | '1W' | '1M' | '3M' | '6M' | '1Y' | 'YTD' | 'ALL' = '3M'): Promise<PerformanceSeries[]> {
-    const { data } = await apiClient.get(`/portfolios/${id}/performance`, { params: { period } })
-    return data
+  async delete(id: string): Promise<void> {
+    await apiClient.delete(`/portfolios/${id}`)
   },
 
-  async getMetrics(id: string): Promise<PortfolioMetrics> {
-    const { data } = await apiClient.get(`/portfolios/${id}/metrics`)
-    return data
-  },
-
-  async uploadFile(file: File, portfolioId?: string): Promise<{ jobId: string }> {
-    const form = new FormData()
-    form.append('file', file)
-    if (portfolioId) form.append('portfolio_id', portfolioId)
-    const { data } = await apiClient.post('/portfolios/upload', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
+  async setDefault(id: string): Promise<UserPortfolio> {
+    const { data } = await apiClient.put(`/portfolios/${id}/set-default`)
     return data
   },
 }

@@ -32,6 +32,7 @@ class AppConfigUpdate(BaseModel):
 async def get_config(user_id: UserId, db: DB) -> dict:
     from app.services.app_config_service import get_app_config
     from app.core.config import get_settings
+    from app.api.v1.endpoints.portfolios import get_default_portfolio
 
     cfg = get_app_config()
     s = get_settings()
@@ -40,15 +41,14 @@ async def get_config(user_id: UserId, db: DB) -> dict:
     cfg.setdefault("excel_source_path", s.investment_excel_source_path or s.investment_excel_path)
     cfg.setdefault("excel_working_path", s.investment_excel_path)
 
-    # Override with the user's own saved paths when they exist
-    uid = uuid.UUID(user_id)
-    result = await db.execute(select(User).where(User.id == uid))
-    user = result.scalar_one_or_none()
-    if user:
-        if user.excel_source_path:
-            cfg["excel_source_path"] = user.excel_source_path
-        if user.excel_working_path:
-            cfg["excel_working_path"] = user.excel_working_path
+    # Override with the user's DEFAULT PORTFOLIO paths when they exist
+    p = await get_default_portfolio(user_id, db)
+    if p:
+        if p.excel_source_path:
+            cfg["excel_source_path"] = p.excel_source_path
+        if p.excel_working_path:
+            cfg["excel_working_path"] = p.excel_working_path
+        cfg["portfolio_mode"] = p.portfolio_mode
 
     return cfg
 
@@ -57,21 +57,19 @@ async def get_config(user_id: UserId, db: DB) -> dict:
 async def update_config(body: AppConfigUpdate, user_id: UserId, db: DB) -> dict:
     from app.services.app_config_service import update_app_config, get_app_config
     from app.core.config import get_settings
+    from app.api.v1.endpoints.portfolios import get_default_portfolio
 
-    uid = uuid.UUID(user_id)
-
-    # Per-user Excel paths → User record
+    # Per-portfolio Excel paths → default portfolio record
     excel_fields = {k: v for k, v in {
         "excel_source_path": body.excel_source_path,
         "excel_working_path": body.excel_working_path,
     }.items() if v is not None}
 
     if excel_fields:
-        result = await db.execute(select(User).where(User.id == uid))
-        user = result.scalar_one_or_none()
-        if user:
+        p = await get_default_portfolio(user_id, db)
+        if p:
             for field, value in excel_fields.items():
-                setattr(user, field, value)
+                setattr(p, field, value)
             await db.commit()
 
     # Shared thresholds → global JSON
@@ -83,7 +81,7 @@ async def update_config(body: AppConfigUpdate, user_id: UserId, db: DB) -> dict:
     if threshold_fields:
         update_app_config(threshold_fields)
 
-    # Return merged config for this user
+    # Return merged config
     cfg = get_app_config()
     s = get_settings()
     cfg.setdefault("excel_source_path", s.investment_excel_source_path or s.investment_excel_path)

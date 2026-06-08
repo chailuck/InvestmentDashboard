@@ -111,6 +111,7 @@ export const portfolioTrackerService = {
     from_date?: string
     to_date?: string
     status?: StatusFilter
+    portfolio_id?: string
   }): Promise<PositionsResponse> {
     const { data } = await apiClient.get('/portfolio-tracker/positions', { params })
     return data
@@ -120,6 +121,7 @@ export const portfolioTrackerService = {
     from_date?: string
     to_date?: string
     period?: Period
+    portfolio_id?: string
   }): Promise<DailyPerformance[]> {
     const { data } = await apiClient.get('/portfolio-tracker/performance', { params })
     return data
@@ -129,6 +131,7 @@ export const portfolioTrackerService = {
     from_date?: string
     to_date?: string
     period?: Period
+    portfolio_id?: string
   }): Promise<PerformanceByDate[]> {
     const { data } = await apiClient.get('/portfolio-tracker/performance/by-date', { params })
     return data
@@ -137,6 +140,7 @@ export const portfolioTrackerService = {
   async getPerformanceByStock(params: {
     from_date?: string
     to_date?: string
+    portfolio_id?: string
   }): Promise<PerformanceByStock[]> {
     const { data } = await apiClient.get('/portfolio-tracker/performance/by-stock', { params })
     return data
@@ -152,7 +156,7 @@ export const portfolioTrackerService = {
     return data
   },
 
-  async getSummary(params: { from_date?: string; to_date?: string }): Promise<{
+  async getSummary(params: { from_date?: string; to_date?: string; portfolio_id?: string }): Promise<{
     accumulated_pnl: number; win_rate: number; avg_pnl: number
     avg_pnl_pct: number; total_trades: number; wins: number; losses: number
   }> {
