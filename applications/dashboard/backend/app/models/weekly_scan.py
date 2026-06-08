@@ -106,3 +106,28 @@ class WeeklyScanItem(Base):
     )
 
     scan: Mapped[WeeklyScan] = relationship("WeeklyScan", back_populates="items")
+
+
+class PeScanResult(Base):
+    """Cached PE scanner result per symbol per list — persisted after each fetch/refresh."""
+
+    __tablename__ = "pe_scan_results"
+    __table_args__ = (UniqueConstraint("user_id", "list_id", "symbol", name="uq_pe_scan_result"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user_symbol_lists.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    symbol: Mapped[str] = mapped_column(String(30), nullable=False)
+    indicator: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    current_price: Mapped[float | None] = mapped_column(Numeric(14, 4), nullable=True)
+    change_pct: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    points_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    refreshed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+    )

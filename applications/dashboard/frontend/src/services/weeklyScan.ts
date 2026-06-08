@@ -112,6 +112,29 @@ export interface SymbolNote {
   updated_at: string | null
 }
 
+export interface PeScanResultItem {
+  symbol: string
+  indicator: string | null
+  current_price: number | null
+  change_pct: number | null
+  points: object[]
+}
+
+export interface PeScanCachedEntry {
+  symbol: string
+  indicator: string | null
+  current_price: number | null
+  change_pct: number | null
+  points: object[]
+  refreshed_at: string
+}
+
+export interface PeScanResults {
+  list_id: string
+  last_refreshed: string | null
+  results: PeScanCachedEntry[]
+}
+
 export const weeklyScanService = {
   async getConfig(): Promise<ScanConfig> {
     const { data } = await apiClient.get('/weekly-scan/config')
@@ -199,6 +222,19 @@ export const weeklyScanService = {
 
   async upsertSymbolNote(symbol: string, note: string | null): Promise<SymbolNote> {
     const { data } = await apiClient.put(`/weekly-scan/symbol-notes/${encodeURIComponent(symbol)}`, { note })
+    return data
+  },
+
+  async getPeScanResults(listId: string): Promise<PeScanResults> {
+    const { data } = await apiClient.get(`/weekly-scan/pe-scan-results/${listId}`)
+    return data
+  },
+
+  async savePeScanResults(
+    listId: string,
+    results: PeScanResultItem[],
+  ): Promise<{ saved: number; refreshed_at: string }> {
+    const { data } = await apiClient.put(`/weekly-scan/pe-scan-results/${listId}`, { results })
     return data
   },
 }

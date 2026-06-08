@@ -4,7 +4,7 @@
 import asyncio
 import re
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any
 
 import pandas as pd
@@ -12,13 +12,14 @@ import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import get_current_user_id
 from app.database.session import get_db
 from app.models.dr_mapping import DrMapping
-from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem, UserSymbolList
+from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem, UserSymbolList, PeScanResult
 from app.models.symbol_note import SymbolNote
 
 UserId = Annotated[str, Depends(get_current_user_id)]
@@ -118,6 +119,16 @@ class SymbolListUpdate(BaseModel):
 
 class SymbolNoteUpdate(BaseModel):
     note: str | None = None
+
+class PeScanResultItem(BaseModel):
+    symbol: str
+    indicator: str | None = None
+    current_price: float | None = None
+    change_pct: float | None = None
+    points: list[dict] = []
+
+class PeScanResultsBulk(BaseModel):
+    results: list[PeScanResultItem]
 
 # ── Week-price helpers ────────────────────────────────────────────────────────
 
@@ -784,3 +795,79 @@ async def upsert_symbol_note(
         "note": row.note,
         "updated_at": row.updated_at.isoformat(),
     }
+
+
+# ── PE scan result cache ──────────────────────────────────────────────────────
+
+@router.get("/pe-scan-results/{list_id}")
+async def get_pe_scan_results(list_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
+    """Return cached PE scan results for a symbol list."""
+    uid = uuid.UUID(user_id)
+    lid = uuid.UUID(list_id)
+
+    rows = (await db.scalars(
+        select(PeScanResult)
+        .where(PeScanResult.user_id == uid, PeScanResult.list_id == lid)
+    )).all()
+
+    if not rows:
+        return {"list_id": list_id, "results": [], "last_refreshed": None}
+
+    last_refreshed = max(r.refreshed_at for r in rows)
+    return {
+        "list_id": list_id,
+        "last_refreshed": last_refreshed.isoformat(),
+        "results": [
+            {
+                "symbol": r.symbol,
+                "indicator": r.indicator,
+                "current_price": float(r.current_price) if r.current_price is not None else None,
+                "change_pct": float(r.change_pct) if r.change_pct is not None else None,
+                "points": r.points_json,
+                "refreshed_at": r.refreshed_at.isoformat(),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.put("/pe-scan-results/{list_id}", status_code=200)
+async def upsert_pe_scan_results(
+    list_id: str,
+    body: PeScanResultsBulk,
+    user_id: UserId,
+    db: DB,
+) -> dict[str, Any]:
+    """Bulk-upsert PE scan results for a symbol list (INSERT … ON CONFLICT DO UPDATE)."""
+    uid = uuid.UUID(user_id)
+    lid = uuid.UUID(list_id)
+    now = datetime.now(timezone.utc)
+
+    for r in body.results:
+        stmt = (
+            pg_insert(PeScanResult)
+            .values(
+                id=uuid.uuid4(),
+                user_id=uid,
+                list_id=lid,
+                symbol=r.symbol,
+                indicator=r.indicator,
+                current_price=r.current_price,
+                change_pct=r.change_pct,
+                points_json=r.points,
+                refreshed_at=now,
+            )
+            .on_conflict_do_update(
+                constraint="uq_pe_scan_result",
+                set_={
+                    "indicator": r.indicator,
+                    "current_price": r.current_price,
+                    "change_pct": r.change_pct,
+                    "points_json": r.points,
+                    "refreshed_at": now,
+                },
+            )
+        )
+        await db.execute(stmt)
+
+    return {"saved": len(body.results), "refreshed_at": now.isoformat()}
