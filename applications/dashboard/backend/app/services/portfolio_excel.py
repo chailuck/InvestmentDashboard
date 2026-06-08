@@ -50,8 +50,10 @@ def _cached(key: str, ttl: float, fn):
 
 # ── Path helpers ──────────────────────────────────────────────────────────────
 
-def _working_path() -> Path:
-    """Return writable working-copy path — app_config.json overrides the env default."""
+def _working_path(override: str | None = None) -> Path:
+    """Return writable working-copy path. Priority: override > app_config.json > env default."""
+    if override and override.strip():
+        return Path(override.strip())
     try:
         from app.services.app_config_service import get_app_config
         cfg = get_app_config()
@@ -64,8 +66,10 @@ def _working_path() -> Path:
     return Path(get_settings().investment_excel_path)
 
 
-def _source_path() -> Path:
-    """Return source path — app_config.json overrides the env default."""
+def _source_path(override: str | None = None) -> Path:
+    """Return source path. Priority: override > app_config.json > env default."""
+    if override and override.strip():
+        return Path(override.strip())
     try:
         from app.services.app_config_service import get_app_config
         cfg = get_app_config()
@@ -79,9 +83,12 @@ def _source_path() -> Path:
     return Path(s.investment_excel_source_path or s.investment_excel_path)
 
 
-def copy_excel_from_source() -> str:
-    src = _source_path()
-    dst = _working_path()
+def copy_excel_from_source(
+    source_override: str | None = None,
+    working_override: str | None = None,
+) -> str:
+    src = _source_path(source_override)
+    dst = _working_path(working_override)
     if not src.exists():
         raise FileNotFoundError(f"Source Excel file not found: {src}")
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -92,10 +99,13 @@ def copy_excel_from_source() -> str:
     return str(dst)
 
 
-def _ensure_working_copy() -> Path:
-    wp = _working_path()
+def _ensure_working_copy(
+    source_override: str | None = None,
+    working_override: str | None = None,
+) -> Path:
+    wp = _working_path(working_override)
     if not wp.exists():
-        copy_excel_from_source()
+        copy_excel_from_source(source_override, working_override)
     return wp
 
 

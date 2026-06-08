@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import {
-  LayoutDashboard, TrendingUp, Bot, BarChart3, Settings,
+  LayoutDashboard, TrendingUp, Bot, BarChart3, Settings, SlidersHorizontal,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
   ShoppingCart, Briefcase, ArrowUpRight, FlaskConical, HardDriveDownload, GitBranch, ScanLine, Search,
 } from 'lucide-react'
@@ -37,12 +37,13 @@ const NAV_TOP = [
 ] as const
 
 const SETTINGS_SUB = [
-  { href: '/settings',              label: 'My Profile',  icon: Settings },
-  { href: '/admin/users',           label: 'Users',        icon: Users,            adminOnly: true },
-  { href: '/settings/documents',    label: 'Documents',    icon: FileText },
-  { href: '/settings/dr-mappings',  label: 'DR Mappings',  icon: GitBranch },
-  { href: '/settings/backup',       label: 'Backup',       icon: HardDriveDownload, adminOnly: true },
-  { href: '/settings/testing',      label: 'Testing',      icon: FlaskConical,      adminOnly: true },
+  { href: '/settings',                 label: 'My Profile',    icon: Settings },
+  { href: '/settings/configuration',   label: 'Configuration', icon: SlidersHorizontal, adminOnly: true },
+  { href: '/admin/users',              label: 'Users',          icon: Users,              adminOnly: true },
+  { href: '/settings/documents',       label: 'Documents',      icon: FileText },
+  { href: '/settings/dr-mappings',     label: 'DR Mappings',    icon: GitBranch },
+  { href: '/settings/backup',          label: 'Backup',         icon: HardDriveDownload,  adminOnly: true },
+  { href: '/settings/testing',         label: 'Testing',        icon: FlaskConical,        adminOnly: true },
 ] as const
 
 // ── Sidebar widgets ────────────────────────────────────────────────────────────

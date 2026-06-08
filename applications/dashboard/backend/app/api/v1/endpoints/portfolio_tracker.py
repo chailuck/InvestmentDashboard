@@ -29,19 +29,32 @@ async def _mode(user_id: str, db: AsyncSession) -> str:
 
 # ""- Refresh """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""-
 
+async def _user_excel_paths(user_id: str, db: AsyncSession) -> tuple[str | None, str | None]:
+    """Return (excel_source_path, excel_working_path) from the user's record."""
+    import uuid as _uuid
+    from sqlalchemy import select as _select
+    from app.models.user import User as _User
+    result = await db.execute(_select(_User).where(_User.id == _uuid.UUID(user_id)))
+    u = result.scalar_one_or_none()
+    if u:
+        return u.excel_source_path, u.excel_working_path
+    return None, None
+
+
 @router.post("/refresh")
 async def refresh_portfolio(user_id: UserId, db: DB) -> dict[str, Any]:
     if await _mode(user_id, db) == "db":
         return {"status": "ok", "message": "Database mode -- no file to refresh. Data is managed directly in the database."}
     from app.services.portfolio_excel import copy_excel_from_source, _source_path, _working_path
-    src = _source_path()
-    dst = _working_path()
+    src_override, wk_override = await _user_excel_paths(user_id, db)
+    src = _source_path(src_override)
+    dst = _working_path(wk_override)
     if not src.exists():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail=f"Source file not found: {src}")
     src_size_kb = round(src.stat().st_size / 1024, 1)
     try:
-        copy_excel_from_source()
+        copy_excel_from_source(src_override, wk_override)
         dst_size_kb = round(dst.stat().st_size / 1024, 1) if dst.exists() else 0
         from app.api.v1.endpoints.portfolio_db import sync_excel_positions_to_db
         sync_result = await sync_excel_positions_to_db(user_id, db)

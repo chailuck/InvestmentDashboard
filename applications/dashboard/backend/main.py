@@ -55,6 +55,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await conn.execute(text("ALTER TABLE weekly_scan_items ADD COLUMN IF NOT EXISTS market VARCHAR(20) NOT NULL DEFAULT 'SET'"))
         await conn.execute(text("ALTER TABLE user_symbol_lists ADD COLUMN IF NOT EXISTS market VARCHAR(20) NOT NULL DEFAULT 'SET'"))
         await conn.execute(text("ALTER TABLE user_symbol_lists ADD COLUMN IF NOT EXISTS is_dr BOOLEAN NOT NULL DEFAULT false"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS excel_source_path VARCHAR(1024)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS excel_working_path VARCHAR(1024)"))
 
     # Seed first admin from env vars (skipped if ADMIN_EMAIL not set)
     if settings.admin_email and settings.admin_password:

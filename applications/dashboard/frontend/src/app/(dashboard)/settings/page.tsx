@@ -148,157 +148,6 @@ function usePortfolioMode() {
   return data ?? null
 }
 
-function AppConfigSection() {
-  const queryClient = useQueryClient()
-  const { data: cfg, isLoading } = useQuery({
-    queryKey: ['app-config'],
-    queryFn: appConfigService.get,
-  })
-
-  const [sourcePath, setSourcePath] = useState('')
-  const [workingPath, setWorkingPath] = useState('')
-  const [initialized, setInitialized] = useState(false)
-  const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
-  const [testMsg, setTestMsg] = useState('')
-
-  useEffect(() => {
-    if (cfg && !initialized) {
-      setSourcePath(cfg.excel_source_path ?? '')
-      setWorkingPath(cfg.excel_working_path ?? '')
-      setInitialized(true)
-    }
-  }, [cfg, initialized])
-
-  const saveMutation = useMutation({
-    mutationFn: () => appConfigService.update({
-      excel_source_path: sourcePath,
-      excel_working_path: workingPath,
-    }),
-    onSuccess: () => {
-      toast.success('Configuration saved')
-      queryClient.invalidateQueries({ queryKey: ['app-config'] })
-      setTestState('idle')
-    },
-    onError: () => toast.error('Failed to save configuration'),
-  })
-
-  const testPath = async () => {
-    if (!sourcePath.trim()) return
-    setTestState('testing')
-    setTestMsg('')
-    try {
-      const result = await appConfigService.testPath(sourcePath.trim())
-      setTestState(result.ok ? 'ok' : 'fail')
-      setTestMsg(result.message)
-    } catch {
-      setTestState('fail')
-      setTestMsg('Could not reach backend.')
-    }
-  }
-
-  return (
-    <Section title="App Configuration" icon={Settings2}>
-      <p className="text-xs text-ink-muted -mt-3">
-        Configure where the backend reads the Investment tracking Excel file.
-      </p>
-
-      {isLoading ? (
-        <div className="space-y-3">
-          <div className="skeleton h-10 rounded-lg" />
-          <div className="skeleton h-10 rounded-lg" />
-        </div>
-      ) : (
-        <form onSubmit={e => { e.preventDefault(); saveMutation.mutate() }} className="space-y-5">
-
-          {/* Source path */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-ink-secondary flex items-center gap-1.5">
-              <FolderOpen className="w-3.5 h-3.5 text-brand-400" />
-              Source File Path
-              <span className="ml-auto text-[10px] text-ink-disabled font-normal">container path</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                className="input font-mono text-xs flex-1"
-                value={sourcePath}
-                onChange={e => { setSourcePath(e.target.value); setTestState('idle') }}
-                placeholder="/app/investment_data/Investment tracking.xlsx"
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                onClick={testPath}
-                disabled={!sourcePath.trim() || testState === 'testing'}
-                title="Test if file exists"
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-xs font-medium text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors disabled:opacity-40 shrink-0"
-              >
-                {testState === 'testing'
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  : <FlaskConical className="w-3.5 h-3.5" />}
-                Test
-              </button>
-            </div>
-
-            {/* Test result */}
-            {testState !== 'idle' && testState !== 'testing' && (
-              <div className={cn(
-                'flex items-start gap-2 text-xs px-3 py-2 rounded-lg border',
-                testState === 'ok'
-                  ? 'text-gain bg-gain/5 border-gain/20'
-                  : 'text-loss bg-loss/5 border-loss/20',
-              )}>
-                {testState === 'ok'
-                  ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  : <XCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
-                {testMsg}
-              </div>
-            )}
-
-            <div className="bg-surface-elevated/60 border border-border/40 rounded-lg p-3 space-y-1.5 text-[11px] text-ink-muted">
-              <p className="font-medium text-ink-secondary">How this works</p>
-              <p>The backend runs inside Docker. Your Windows path is mounted into the container via <code className="text-brand-300 bg-surface-card px-1 rounded">docker-compose.yml</code> volumes.</p>
-              <p className="font-mono text-[10px] text-ink-disabled break-all">
-                D:/Documents/Pop/AI Agents/InvestmentAgent01/investmentPlan
-                <span className="text-brand-400 mx-1">→</span>
-                /app/investment_data
-              </p>
-              <p>So a file at <span className="font-mono text-[10px]">…\investmentPlan\Investment tracking.xlsx</span> becomes <span className="font-mono text-[10px] text-brand-300">/app/investment_data/Investment tracking.xlsx</span> inside the container.</p>
-              <p>When you press <strong className="text-ink-secondary">Refresh</strong> on the Portfolio page, the backend copies from this source path to the working copy and reloads all charts.</p>
-            </div>
-          </div>
-
-          {/* Working copy path */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-ink-secondary flex items-center gap-1.5">
-              <FolderOpen className="w-3.5 h-3.5 text-ink-muted" />
-              Working Copy Path
-              <span className="ml-auto text-[10px] text-ink-disabled font-normal">writable · inside container</span>
-            </label>
-            <input
-              className="input font-mono text-xs opacity-75"
-              value={workingPath}
-              onChange={e => setWorkingPath(e.target.value)}
-              placeholder="/app/uploads/investment_tracking.xlsx"
-              spellCheck={false}
-            />
-            <p className="text-[11px] text-ink-disabled">
-              Where the backend stores its writable copy. Change only if you have a custom mount. Default: <code className="text-brand-300">/app/uploads/investment_tracking.xlsx</code>
-            </p>
-          </div>
-
-          <button
-            type="submit"
-            disabled={saveMutation.isPending}
-            className="btn-primary flex items-center gap-2 px-4 py-2 text-sm"
-          >
-            {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Save Configuration
-          </button>
-        </form>
-      )}
-    </Section>
-  )
-}
 
 function PortfolioPrefsSection() {
   const [months, setMonths] = useState(3)
@@ -615,70 +464,149 @@ function ScanListSection() {
   )
 }
 
-function IndicatorConfigSection() {
+function AppConfigSection() {
   const queryClient = useQueryClient()
-  const { data: cfg } = useQuery({ queryKey: ['app-config'], queryFn: appConfigService.get })
+  const { data: cfg, isLoading } = useQuery({
+    queryKey: ['app-config'],
+    queryFn: appConfigService.get,
+  })
 
-  const [peThreshold,    setPeThreshold]    = useState<string>('')
-  const [priceThreshold, setPriceThreshold] = useState<string>('')
+  const [sourcePath,  setSourcePath]  = useState('')
+  const [workingPath, setWorkingPath] = useState('')
   const [initialized, setInitialized] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const [testState,   setTestState]   = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [testMsg,     setTestMsg]     = useState('')
 
   useEffect(() => {
     if (cfg && !initialized) {
-      setPeThreshold(String(cfg.pe_threshold ?? 0.5))
-      setPriceThreshold(String(cfg.price_threshold ?? 3))
+      setSourcePath(cfg.excel_source_path ?? '')
+      setWorkingPath(cfg.excel_working_path ?? '')
       setInitialized(true)
     }
   }, [cfg, initialized])
 
-  const save = async () => {
-    const pe    = parseFloat(peThreshold)
-    const price = parseFloat(priceThreshold)
-    if (isNaN(pe) || isNaN(price) || pe <= 0 || price <= 0) {
-      toast.error('Thresholds must be positive numbers')
-      return
-    }
-    setSaving(true)
-    try {
-      await appConfigService.update({ pe_threshold: pe, price_threshold: price })
+  const saveMutation = useMutation({
+    mutationFn: () => appConfigService.update({
+      excel_source_path: sourcePath,
+      excel_working_path: workingPath,
+    }),
+    onSuccess: () => {
+      toast.success('Excel paths saved')
       queryClient.invalidateQueries({ queryKey: ['app-config'] })
-      toast.success('Indicator thresholds saved')
+      setTestState('idle')
+    },
+    onError: () => toast.error('Failed to save paths'),
+  })
+
+  const testPath = async () => {
+    if (!sourcePath.trim()) return
+    setTestState('testing')
+    setTestMsg('')
+    try {
+      const result = await appConfigService.testPath(sourcePath.trim())
+      setTestState(result.ok ? 'ok' : 'fail')
+      setTestMsg(result.message)
     } catch {
-      toast.error('Failed to save thresholds')
-    } finally {
-      setSaving(false)
+      setTestState('fail')
+      setTestMsg('Could not reach backend.')
     }
   }
 
   return (
-    <Section title="Indicator Thresholds" icon={Settings2}>
-      <p className="text-xs text-ink-muted">
-        Minimum % change (intra-week) required to classify PE or price direction as Up/Down. Below this value is treated as Stable.
+    <Section title="Excel File Paths" icon={FolderOpen}>
+      <p className="text-xs text-ink-muted -mt-3">
+        Configure the Excel file paths for your account. Only relevant when using Excel as portfolio data source.
       </p>
-      <div className="grid grid-cols-2 gap-4">
-        {[
-          { label: 'PE Threshold (%)', value: peThreshold, onChange: setPeThreshold, hint: 'e.g. 0.5' },
-          { label: 'Price Threshold (%)', value: priceThreshold, onChange: setPriceThreshold, hint: 'e.g. 3' },
-        ].map(({ label, value, onChange, hint }) => (
-          <div key={label} className="space-y-1.5">
-            <label className="text-xs font-medium text-ink-secondary">{label}</label>
-            <input
-              type="number" step="0.1" min="0.1"
-              value={value} onChange={e => onChange(e.target.value)}
-              placeholder={hint}
-              className="w-full bg-surface-elevated border border-border/60 rounded-lg px-3 py-2 text-sm text-ink-primary outline-none focus:border-brand-500/60 transition-colors"
-            />
+      {isLoading ? (
+        <div className="space-y-3">
+          <div className="skeleton h-10 rounded-lg" />
+          <div className="skeleton h-10 rounded-lg" />
+        </div>
+      ) : (
+        <form onSubmit={e => { e.preventDefault(); saveMutation.mutate() }} className="space-y-5">
+          {/* Source path */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-ink-secondary flex items-center gap-1.5">
+              <FolderOpen className="w-3.5 h-3.5 text-brand-400" />
+              Source File Path
+              <span className="ml-auto text-[10px] text-ink-disabled font-normal">container path</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                className="input font-mono text-xs flex-1"
+                value={sourcePath}
+                onChange={e => { setSourcePath(e.target.value); setTestState('idle') }}
+                placeholder="/app/investment_data/Investment tracking.xlsx"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                onClick={testPath}
+                disabled={!sourcePath.trim() || testState === 'testing'}
+                title="Test if file exists"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-xs font-medium
+                           text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors disabled:opacity-40 shrink-0"
+              >
+                {testState === 'testing'
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <FlaskConical className="w-3.5 h-3.5" />}
+                Test
+              </button>
+            </div>
+            {testState !== 'idle' && testState !== 'testing' && (
+              <div className={cn(
+                'flex items-start gap-2 text-xs px-3 py-2 rounded-lg border',
+                testState === 'ok'
+                  ? 'text-gain bg-gain/5 border-gain/20'
+                  : 'text-loss bg-loss/5 border-loss/20',
+              )}>
+                {testState === 'ok'
+                  ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  : <XCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
+                {testMsg}
+              </div>
+            )}
+            <div className="bg-surface-elevated/60 border border-border/40 rounded-lg p-3 space-y-1.5 text-[11px] text-ink-muted">
+              <p className="font-medium text-ink-secondary">How this works</p>
+              <p>The backend runs inside Docker. Your Windows path is mounted into the container via <code className="text-brand-300 bg-surface-card px-1 rounded">docker-compose.yml</code> volumes.</p>
+              <p className="font-mono text-[10px] text-ink-disabled break-all">
+                D:/Documents/Pop/AI Agents/InvestmentAgent01/investmentPlan
+                <span className="text-brand-400 mx-1">→</span>
+                /app/investment_data
+              </p>
+              <p>So a file at <span className="font-mono text-[10px]">…\investmentPlan\Investment tracking.xlsx</span> becomes <span className="font-mono text-[10px] text-brand-300">/app/investment_data/Investment tracking.xlsx</span> inside the container.</p>
+            </div>
           </div>
-        ))}
-      </div>
-      <div className="flex justify-end">
-        <button onClick={save} disabled={saving}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-brand-500/15 text-brand-400 border border-brand-500/20 hover:bg-brand-500/25 transition-colors disabled:opacity-50">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Save Thresholds
-        </button>
-      </div>
+
+          {/* Working copy path */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-ink-secondary flex items-center gap-1.5">
+              <FolderOpen className="w-3.5 h-3.5 text-ink-muted" />
+              Working Copy Path
+              <span className="ml-auto text-[10px] text-ink-disabled font-normal">writable · inside container</span>
+            </label>
+            <input
+              className="input font-mono text-xs opacity-75"
+              value={workingPath}
+              onChange={e => setWorkingPath(e.target.value)}
+              placeholder="/app/uploads/investment_tracking.xlsx"
+              spellCheck={false}
+            />
+            <p className="text-[11px] text-ink-disabled">
+              Where the backend stores its writable copy. Default: <code className="text-brand-300">/app/uploads/investment_tracking.xlsx</code>
+            </p>
+          </div>
+
+          <button
+            type="submit"
+            disabled={saveMutation.isPending}
+            className="btn-primary flex items-center gap-2 px-4 py-2 text-sm"
+          >
+            {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Paths
+          </button>
+        </form>
+      )}
     </Section>
   )
 }
@@ -737,8 +665,8 @@ export default function SettingsPage() {
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-ink-primary">Account Settings</h1>
-        <p className="text-ink-muted text-sm mt-0.5">Manage your profile and security preferences</p>
+        <h1 className="text-2xl font-bold text-ink-primary">My Profile</h1>
+        <p className="text-ink-muted text-sm mt-0.5">Manage your profile, security, and personal preferences</p>
       </div>
 
       {/* Profile */}
@@ -818,9 +746,6 @@ export default function SettingsPage() {
 
       {/* Scan list config */}
       <ScanListSection />
-
-      {/* Indicator thresholds */}
-      <IndicatorConfigSection />
 
       {/* Account Info */}
       <Section title="Account Details" icon={Shield}>

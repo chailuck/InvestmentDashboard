@@ -31,6 +31,8 @@ class User(Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     portfolio_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="excel")  # excel | db
+    excel_source_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    excel_working_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     def __repr__(self) -> str:
         return f"<User {self.email} [{self.role}]>"
