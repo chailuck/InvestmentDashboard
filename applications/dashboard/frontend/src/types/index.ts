@@ -205,6 +205,7 @@ export type WidgetType =
   | 'scan_heat_tile'
   | 'pnl_waterfall'
   | 'trading_history_summary'
+  | 'investment_balance'
 
 // ── API ───────────────────────────────────────────────────
 export interface ApiError {

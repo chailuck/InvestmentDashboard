@@ -746,6 +746,113 @@ function PerformanceChart({ data, period, onPeriodChange, loading }: {
   )
 }
 
+// ── Investment Balance Chart ───────────────────────────────────────────────────
+
+function InvestmentBalanceChart({
+  data,
+  loading,
+  period,
+  onPeriodChange,
+}: {
+  data: Array<{ label: string; netInvested: number; portfolioValue: number; cumulativePnl: number }>
+  loading: boolean
+  period: Period
+  onPeriodChange: (p: Period) => void
+}) {
+  const option = useMemo(() => {
+    if (!data.length) return {}
+    const labels    = data.map(d => d.label)
+    const invested  = data.map(d => d.netInvested)
+    const portValue = data.map(d => d.portfolioValue)
+
+    const allVals = [...invested, ...portValue].filter(isFinite)
+    const minVal  = Math.min(...allVals)
+    const maxVal  = Math.max(...allVals)
+    const range   = maxVal - minVal || 1
+    const yMin    = minVal - range * 0.12
+    const yMax    = maxVal + range * 0.06
+
+    const fmtAxis = (v: number) =>
+      Math.abs(v) >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M`
+      : Math.abs(v) >= 1_000   ? `${(v / 1_000).toFixed(0)}K`
+      : String(v)
+
+    return {
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: '#1e293b',
+        borderColor: '#334155',
+        textStyle: { color: '#e2e8f0', fontSize: 11 },
+        formatter: (params: any[]) => {
+          const lbl = params[0]?.axisValue ?? ''
+          const inv = (params.find((p: any) => p.seriesName === 'Net Invested')?.value as number) ?? 0
+          const val = (params.find((p: any) => p.seriesName === 'Portfolio Value')?.value as number) ?? 0
+          const pnl = val - inv
+          const pnlColor = pnl >= 0 ? '#22c55e' : '#ef4444'
+          const sign = (n: number) => n >= 0 ? '+' : ''
+          return `<div style="font-weight:600;margin-bottom:4px">${lbl}</div>
+<div style="color:#8b5cf6">Net Invested: ${Number(inv).toLocaleString()} THB</div>
+<div style="color:#22d3ee">Portfolio Value: ${Number(val).toLocaleString()} THB</div>
+<div style="color:${pnlColor}">P&amp;L: ${sign(pnl)}${Number(pnl).toLocaleString()} THB</div>`
+        },
+      },
+      legend: { data: ['Net Invested', 'Portfolio Value'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 4 },
+      grid: { left: '2%', right: '2%', bottom: '3%', top: '44px', containLabel: true },
+      xAxis: {
+        type: 'category', data: labels,
+        axisLine: { lineStyle: { color: '#334155' } },
+        axisLabel: { color: '#64748b', fontSize: 10, rotate: labels.length > 12 ? 30 : 0 },
+        splitLine: { show: false },
+      },
+      yAxis: {
+        type: 'value', min: yMin, max: yMax,
+        nameTextStyle: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: '#64748b', fontSize: 10, formatter: fmtAxis },
+        axisLine: { show: false },
+        splitLine: { lineStyle: { color: '#1e293b' } },
+      },
+      series: [
+        {
+          name: 'Net Invested', type: 'line', data: invested, smooth: true, symbol: 'none',
+          lineStyle: { color: '#8b5cf6', width: 2 },
+          itemStyle: { color: '#8b5cf6' },
+          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: 'rgba(139,92,246,0.28)' }, { offset: 1, color: 'rgba(139,92,246,0)' }] } },
+        },
+        {
+          name: 'Portfolio Value', type: 'line', data: portValue, smooth: true, symbol: 'none',
+          lineStyle: { color: '#22d3ee', width: 2.5 },
+          itemStyle: { color: '#22d3ee' },
+          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: 'rgba(34,211,238,0.18)' }, { offset: 1, color: 'rgba(34,211,238,0)' }] } },
+        },
+      ],
+    }
+  }, [data])
+
+  return (
+    <div className="card p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h2 className="text-sm font-semibold text-ink-primary">Investment Balance</h2>
+          <p className="text-xs text-ink-muted mt-0.5">Cumulative invested capital vs. estimated portfolio value</p>
+        </div>
+        <PeriodSelector value={period} onChange={onPeriodChange} />
+      </div>
+      {loading ? (
+        <div className="h-56 flex items-center justify-center text-ink-muted text-sm">Loading chart…</div>
+      ) : data.length === 0 ? (
+        <div className="h-56 flex items-center justify-center text-ink-muted text-sm">
+          No data — add investment transactions or select a date range with performance data.
+        </div>
+      ) : (
+        <ReactECharts option={option} style={{ height: 256 }} notMerge />
+      )}
+    </div>
+  )
+}
+
 // ── Sort helpers ───────────────────────────────────────────────────────────────
 
 type SortDir = 'asc' | 'desc'
@@ -1313,7 +1420,34 @@ export default function PortfolioPage() {
     enabled: !!portfolioId,
   })
 
+  const allTxQuery = useQuery({
+    queryKey: ['investment-transactions-balance', portfolioId],
+    queryFn: () => investmentTransactionService.list({ portfolio_id: portfolioId }),
+    staleTime: 120_000,
+    enabled: !!portfolioId,
+  })
 
+  const balanceData = useMemo(() => {
+    const perfData = perfQuery.data ?? []
+    const transactions = allTxQuery.data?.transactions ?? []
+    if (!perfData.length) return []
+    return perfData.map(p => {
+      const netInvested = transactions
+        .filter(tx => tx.date <= p.date)
+        .reduce((sum, tx) => {
+          if (tx.action === 'CASH_IN')  return sum + tx.amount
+          if (tx.action === 'CASH_OUT') return sum - tx.amount
+          if (tx.action === 'ADJUST')   return sum + tx.amount
+          return sum
+        }, 0)
+      return {
+        label: p.label,
+        netInvested,
+        cumulativePnl: p.cumulativePnl,
+        portfolioValue: netInvested + p.cumulativePnl,
+      }
+    })
+  }, [perfQuery.data, allTxQuery.data])
 
   const positions = posQuery.data?.positions ?? []
   const totalPnl = posQuery.data?.totalNetPnl ?? 0
@@ -1459,7 +1593,15 @@ export default function PortfolioPage() {
       {/* 2a. Summary stats */}
       <PerformanceSummary data={summaryQuery.data} />
 
-      {/* 2b. Daily Performance Chart */}
+      {/* 2b. Investment Balance Chart */}
+      <InvestmentBalanceChart
+        data={balanceData}
+        loading={perfQuery.isLoading || allTxQuery.isLoading}
+        period={period}
+        onPeriodChange={setPeriod}
+      />
+
+      {/* 2c. Daily Performance Chart */}
       <PerformanceChart data={perfQuery.data ?? []} period={period} onPeriodChange={setPeriod} loading={perfQuery.isLoading} />
 
       {/* 3. Performance by Date table */}

@@ -42,6 +42,7 @@ Examples:
 * Telecom Validation → TM Forum / Telecom Agent
 
 Multiple agents may collaborate when appropriate.
+Please show the agent name who works with the task also.
 
 ---
 
