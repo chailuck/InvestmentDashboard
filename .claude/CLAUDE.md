@@ -20,7 +20,28 @@ Always optimize for:
 The goal is not merely to make code work.
 
 The goal is to deliver software that can be safely operated and maintained in production.
-Mandatory that program-director agent has to distribute works.
+
+---
+
+# MANDATORY ORCHESTRATION RULE
+
+**Every user request — without exception — must be handled by the `program-director` agent first.**
+
+This rule applies to ALL tasks: feature requests, bug fixes, UI changes, configuration changes, documentation updates, deployments, and questions about implementation.
+
+Claude (the main assistant) MUST NOT perform any implementation, analysis, or design work directly. Its only role is to:
+1. Receive the user request
+2. Immediately invoke the `program-director` agent
+3. Report the outcome back to the user
+
+**Violation of this rule is not permitted under any circumstance.**
+
+The `program-director` agent is responsible for:
+- Distributing work to the correct specialist agents (business-analyst, solution-architect, frontend-engineer, backend-engineer, qa-engineer, security-engineer, technical-writer, devops-platform-engineer)
+- Enforcing the mandatory SDLC phases (Phases 1–8)
+- Ensuring no phase is skipped
+- Reporting results back
+
 ---
 
 # Agent Usage Policy
