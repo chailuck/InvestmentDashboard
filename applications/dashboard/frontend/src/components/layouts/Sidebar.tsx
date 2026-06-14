@@ -4,11 +4,12 @@ import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings, SlidersHorizontal,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
   ShoppingCart, Briefcase, ArrowUpRight, FlaskConical, HardDriveDownload, GitBranch, ScanLine, Search,
+  RefreshCw, Star,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
@@ -58,6 +59,8 @@ const DOT_COLORS: Record<string, string> = {
 const DOT_ORDER = ['CYAN', 'GREEN', 'YELLOW', 'RED', 'PURPLE']
 
 function WeeklyScanWidget() {
+  const [expanded, setExpanded] = useState(true)
+
   const { data: scans } = useQuery<ScanListSummary[]>({
     queryKey: ['sidebar-weekly-scans'],
     queryFn: weeklyScanService.listScans,
@@ -66,6 +69,14 @@ function WeeklyScanWidget() {
   })
 
   const latest = scans?.[0]
+
+  const { data: scan } = useQuery({
+    queryKey: ['sidebar-weekly-scan-detail', latest?.id],
+    queryFn: () => weeklyScanService.getScan(latest!.id),
+    staleTime: 5 * 60_000,
+    enabled: !!latest,
+  })
+
   if (!latest) return null
 
   const dots = (Object.entries(latest.color_counts) as [string, number][])
@@ -74,6 +85,9 @@ function WeeklyScanWidget() {
 
   const total = latest.total ?? Object.values(latest.color_counts).reduce((s, n) => s + n, 0)
 
+  const cyanSymbols  = (scan?.items ?? []).filter(i => i.color_mark === 'CYAN').map(i => i.symbol)
+  const greenSymbols = (scan?.items ?? []).filter(i => i.color_mark === 'GREEN').map(i => i.symbol)
+
   return (
     <div className="px-3 py-2 space-y-1.5">
       <div className="flex items-center gap-1.5">
@@ -81,6 +95,13 @@ function WeeklyScanWidget() {
         <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider flex-1 truncate">
           Weekly Scan
         </span>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="text-ink-disabled hover:text-ink-primary transition-colors shrink-0"
+          title={expanded ? 'Collapse' : 'Expand'}
+        >
+          <ChevronDown className={cn('w-3 h-3 transition-transform', expanded && 'rotate-180')} />
+        </button>
         <Link
           href={`/weekly-scan/${latest.id}`}
           className="text-ink-disabled hover:text-brand-400 transition-colors shrink-0"
@@ -89,29 +110,66 @@ function WeeklyScanWidget() {
           <ArrowUpRight className="w-3 h-3" />
         </Link>
       </div>
-      <Link
-        href={`/weekly-scan/${latest.id}`}
-        className="block pl-1 space-y-0.5 group"
-      >
-        <div className="text-[10px] text-ink-secondary group-hover:text-ink-primary transition-colors truncate">
-          {latest.name}
-        </div>
-        <div className="flex items-center gap-1">
-          {dots.map(([key, count]) => (
-            <span key={key} className="flex items-center gap-0.5" title={`${key}: ${count}`}>
-              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: DOT_COLORS[key] }} />
-              <span className="text-[9px] text-ink-muted tabular-nums">{count}</span>
-            </span>
-          ))}
-          <span className="text-[9px] text-ink-disabled tabular-nums ml-0.5">{total}</span>
-        </div>
-      </Link>
+
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden space-y-1.5"
+          >
+            <Link href={`/weekly-scan/${latest.id}`} className="block pl-1 space-y-0.5 group">
+              <div className="text-[10px] text-ink-secondary group-hover:text-ink-primary transition-colors truncate">
+                {latest.name}
+              </div>
+              <div className="flex items-center gap-1">
+                {dots.map(([key, count]) => (
+                  <span key={key} className="flex items-center gap-0.5" title={`${key}: ${count}`}>
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: DOT_COLORS[key] }} />
+                    <span className="text-[9px] text-ink-muted tabular-nums">{count}</span>
+                  </span>
+                ))}
+                <span className="text-[9px] text-ink-disabled tabular-nums ml-0.5">{total}</span>
+              </div>
+            </Link>
+
+            {cyanSymbols.length > 0 && (
+              <div className="pl-1 space-y-0.5">
+                <p className="text-[8px] font-semibold text-cyan-400/80 uppercase tracking-wider">Potential</p>
+                <p className="text-[9px] text-cyan-400 leading-relaxed break-words">{cyanSymbols.join(' · ')}</p>
+              </div>
+            )}
+
+            {greenSymbols.length > 0 && (
+              <div className="pl-1 space-y-0.5">
+                <p className="text-[8px] font-semibold text-gain/80 uppercase tracking-wider">Good</p>
+                <p className="text-[9px] text-gain leading-relaxed break-words">{greenSymbols.join(' · ')}</p>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
 
+const STRATEGY_ABBR: Record<string, string> = {
+  'BREAK OUT': 'BO',
+  'BUY ON DIP': 'BOD',
+  'แท่งเทียนกลับตัว': 'ททกต',
+  'ยยจท': 'ยยจท',
+  'NEWS': 'NEWS',
+  'AJ PAO': 'AJPAO',
+  'OTHERS': 'OTHER',
+}
+
 function PurchasePlanWidget() {
+  const [expanded, setExpanded] = useState(true)
   const [modalSymbol, setModalSymbol] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const queryClient = useQueryClient()
 
   const { data: plans } = useQuery({
     queryKey: ['sidebar-purchase-plans'],
@@ -132,14 +190,44 @@ function PurchasePlanWidget() {
 
   const items = (plan?.purchase_items ?? []).slice(0, 5)
 
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try {
+      await queryClient.invalidateQueries({ queryKey: ['sidebar-purchase-plan-detail'] })
+      await queryClient.invalidateQueries({ queryKey: ['sidebar-purchase-plans'] })
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   return (
     <div className="px-3 py-2 space-y-1.5">
       {/* Header */}
       <div className="flex items-center gap-1.5">
         <ShoppingCart className="w-3 h-3 text-brand-400 shrink-0" />
-        <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider flex-1 truncate">
-          Purchase
-        </span>
+        <div className="flex-1 min-w-0">
+          <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider">Purchase</span>
+          <div className="flex items-center gap-0.5 mt-0.5">
+            <span className="text-[8px] text-ink-disabled">SL ·</span>
+            <Star className="w-2 h-2 text-yellow-300 fill-yellow-300 shrink-0" />
+            <span className="text-[8px] text-ink-disabled">Buy / ○ Price · TP</span>
+          </div>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="text-ink-disabled hover:text-brand-400 transition-colors shrink-0"
+          title="Refresh prices"
+        >
+          <RefreshCw className={cn('w-3 h-3', refreshing && 'animate-spin')} />
+        </button>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="text-ink-disabled hover:text-ink-primary transition-colors shrink-0"
+          title={expanded ? 'Collapse' : 'Expand'}
+        >
+          <ChevronDown className={cn('w-3 h-3 transition-transform', expanded && 'rotate-180')} />
+        </button>
         <Link href={`/action-plan/purchase/${latest.id}`}
           className="text-ink-disabled hover:text-brand-400 transition-colors shrink-0"
           title="Open purchase plan">
@@ -147,35 +235,104 @@ function PurchasePlanWidget() {
         </Link>
       </div>
 
+      <AnimatePresence initial={false}>
+        {expanded && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="overflow-hidden space-y-1.5"
+        >
+
       {/* Items */}
       {items.length === 0 ? (
         <p className="text-[10px] text-ink-disabled pl-4">No items</p>
       ) : (
-        <div className="space-y-0.5 pl-1">
-          {items.map((item, i) => (
-            <div key={i} className="flex items-center gap-1 text-[9px] tabular-nums">
-              {/* Clickable symbol */}
-              <button
-                onClick={() => setModalSymbol(item.stock)}
-                className={cn(
-                  'font-mono font-bold text-[10px] shrink-0 w-[46px] truncate text-left',
-                  'hover:text-brand-400 transition-colors cursor-pointer',
-                  item.triggered ? 'text-gain' : 'text-ink-secondary',
+        <div className="space-y-1.5 pl-1">
+          {items.map((item, i) => {
+            const hasSL  = item.sl != null
+            const hasTP  = item.tp != null
+            const hasBuy = item.buy_price != null
+            const hasCur = item.current_price != null
+            const currentIsWin = hasBuy && hasCur
+              ? item.current_price! >= item.buy_price!
+              : null
+            const range = hasSL && hasTP ? item.tp! - item.sl! : 0
+            const buyPct = range > 0 && hasBuy
+              ? Math.max(0, Math.min(100, ((item.buy_price! - item.sl!) / range) * 100))
+              : null
+            const curPct = range > 0 && hasCur
+              ? Math.max(0, Math.min(100, ((item.current_price! - item.sl!) / range) * 100))
+              : null
+            const showBar = hasSL && hasTP && (buyPct !== null || curPct !== null)
+
+            return (
+              <div key={i} className="text-[10px]">
+                {/* Line 1: text format */}
+                <div className="flex items-center gap-1 text-[9px] tabular-nums">
+                  <button
+                    onClick={() => setModalSymbol(item.stock)}
+                    className={cn(
+                      'font-mono font-bold text-[10px] shrink-0 w-[46px] truncate text-left',
+                      'hover:text-brand-400 transition-colors cursor-pointer',
+                      item.triggered ? 'text-gain' : 'text-ink-secondary',
+                    )}
+                    title={`Open analytics for ${item.stock}`}
+                  >
+                    {item.stock}{item.triggered ? '✓' : ''}
+                  </button>
+                  {hasSL && <span className="text-loss font-semibold shrink-0">{item.sl!.toFixed(1)}</span>}
+                  {hasSL && <span className="text-ink-disabled shrink-0">←</span>}
+                  <span className="text-ink-primary font-bold shrink-0">
+                    {hasBuy ? item.buy_price!.toFixed(1) : '—'}
+                  </span>
+                  {hasTP && <span className="text-ink-disabled shrink-0">→</span>}
+                  {hasTP && <span className="text-gain font-semibold shrink-0">{item.tp!.toFixed(1)}</span>}
+                  {item.strategy && (
+                    <span className="text-[8px] text-ink-disabled shrink-0 ml-auto">{STRATEGY_ABBR[item.strategy] ?? item.strategy}</span>
+                  )}
+                </div>
+                {/* Line 2: position bar */}
+                {showBar && (
+                  <div className="flex items-center gap-0.5 mt-0.5">
+                    <span className="text-[9px] text-loss tabular-nums shrink-0">{item.sl!.toFixed(1)}</span>
+                    <span className="text-[9px] text-ink-disabled shrink-0">←</span>
+                    <div className="flex-1 relative h-1.5 bg-surface-overlay rounded-full mx-0.5">
+                      {/* White line from current price to buy price */}
+                      {buyPct !== null && curPct !== null && (
+                        <div
+                          className="absolute top-1/2 -translate-y-1/2 h-0.5 bg-white/50"
+                          style={{
+                            left: `${Math.min(buyPct, curPct)}%`,
+                            width: `${Math.abs(buyPct - curPct)}%`,
+                          }}
+                        />
+                      )}
+                      {/* Current price — white dot */}
+                      {curPct !== null && (
+                        <div
+                          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-white"
+                          style={{ left: `${curPct}%` }}
+                        />
+                      )}
+                      {/* Buy price — light yellow star */}
+                      {buyPct !== null && (
+                        <div
+                          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
+                          style={{ left: `${buyPct}%` }}
+                        >
+                          <Star className="w-3 h-3 text-yellow-300 fill-yellow-300" />
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-[9px] text-ink-disabled shrink-0">→</span>
+                    <span className="text-[9px] text-gain tabular-nums shrink-0">{item.tp!.toFixed(1)}</span>
+                  </div>
                 )}
-                title={`Open analytics for ${item.stock}`}
-              >
-                {item.stock}{item.triggered ? '✓' : ''}
-              </button>
-              {/* SL ← Buy → TP */}
-              {item.sl != null && <span className="text-loss font-semibold shrink-0">{item.sl.toFixed(1)}</span>}
-              {item.sl != null && <span className="text-ink-disabled shrink-0">←</span>}
-              <span className="text-ink-primary font-bold shrink-0">
-                {item.buy_price != null ? item.buy_price.toFixed(1) : '—'}
-              </span>
-              {item.tp != null && <span className="text-ink-disabled shrink-0">→</span>}
-              {item.tp != null && <span className="text-gain font-semibold shrink-0">{item.tp.toFixed(1)}</span>}
-            </div>
-          ))}
+              </div>
+            )
+          })}
           {(plan?.purchase_items?.length ?? 0) > 5 && (
             <p className="text-[10px] text-ink-disabled pl-1">
               +{(plan!.purchase_items.length - 5)} more
@@ -193,6 +350,10 @@ function PurchasePlanWidget() {
         {latest.name}
       </Link>
 
+        </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Analytics modal */}
       <AnimatePresence>
         {modalSymbol && (
@@ -208,7 +369,10 @@ function PurchasePlanWidget() {
 }
 
 function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
+  const [expanded, setExpanded] = useState(true)
   const [modalSymbol, setModalSymbol] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const queryClient = useQueryClient()
 
   // DB mode: live positions from portfolio manager
   const { data: dbPositions } = useQuery({
@@ -234,7 +398,11 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
   })
 
   // Normalise both sources into a common row shape
-  type Row = { key: string; symbol: string; pnlPct: number | null; entryPrice: number | null; link: string }
+  type Row = {
+    key: string; symbol: string; pnlPct: number | null
+    entryPrice: number | null; currentPrice: number | null
+    sl: number | null; tp: number | null; link: string
+  }
 
   const rows: Row[] = isDbMode
     ? (dbPositions ?? [])
@@ -246,6 +414,9 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
           symbol: p.symbol,
           pnlPct: p.pnlPct,
           entryPrice: p.entryPrice,
+          currentPrice: p.currentPrice,
+          sl: p.sl,
+          tp: p.tp,
           link: '/settings/portfolio-db',
         }))
     : (planDetail?.portfolio_items ?? [])
@@ -259,6 +430,9 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
             symbol: it.symbol,
             pnlPct: pnl,
             entryPrice: it.entry_price,
+            currentPrice: it.current_price,
+            sl: it.sl,
+            tp: it.tp,
             link: latestPlan ? `/action-plan/portfolio/${latestPlan.id}` : '/action-plan',
           }
         })
@@ -270,13 +444,46 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
 
   const listLabel = isDbMode ? 'DB Portfolio' : (latestPlan?.name ?? '')
 
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try {
+      await queryClient.invalidateQueries({ queryKey: ['sidebar-portfolio-positions'] })
+      await queryClient.invalidateQueries({ queryKey: ['sidebar-portfolio-plans'] })
+      await queryClient.invalidateQueries({ queryKey: ['sidebar-portfolio-plan-detail'] })
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   return (
     <div className="px-3 py-2 space-y-1.5">
       <div className="flex items-center gap-1.5">
         <Briefcase className="w-3 h-3 text-purple-400 shrink-0" />
-        <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider flex-1 truncate">
-          Portfolio <span className="text-ink-disabled font-normal">({rows.length})</span>
-        </span>
+        <div className="flex-1 min-w-0">
+          <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider">
+            Portfolio <span className="text-ink-disabled font-normal">({rows.length})</span>
+          </span>
+          <div className="flex items-center gap-0.5 mt-0.5">
+            <span className="text-[8px] text-ink-disabled">SL ·</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 shrink-0" />
+            <span className="text-[8px] text-ink-disabled">Buy / Price · TP</span>
+          </div>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="text-ink-disabled hover:text-brand-400 transition-colors shrink-0"
+          title="Refresh prices"
+        >
+          <RefreshCw className={cn('w-3 h-3', refreshing && 'animate-spin')} />
+        </button>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="text-ink-disabled hover:text-ink-primary transition-colors shrink-0"
+          title={expanded ? 'Collapse' : 'Expand'}
+        >
+          <ChevronDown className={cn('w-3 h-3 transition-transform', expanded && 'rotate-180')} />
+        </button>
         <Link href={linkHref}
           className="text-ink-disabled hover:text-brand-400 transition-colors shrink-0"
           title="Open portfolio">
@@ -284,39 +491,97 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
         </Link>
       </div>
 
-      <div className="space-y-0.5 pl-1">
-        {rows.map(row => (
-          <div key={row.key} className="flex items-center gap-1.5 text-[10px]">
-            {/* Clickable symbol */}
-            <button
-              onClick={() => setModalSymbol(row.symbol)}
-              className="font-mono font-bold text-ink-secondary shrink-0 w-[52px] truncate text-left hover:text-brand-400 transition-colors cursor-pointer"
-              title={`Open analytics for ${row.symbol}`}
-            >
-              {row.symbol}
-            </button>
-            {row.pnlPct !== null ? (
-              <>
-                <span className={cn(
-                  'font-semibold shrink-0 w-[42px] text-right tabular-nums',
-                  row.pnlPct >= 0 ? 'text-gain' : 'text-loss',
-                )}>
-                  {row.pnlPct >= 0 ? '+' : ''}{row.pnlPct.toFixed(1)}%
-                </span>
-                <div className="flex-1 h-1 rounded-full bg-surface-overlay overflow-hidden">
-                  <div
-                    className={cn('h-full rounded-full', row.pnlPct >= 0 ? 'bg-gain/60' : 'bg-loss/60')}
-                    style={{ width: `${Math.min(Math.abs(row.pnlPct) * 5, 100)}%` }}
-                  />
+      <AnimatePresence initial={false}>
+        {expanded && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="overflow-hidden space-y-1.5"
+        >
+
+      <div className="space-y-1.5 pl-1">
+        {rows.map(row => {
+          const isProfit = row.entryPrice !== null && row.currentPrice !== null
+            ? row.currentPrice >= row.entryPrice
+            : (row.pnlPct ?? 0) >= 0
+          const hasSL = row.sl !== null
+          const hasTP = row.tp !== null
+          const showSlTp = (hasSL || hasTP) && row.currentPrice !== null
+          const slTpPct = hasSL && hasTP
+            ? Math.max(0, Math.min(100, ((row.currentPrice! - row.sl!) / (row.tp! - row.sl!)) * 100))
+            : null
+          const buyPct = hasSL && hasTP && row.entryPrice !== null
+            ? Math.max(0, Math.min(100, ((row.entryPrice - row.sl!) / (row.tp! - row.sl!)) * 100))
+            : null
+
+          return (
+            <div key={row.key} className="text-[10px]">
+              {/* Line 1: symbol | ±pnl% | entry/current */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setModalSymbol(row.symbol)}
+                  className="font-mono font-bold text-ink-secondary shrink-0 w-[52px] truncate text-left hover:text-brand-400 transition-colors cursor-pointer"
+                  title={`Open analytics for ${row.symbol}`}
+                >
+                  {row.symbol}
+                </button>
+                {row.pnlPct !== null && (
+                  <span className={cn(
+                    'font-semibold shrink-0 w-[36px] text-right tabular-nums',
+                    row.pnlPct >= 0 ? 'text-gain' : 'text-loss',
+                  )}>
+                    {row.pnlPct >= 0 ? '+' : ''}{row.pnlPct.toFixed(1)}%
+                  </span>
+                )}
+                {row.entryPrice !== null && row.currentPrice !== null ? (
+                  <span className="text-[9px] text-ink-disabled tabular-nums flex-1 truncate">
+                    {row.entryPrice.toFixed(2)}
+                    <span className="mx-0.5">/</span>
+                    <span className={isProfit ? 'text-gain' : 'text-loss'}>{row.currentPrice.toFixed(2)}</span>
+                  </span>
+                ) : row.entryPrice !== null ? (
+                  <span className="text-[9px] text-ink-disabled tabular-nums flex-1">@{row.entryPrice.toFixed(2)}</span>
+                ) : null}
+              </div>
+
+              {/* Line 2: SL ← [current marker on bar] → TP */}
+              {showSlTp && (
+                <div className="flex items-center gap-0.5 mt-0.5">
+                  {hasSL && (
+                    <span className="text-[9px] text-loss tabular-nums shrink-0">{row.sl!.toFixed(1)}</span>
+                  )}
+                  <span className="text-[9px] text-ink-disabled shrink-0 px-0.5">←</span>
+                  {slTpPct !== null ? (
+                    <div className="flex-1 relative h-1.5 bg-surface-overlay rounded-full mx-0.5">
+                      {/* Buy price marker — purple */}
+                      {buyPct !== null && (
+                        <div
+                          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-purple-400"
+                          style={{ left: `${buyPct}%` }}
+                        />
+                      )}
+                      {/* Current price marker — green if profit, red if loss */}
+                      <div
+                        className={cn('absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 rounded-full', isProfit ? 'bg-gain' : 'bg-loss')}
+                        style={{ left: `${slTpPct}%` }}
+                      />
+                    </div>
+                  ) : (
+                    <span className={cn('text-[9px] tabular-nums font-semibold flex-1 text-center', isProfit ? 'text-gain' : 'text-loss')}>
+                      {row.currentPrice!.toFixed(2)}
+                    </span>
+                  )}
+                  <span className="text-[9px] text-ink-disabled shrink-0 px-0.5">→</span>
+                  {hasTP && (
+                    <span className="text-[9px] text-gain tabular-nums shrink-0">{row.tp!.toFixed(1)}</span>
+                  )}
                 </div>
-              </>
-            ) : (
-              <span className="text-ink-disabled">
-                {row.entryPrice != null ? `@ ${row.entryPrice.toFixed(2)}` : '—'}
-              </span>
-            )}
-          </div>
-        ))}
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {/* Latest list name link */}
@@ -329,6 +594,10 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
           {listLabel}
         </Link>
       )}
+
+        </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Analytics modal */}
       <AnimatePresence>
@@ -502,7 +771,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
 
       {/* Bottom widgets — hidden when collapsed */}
       {!collapsed && (
-        <div className="shrink-0 border-t border-border/30 divide-y divide-border/20 max-h-[320px] overflow-y-auto no-scrollbar">
+        <div className="shrink-0 border-t border-border/30 divide-y divide-border/20">
           <WeeklyScanWidget />
           <PurchasePlanWidget />
           <PortfolioWidget isDbMode={isDbMode} />

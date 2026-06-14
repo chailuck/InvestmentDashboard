@@ -53,7 +53,7 @@ function FeelingPicker({
   onChange: (v: FeelingValue | null) => void
 }) {
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="grid grid-cols-3 gap-0.5">
       {FEELINGS.map(f => {
         const Icon = FEELING_ICONS[f.iconKey]
         const active = value === f.value
@@ -64,14 +64,14 @@ function FeelingPicker({
             onClick={() => onChange(active ? null : f.value as FeelingValue)}
             title={f.label}
             className={cn(
-              'w-6 h-6 rounded flex items-center justify-center border transition-all',
+              'w-5 h-5 rounded flex items-center justify-center border transition-all',
               active
                 ? cn(f.color, f.bg, 'scale-110')
                 : cn('border-border/30 text-ink-disabled hover:border-border hover:text-ink-muted hover:scale-110'),
               readOnly && 'opacity-40 cursor-not-allowed pointer-events-none',
             )}
           >
-            <Icon className="w-3.5 h-3.5" strokeWidth={2.5} />
+            <Icon className="w-3 h-3" strokeWidth={2.5} />
           </button>
         )
       })}
@@ -252,18 +252,30 @@ function TradeItemRow({
   onPatch: (id: string, payload: Parameters<typeof reviewListService.patchItem>[2]) => void
   onDelete: (id: string) => void
 }) {
+  const sellIsWin = item.buy_price != null && item.sell_price != null
+    ? item.sell_price >= item.buy_price
+    : null
+
   return (
     <tr className="border-b border-border/20 hover:bg-surface-elevated/20 transition-colors align-top">
       {/* Symbol */}
       <td className="px-3 py-2.5 whitespace-nowrap">
         <span className="font-mono font-bold text-xs text-ink-primary">{item.symbol}</span>
       </td>
-      {/* Buy leg */}
+      {/* Current price (Friday close, or Monday open if not yet available) */}
+      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">
+        {fmtPrice(item.week_close_price ?? item.week_open_price)}
+      </td>
+      {/* Buy: Date | Price/Size */}
       <td className="px-2 py-2.5 text-xs text-ink-muted whitespace-nowrap">{fmtDate(item.buy_date)}</td>
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtPrice(item.buy_price)}</td>
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtSize(item.buy_size)}</td>
-      {/* Buy reason + feeling — immediately after buy data */}
-      <td className="px-2 py-2.5 w-32">
+      <td className="px-2 py-2.5 whitespace-nowrap">
+        <div className="space-y-0.5">
+          <div className="text-xs text-ink-secondary tabular-nums">{fmtPrice(item.buy_price)}</div>
+          <div className="text-[10px] text-ink-muted tabular-nums">×{fmtSize(item.buy_size)}</div>
+        </div>
+      </td>
+      {/* Buy reason + feeling */}
+      <td className="px-2 py-2.5 min-w-[176px]">
         <ReasonInput
           value={item.buy_reason}
           placeholder="Why buy?"
@@ -274,12 +286,23 @@ function TradeItemRow({
       <td className="px-2 py-2.5">
         <FeelingPicker value={item.buy_feeling} readOnly={readOnly} onChange={v => onPatch(item.id, { buy_feeling: v })} />
       </td>
-      {/* Sell leg */}
+      {/* Sell: Date | Price/Size (price coloured by win/loss) */}
       <td className="px-2 py-2.5 text-xs text-ink-muted whitespace-nowrap">{fmtDate(item.sell_date)}</td>
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtPrice(item.sell_price)}</td>
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtSize(item.sell_size)}</td>
-      {/* Sell reason + feeling — immediately after sell data */}
-      <td className="px-2 py-2.5 w-32">
+      <td className="px-2 py-2.5 whitespace-nowrap">
+        {item.sell_date ? (
+          <div className="space-y-0.5">
+            <div className={cn(
+              'text-xs tabular-nums',
+              sellIsWin === null ? 'text-ink-secondary' : sellIsWin ? 'text-gain' : 'text-loss',
+            )}>
+              {fmtPrice(item.sell_price)}
+            </div>
+            <div className="text-[10px] text-ink-muted tabular-nums">×{fmtSize(item.sell_size)}</div>
+          </div>
+        ) : <span className="text-ink-disabled text-xs">—</span>}
+      </td>
+      {/* Sell reason + feeling */}
+      <td className="px-2 py-2.5 min-w-[176px]">
         {item.sell_date ? (
           <ReasonInput
             value={item.sell_reason}
@@ -294,10 +317,14 @@ function TradeItemRow({
           <FeelingPicker value={item.sell_feeling} readOnly={readOnly} onChange={v => onPatch(item.id, { sell_feeling: v })} />
         ) : <span className="text-ink-disabled text-xs">—</span>}
       </td>
-      {/* Week prices */}
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtPrice(item.week_open_price)}</td>
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtPrice(item.week_close_price)}</td>
-      <td className="px-2 py-2.5 text-xs whitespace-nowrap"><PctBadge pct={item.week_change_pct} /></td>
+      {/* Week: Mon open / Fri close / Wk% stacked */}
+      <td className="px-2 py-2.5 whitespace-nowrap">
+        <div className="space-y-0.5 tabular-nums">
+          <div className="text-[10px] text-ink-disabled">{fmtPrice(item.week_open_price)}</div>
+          <div className="text-[10px] text-ink-secondary">{fmtPrice(item.week_close_price)}</div>
+          <PctBadge pct={item.week_change_pct} />
+        </div>
+      </td>
       {/* Delete */}
       <td className="px-2 py-2.5">
         {!readOnly && (
@@ -325,13 +352,27 @@ function HoldItemRow({
       <td className="px-3 py-2.5 whitespace-nowrap">
         <span className="font-mono font-bold text-xs text-ink-primary">{item.symbol}</span>
       </td>
+      {/* Current price */}
+      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">
+        {fmtPrice(item.week_close_price ?? item.week_open_price)}
+      </td>
+      {/* Entry: Date | Price/Size */}
       <td className="px-2 py-2.5 text-xs text-ink-muted whitespace-nowrap">{fmtDate(item.buy_date)}</td>
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtPrice(item.buy_price)}</td>
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtSize(item.buy_size)}</td>
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtPrice(item.week_open_price)}</td>
-      <td className="px-2 py-2.5 text-xs text-ink-secondary tabular-nums whitespace-nowrap">{fmtPrice(item.week_close_price)}</td>
-      <td className="px-2 py-2.5 text-xs whitespace-nowrap"><PctBadge pct={item.week_change_pct} /></td>
-      <td className="px-2 py-2.5 w-40">
+      <td className="px-2 py-2.5 whitespace-nowrap">
+        <div className="space-y-0.5">
+          <div className="text-xs text-ink-secondary tabular-nums">{fmtPrice(item.buy_price)}</div>
+          <div className="text-[10px] text-ink-muted tabular-nums">×{fmtSize(item.buy_size)}</div>
+        </div>
+      </td>
+      {/* Week: Mon open / Fri close / Wk% stacked */}
+      <td className="px-2 py-2.5 whitespace-nowrap">
+        <div className="space-y-0.5 tabular-nums">
+          <div className="text-[10px] text-ink-disabled">{fmtPrice(item.week_open_price)}</div>
+          <div className="text-[10px] text-ink-secondary">{fmtPrice(item.week_close_price)}</div>
+          <PctBadge pct={item.week_change_pct} />
+        </div>
+      </td>
+      <td className="px-2 py-2.5 min-w-[176px]">
         <ReasonInput
           value={item.buy_reason}
           placeholder="Notes on this hold…"
@@ -602,18 +643,19 @@ export default function ReviewDetailPage() {
               <thead>
                 {/* Group headers */}
                 <tr className="border-b border-border/30">
-                  <th className="px-3 py-1" />
-                  <GroupTH colSpan={5} className="text-gain/70">Buy</GroupTH>
-                  <GroupTH colSpan={5} className="text-loss/70">Sell</GroupTH>
-                  <GroupTH colSpan={3} className="text-brand-400/70">Week Price</GroupTH>
+                  <th className="px-3 py-1" colSpan={2} />
+                  <GroupTH colSpan={4} className="text-gain/70">Buy</GroupTH>
+                  <GroupTH colSpan={4} className="text-loss/70">Sell</GroupTH>
+                  <GroupTH colSpan={1} className="text-brand-400/70">Week</GroupTH>
                   <th className="px-2 py-1 w-8" />
                 </tr>
                 {/* Column headers */}
                 <tr className="border-b border-border/40">
                   <TH className="px-3">Symbol</TH>
-                  <TH>Date</TH><TH>Price</TH><TH>Size</TH><TH>Reason</TH><TH>Feeling</TH>
-                  <TH>Date</TH><TH>Price</TH><TH>Size</TH><TH>Reason</TH><TH>Feeling</TH>
-                  <TH>Mon Open</TH><TH>Fri Close</TH><TH>Wk %</TH>
+                  <TH>Price</TH>
+                  <TH>Date</TH><TH>P/Size</TH><TH className="min-w-[176px]">Reason</TH><TH>Feel</TH>
+                  <TH>Date</TH><TH>P/Size</TH><TH className="min-w-[176px]">Reason</TH><TH>Feel</TH>
+                  <TH>Mon/Fri/Wk%</TH>
                   <th className="px-2 py-2 w-8" />
                 </tr>
               </thead>
@@ -673,17 +715,17 @@ export default function ReviewDetailPage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border/30">
-                  <th className="px-3 py-1" />
-                  <GroupTH colSpan={3} className="text-gain/70">Entry</GroupTH>
-                  <GroupTH colSpan={3} className="text-brand-400/70">Week Price</GroupTH>
-                  <th className="px-2 py-1" colSpan={2} />
-                  <th className="px-2 py-1" />
+                  <th className="px-3 py-1" colSpan={2} />
+                  <GroupTH colSpan={2} className="text-gain/70">Entry</GroupTH>
+                  <GroupTH colSpan={1} className="text-brand-400/70">Week</GroupTH>
+                  <th className="px-2 py-1" colSpan={3} />
                 </tr>
                 <tr className="border-b border-border/40">
                   <TH className="px-3">Symbol</TH>
-                  <TH>Entry Date</TH><TH>Entry Price</TH><TH>Size</TH>
-                  <TH>Mon Open</TH><TH>Fri Close</TH><TH>Wk %</TH>
-                  <TH>Notes</TH><TH>Feeling</TH>
+                  <TH>Price</TH>
+                  <TH>Entry Date</TH><TH>P/Size</TH>
+                  <TH>Mon/Fri/Wk%</TH>
+                  <TH className="min-w-[176px]">Notes</TH><TH>Feel</TH>
                   <th className="px-2 py-2 w-8" />
                 </tr>
               </thead>
