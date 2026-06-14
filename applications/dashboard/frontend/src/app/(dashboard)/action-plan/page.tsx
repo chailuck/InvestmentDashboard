@@ -4,15 +4,17 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { format } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import {
   ClipboardList, Plus, Edit2, Trash2, Copy, X, Loader2,
   ShoppingCart, Briefcase, AlertCircle, ScanLine, LayoutDashboard,
+  BookOpen, TrendingUp, ChevronRight, ArrowRight,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { actionPlanService, type PlanSummary, type PlanType, type ViewMonths } from '@/services/actionPlan'
 import { weeklyScanService, COLOR_MARKS, type ScanListSummary } from '@/services/weeklyScan'
+import { reviewListService, type ReviewSummary } from '@/services/reviewList'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -544,6 +546,210 @@ function WeeklyScanSection() {
   )
 }
 
+// ── Review List Section ───────────────────────────────────────────────────────
+
+const VIEW_OPTIONS_REVIEW: { label: string; value: number | null }[] = [
+  { label: '3 months', value: 3 },
+  { label: '6 months', value: 6 },
+  { label: 'All', value: null },
+]
+
+function ReviewListSection() {
+  const router = useRouter()
+  const queryClient = useQueryClient()
+  const [months, setMonths] = useState<number | null>(3)
+  const [deleteTarget, setDeleteTarget] = useState<ReviewSummary | null>(null)
+  const [actionLoading, setActionLoading] = useState(false)
+
+  // Ensure this week's review exists (auto-create)
+  const { data: currentWeek } = useQuery<ReviewSummary>({
+    queryKey: ['review-current-week'],
+    queryFn: reviewListService.getCurrentWeek,
+    staleTime: 5 * 60_000,
+  })
+
+  const { data: reviews = [], isLoading, isError } = useQuery<ReviewSummary[]>({
+    queryKey: ['review-list', months],
+    queryFn: () => reviewListService.list(months),
+    staleTime: 30_000,
+  })
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['review-list'] })
+    queryClient.invalidateQueries({ queryKey: ['review-current-week'] })
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setActionLoading(true)
+    try {
+      await reviewListService.delete(deleteTarget.id)
+      setDeleteTarget(null)
+      invalidate()
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const fmtWeek = (r: ReviewSummary) =>
+    `${format(parseISO(r.week_start), 'dd MMM')} – ${format(parseISO(r.week_end), 'dd MMM yyyy')}`
+
+  const today = new Date()
+  const isCurrentWeek = (r: ReviewSummary) => {
+    const end = new Date(r.week_end)
+    return end >= today
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-5 py-4 border-b border-border/50 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <BookOpen className="w-4 h-4 text-brand-400 shrink-0" />
+          <h2 className="text-sm font-semibold text-ink-primary">Review List</h2>
+          {currentWeek && (
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-brand-500/10 text-brand-400 border border-brand-500/20">
+              This week: {fmtWeek(currentWeek)}
+            </span>
+          )}
+        </div>
+
+        {/* View filter */}
+        <div className="flex items-center gap-1">
+          {VIEW_OPTIONS_REVIEW.map(opt => (
+            <button
+              key={String(opt.value)}
+              onClick={() => setMonths(opt.value)}
+              className={cn(
+                'px-2.5 py-1 text-xs font-medium rounded-md border transition-colors',
+                months === opt.value
+                  ? 'bg-brand-500/10 text-brand-400 border-brand-500/30'
+                  : 'text-ink-muted border-border hover:text-ink-primary hover:bg-surface-elevated',
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Jump to current week */}
+        {currentWeek && (
+          <button
+            onClick={() => router.push(`/action-plan/review-list/${currentWeek.id}`)}
+            className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5"
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+            This Week's Review
+          </button>
+        )}
+      </div>
+
+      <div className="overflow-x-auto">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-10 gap-2 text-ink-muted text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+          </div>
+        ) : isError ? (
+          <div className="flex items-center justify-center py-10 gap-2 text-loss text-sm">
+            <AlertCircle className="w-4 h-4" /> Failed to load reviews.
+          </div>
+        ) : reviews.length === 0 ? (
+          <div className="py-10 text-center text-ink-muted text-sm">
+            No reviews yet. A review for this week will be auto-created.
+          </div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border/50 text-ink-muted">
+                <th className="px-4 py-2.5 text-left font-medium">Week</th>
+                <th className="px-4 py-2.5 text-left font-medium">Name</th>
+                <th className="px-4 py-2.5 text-center font-medium">
+                  <span className="flex items-center justify-center gap-1"><TrendingUp className="w-3 h-3 text-brand-400" />Trades</span>
+                </th>
+                <th className="px-4 py-2.5 text-center font-medium">
+                  <span className="flex items-center justify-center gap-1"><Briefcase className="w-3 h-3 text-purple-400" />Open</span>
+                </th>
+                <th className="px-4 py-2.5 text-left font-medium">Updated</th>
+                <th className="px-4 py-2.5 text-left font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reviews.map(r => (
+                <tr
+                  key={r.id}
+                  className={cn(
+                    'border-b border-border/25 hover:bg-surface-elevated/50 transition-colors',
+                    isCurrentWeek(r) && 'bg-brand-500/5',
+                  )}
+                >
+                  <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">{fmtWeek(r)}</td>
+                  <td className="px-4 py-2.5">
+                    <Link
+                      href={`/action-plan/review-list/${r.id}`}
+                      className={cn(
+                        'font-semibold hover:text-brand-400 transition-colors',
+                        isCurrentWeek(r) ? 'text-brand-400' : 'text-ink-primary',
+                      )}
+                    >
+                      {r.name}
+                      {isCurrentWeek(r) && (
+                        <span className="ml-1.5 text-[10px] font-normal text-brand-400/70">current</span>
+                      )}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-2.5 text-center">
+                    {r.trade_count > 0
+                      ? <span className="font-semibold text-brand-400">{r.trade_count}</span>
+                      : <span className="text-ink-disabled">—</span>
+                    }
+                  </td>
+                  <td className="px-4 py-2.5 text-center">
+                    {r.hold_count > 0
+                      ? <span className="font-semibold text-purple-400">{r.hold_count}</span>
+                      : <span className="text-ink-disabled">—</span>
+                    }
+                  </td>
+                  <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">
+                    {format(parseISO(r.updated_at), 'dd MMM yy HH:mm')}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-1">
+                      <Link
+                        href={`/action-plan/review-list/${r.id}`}
+                        className="btn-icon"
+                        title="Open review"
+                      >
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </Link>
+                      <button
+                        onClick={() => setDeleteTarget(r)}
+                        className="btn-icon text-loss/70 hover:text-loss"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {deleteTarget && (
+          <DeleteModal
+            planName={deleteTarget.name}
+            loading={actionLoading}
+            onConfirm={handleDelete}
+            onClose={() => setDeleteTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function ActionPlanPage() {
@@ -566,6 +772,9 @@ export default function ActionPlanPage() {
 
       {/* Weekly scans */}
       <WeeklyScanSection />
+
+      {/* Review List */}
+      <ReviewListSection />
     </div>
   )
 }

@@ -47,6 +47,7 @@ from app.models.user import User
 from app.models.weekly_scan import (  # noqa: F401
     UserScanConfig, UserSymbolList, WeeklyScan, WeeklyScanItem,
 )
+from app.models.weekly_review import WeeklyReview, WeeklyReviewItem  # noqa: F401
 from main import fastapi_app
 
 # Always point at the dedicated test DB — never the production one.

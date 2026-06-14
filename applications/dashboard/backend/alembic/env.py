@@ -20,6 +20,7 @@ from app.models.action_plan import ActionPlan, PurchasePlanItem, PortfolioPlanIt
 from app.models.symbol_note import SymbolNote  # noqa: F401
 from app.models.portfolio_db import PortfolioDbPosition  # noqa: F401
 from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem  # noqa: F401
+from app.models.weekly_review import WeeklyReview, WeeklyReviewItem  # noqa: F401
 
 # ── Alembic Config object ─────────────────────────────────────────────────────
 config = context.config

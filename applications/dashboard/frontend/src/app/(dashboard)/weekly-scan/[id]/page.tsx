@@ -469,6 +469,7 @@ export default function WeeklyScanPage() {
   const [savingConfig,   setSavingConfig]   = useState<'idle' | 'saving' | 'done'>('idle')
   const [copied,         setCopied]         = useState(false)
   const [addToList,      setAddToList]      = useState<string>('')
+  const [headerCollapsed, setHeaderCollapsed] = useState(false)
 
   // Symbol list tab — defaults to the first list when tabs load for the first time
   const [activeListTab, setActiveListTab] = useState<string | null>(null)
@@ -650,77 +651,118 @@ export default function WeeklyScanPage() {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-start gap-3">
-        <button onClick={() => router.push('/action-plan')} className="btn-icon mt-0.5">
+    <div className="space-y-3">
+      {/* ── Title row — always visible ── */}
+      <div className="flex items-center gap-3">
+        <button onClick={() => router.push('/action-plan')} className="btn-icon shrink-0">
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <ScanLine className="w-5 h-5 text-brand-400 shrink-0" />
-            <h1 className="text-lg font-bold text-ink-primary font-mono">{scan.name}</h1>
-          </div>
-          <p className="text-xs text-ink-muted mt-0.5 ml-7">
-            Created {format(new Date(scan.created_at), 'dd MMM yyyy')} ·
-            Modified {format(new Date(scan.updated_at), 'dd MMM yyyy HH:mm')} ·
-            {scan.items.length} symbols
-          </p>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <ScanLine className="w-5 h-5 text-brand-400 shrink-0" />
+          <h1 className="text-lg font-bold text-ink-primary font-mono truncate">{scan.name}</h1>
+          {!headerCollapsed && (
+            <span className="text-xs text-ink-muted hidden sm:inline shrink-0">
+              · {scan.items.length} symbols · Modified {format(new Date(scan.updated_at), 'dd MMM HH:mm')}
+            </span>
+          )}
         </div>
+
+        {/* Collapsed summary — active tab + colour counts inline */}
+        {headerCollapsed && (
+          <div className="flex items-center gap-2 flex-1 min-w-0 overflow-x-auto">
+            {activeListTab && (
+              <span className="text-xs font-semibold text-brand-400 shrink-0">{activeListTab}</span>
+            )}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {COLOR_MARKS.map(c => counts[c.value] > 0 && (
+                <span key={c.value} className={cn('flex items-center gap-1 text-[11px] font-medium', c.text)}>
+                  <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', c.dot)} />
+                  {counts[c.value]}
+                </span>
+              ))}
+              {counts.NONE > 0 && (
+                <span className="text-[11px] font-medium text-ink-disabled">{counts.NONE} pending</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Collapse / expand toggle */}
+        <button
+          onClick={() => setHeaderCollapsed(v => !v)}
+          title={headerCollapsed ? 'Expand header' : 'Collapse header'}
+          className="btn-icon shrink-0 text-ink-muted hover:text-ink-primary"
+        >
+          <ChevronDown className={cn('w-4 h-4 transition-transform duration-200', headerCollapsed && 'rotate-180')} />
+        </button>
       </div>
 
-      {/* Colour legend */}
-      <div className="flex flex-wrap gap-2">
-        {COLOR_MARKS.map(c => (
-          <div key={c.value} className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border', c.bg, c.text, c.border)}>
-            <span className={cn('w-2 h-2 rounded-full', c.dot)} />
-            {c.label} <span className="font-bold">{counts[c.value]}</span>
-          </div>
-        ))}
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-border bg-surface-elevated text-ink-muted">
-          Pending <span className="font-bold">{counts.NONE}</span>
-        </div>
-      </div>
+      {/* ── Collapsible: colour legend + tabs + toolbar ── */}
+      <AnimatePresence initial={false}>
+        {!headerCollapsed && (
+          <motion.div
+            key="header-body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="overflow-hidden space-y-3"
+          >
+            {/* Colour legend */}
+            <div className="flex flex-wrap gap-2">
+              {COLOR_MARKS.map(c => (
+                <div key={c.value} className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border', c.bg, c.text, c.border)}>
+                  <span className={cn('w-2 h-2 rounded-full', c.dot)} />
+                  {c.label} <span className="font-bold">{counts[c.value]}</span>
+                </div>
+              ))}
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-border bg-surface-elevated text-ink-muted">
+                Pending <span className="font-bold">{counts.NONE}</span>
+              </div>
+            </div>
 
-      {/* Symbol list tabs — above toolbar */}
-      {listTabs.length === 0 && scan.items.length > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-brand-500/20 bg-brand-500/8 text-xs text-brand-400">
-          <span className="opacity-60">💡</span>
-          No symbol list tabs yet. Click <strong className="font-semibold">"Refresh config"</strong> below to assign symbols to tabs from your configured symbol lists.
-        </div>
-      )}
+            {/* Symbol list tabs */}
+            {listTabs.length === 0 && scan.items.length > 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-brand-500/20 bg-brand-500/8 text-xs text-brand-400">
+                <span className="opacity-60">💡</span>
+                No symbol list tabs yet. Click <strong className="font-semibold">"Refresh config"</strong> below to assign symbols to tabs from your configured symbol lists.
+              </div>
+            )}
 
-      {listTabs.length > 0 && (
-        <div className="flex items-center gap-1 flex-wrap">
-          <button
-            onClick={() => setActiveListTab(null)}
-            className={cn(
-              'px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors',
-              activeListTab === null
-                ? 'bg-brand-500/15 text-brand-400 border-brand-500/30'
-                : 'text-ink-muted border-border hover:text-ink-primary hover:bg-surface-elevated',
-            )}>
-            All <span className="ml-1 text-[10px] opacity-60">{scan.items.length}</span>
-          </button>
-          {listTabs.map(name => {
-            const count = scan.items.filter(i => i.list_name === name).length
-            return (
-              <button key={name}
-                onClick={() => setActiveListTab(name)}
-                className={cn(
-                  'px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors',
-                  activeListTab === name
-                    ? 'bg-brand-500/15 text-brand-400 border-brand-500/30'
-                    : 'text-ink-muted border-border hover:text-ink-primary hover:bg-surface-elevated',
-                )}>
-                {name} <span className="ml-1 text-[10px] opacity-60">{count}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
+            {listTabs.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <button
+                  onClick={() => setActiveListTab(null)}
+                  className={cn(
+                    'px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors',
+                    activeListTab === null
+                      ? 'bg-brand-500/15 text-brand-400 border-brand-500/30'
+                      : 'text-ink-muted border-border hover:text-ink-primary hover:bg-surface-elevated',
+                  )}>
+                  All <span className="ml-1 text-[10px] opacity-60">{scan.items.length}</span>
+                </button>
+                {listTabs.map(name => {
+                  const count = scan.items.filter(i => i.list_name === name).length
+                  return (
+                    <button key={name}
+                      onClick={() => setActiveListTab(name)}
+                      className={cn(
+                        'px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors',
+                        activeListTab === name
+                          ? 'bg-brand-500/15 text-brand-400 border-brand-500/30'
+                          : 'text-ink-muted border-border hover:text-ink-primary hover:bg-surface-elevated',
+                      )}>
+                      {name} <span className="ml-1 text-[10px] opacity-60">{count}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Toolbar — below tabs, list-context aware */}
+      {/* Toolbar — visible in both states */}
       <div className="card px-4 py-3 flex flex-wrap items-center gap-3">
         <button onClick={handleRefresh} disabled={refreshing}
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border text-ink-muted hover:text-ink-primary hover:border-brand-500/40 transition-colors disabled:opacity-50">
@@ -795,7 +837,7 @@ export default function WeeklyScanPage() {
             <span className="text-[10px] text-ink-disabled">(used for DR price estimates)</span>
           </div>
         )}
-        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-340px)] min-h-[240px]">
+        <div className={cn('overflow-x-auto overflow-y-auto min-h-[240px]', headerCollapsed ? 'max-h-[calc(100vh-180px)]' : 'max-h-[calc(100vh-340px)]')}>
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10">
               <tr className="border-b border-border/50 bg-surface-elevated text-ink-muted">
