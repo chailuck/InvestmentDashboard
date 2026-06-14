@@ -178,7 +178,36 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 </table>
 <p>If the scan week is in the future (Monday has not yet occurred), the most recent close is used as a proxy for Monday open. All symbols are fetched concurrently with a semaphore of 5 to avoid rate-limiting.</p>
 
-<h2>5. Edge cases and empty states</h2>
+<h2>5. Sidebar widget — clickable symbols</h2>
+<p>The <strong>Weekly Scan</strong> sidebar widget shows the most recent scan's CYAN (Potential) and GREEN (Good) symbols as clickable links alongside the colour distribution dots. This allows investors to jump straight into a stock's analytics without navigating away from their current page.</p>
+
+<h3>5.1 Interaction</h3>
+<ul>
+  <li>Each CYAN and GREEN symbol is rendered as a button in the sidebar widget</li>
+  <li>Clicking any symbol opens the <strong>Analytics modal</strong> scoped to that symbol, presenting the OHLCV chart, indicators, and live price data</li>
+  <li>Symbols are separated by a <code>·</code> centred dot; no trailing separator is rendered after the last symbol in each group</li>
+  <li>Only one modal can be open at a time — opening a second symbol closes the first automatically</li>
+  <li>Closing the modal (via the modal's close button or Escape) returns the sidebar to its unchanged state</li>
+  <li>If a list is empty (no CYAN or no GREEN symbols in the latest scan), that group is hidden entirely and no buttons are rendered</li>
+</ul>
+
+<h3>5.2 Keyboard accessibility</h3>
+<ul>
+  <li>Symbols are native <code>&lt;button&gt;</code> elements, so they participate in the Tab order automatically</li>
+  <li>Pressing Enter or Space on a focused symbol button opens the analytics modal</li>
+  <li>Each button carries a <code>title</code> attribute ("Open analytics for {SYMBOL}") for screen reader and tooltip support</li>
+</ul>
+
+<h3>5.3 Colour styling</h3>
+<table>
+  <thead><tr><th>Group</th><th>Button colour</th><th>Hover colour</th></tr></thead>
+  <tbody>
+    <tr><td>Potential (CYAN)</td><td><code>text-cyan-400</code></td><td><code>text-brand-400</code></td></tr>
+    <tr><td>Good (GREEN)</td><td><code>text-gain</code></td><td><code>text-brand-400</code></td></tr>
+  </tbody>
+</table>
+
+<h2>6. Edge cases and empty states</h2>
 <table>
   <thead><tr><th>Condition</th><th>Behaviour</th></tr></thead>
   <tbody>

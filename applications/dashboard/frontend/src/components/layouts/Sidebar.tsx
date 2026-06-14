@@ -60,6 +60,7 @@ const DOT_ORDER = ['CYAN', 'GREEN', 'YELLOW', 'RED', 'PURPLE']
 
 function WeeklyScanWidget() {
   const [expanded, setExpanded] = useState(true)
+  const [modalSymbol, setModalSymbol] = useState<string | null>(null)
 
   const { data: scans } = useQuery<ScanListSummary[]>({
     queryKey: ['sidebar-weekly-scans'],
@@ -138,17 +139,54 @@ function WeeklyScanWidget() {
             {cyanSymbols.length > 0 && (
               <div className="pl-1 space-y-0.5">
                 <p className="text-[8px] font-semibold text-cyan-400/80 uppercase tracking-wider">Potential</p>
-                <p className="text-[9px] text-cyan-400 leading-relaxed break-words">{cyanSymbols.join(' · ')}</p>
+                <p className="text-[9px] text-cyan-400 leading-relaxed break-words">
+                  {cyanSymbols.map((sym, i) => (
+                    <span key={sym}>
+                      <button
+                        onClick={() => setModalSymbol(sym)}
+                        className="hover:text-brand-400 transition-colors cursor-pointer"
+                        title={`Open analytics for ${sym}`}
+                      >
+                        {sym}
+                      </button>
+                      {i < cyanSymbols.length - 1 && <span className="mx-0.5">·</span>}
+                    </span>
+                  ))}
+                </p>
               </div>
             )}
 
             {greenSymbols.length > 0 && (
               <div className="pl-1 space-y-0.5">
                 <p className="text-[8px] font-semibold text-gain/80 uppercase tracking-wider">Good</p>
-                <p className="text-[9px] text-gain leading-relaxed break-words">{greenSymbols.join(' · ')}</p>
+                <p className="text-[9px] text-gain leading-relaxed break-words">
+                  {greenSymbols.map((sym, i) => (
+                    <span key={sym}>
+                      <button
+                        onClick={() => setModalSymbol(sym)}
+                        className="hover:text-brand-400 transition-colors cursor-pointer"
+                        title={`Open analytics for ${sym}`}
+                      >
+                        {sym}
+                      </button>
+                      {i < greenSymbols.length - 1 && <span className="mx-0.5">·</span>}
+                    </span>
+                  ))}
+                </p>
               </div>
             )}
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Analytics modal */}
+      <AnimatePresence>
+        {modalSymbol && (
+          <AnalyticsModal
+            symbol={modalSymbol}
+            assetType="SET"
+            onClose={() => setModalSymbol(null)}
+          />
         )}
       </AnimatePresence>
     </div>

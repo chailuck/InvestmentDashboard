@@ -277,7 +277,61 @@ const vrvpSeries = volumeByBucket.map((vol, i) =&gt; ({
 <h3>Custom tooltip</h3>
 <p>A single cross-hair tooltip shows OHLCV values for the candlestick, volume, RSI, and Stochastic %K/%D at the current cursor position. All four panels share the same <code>axisPointer</code> for synchronised highlighting.</p>
 
-<h2>9. Rate limiting</h2>
+<h2>9. Sidebar widget — <code>WeeklyScanWidget</code> clickable symbols</h2>
+<p><strong>File:</strong> <code>frontend/src/components/layouts/Sidebar.tsx</code> — <code>WeeklyScanWidget</code> function</p>
+<p>Symbols in the CYAN (Potential) and GREEN (Good) groups within <code>WeeklyScanWidget</code> are rendered as interactive buttons that open the shared <code>AnalyticsModal</code>. The implementation follows the identical pattern already established in <code>PurchasePlanWidget</code> and <code>PortfolioWidget</code> in the same file.</p>
+
+<h3>State</h3>
+<pre><code>const [modalSymbol, setModalSymbol] = useState&lt;string | null&gt;(null)
+// null = modal closed; any string = modal open for that symbol</code></pre>
+
+<h3>Symbol rendering</h3>
+<pre><code>// CYAN group (identical pattern for GREEN, using text-gain class)
+{cyanSymbols.length &gt; 0 &amp;&amp; (
+  &lt;div className="pl-1 space-y-0.5"&gt;
+    &lt;p className="text-[8px] font-semibold text-cyan-400/80 uppercase tracking-wider"&gt;Potential&lt;/p&gt;
+    &lt;p className="text-[9px] text-cyan-400 leading-relaxed break-words"&gt;
+      {cyanSymbols.map((sym, i) =&gt; (
+        &lt;span key={sym}&gt;
+          &lt;button
+            onClick={() =&gt; setModalSymbol(sym)}
+            className="hover:text-brand-400 transition-colors cursor-pointer"
+            title={`Open analytics for ${sym}`}
+          &gt;
+            {sym}
+          &lt;/button&gt;
+          {i &lt; cyanSymbols.length - 1 &amp;&amp; &lt;span className="mx-0.5"&gt;·&lt;/span&gt;}
+        &lt;/span&gt;
+      ))}
+    &lt;/p&gt;
+  &lt;/div&gt;
+)}</code></pre>
+
+<h3>Modal mount</h3>
+<pre><code>// Placed outside the expand/collapse AnimatePresence block to avoid nesting conflicts
+&lt;AnimatePresence&gt;
+  {modalSymbol &amp;&amp; (
+    &lt;AnalyticsModal
+      symbol={modalSymbol}
+      assetType="SET"
+      onClose={() =&gt; setModalSymbol(null)}
+    /&gt;
+  )}
+&lt;/AnimatePresence&gt;</code></pre>
+
+<h3>Design decisions</h3>
+<table>
+  <thead><tr><th>Decision</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td>Local <code>useState</code> in <code>WeeklyScanWidget</code></td><td>Modal scope is entirely within this widget; no cross-widget coordination needed. Matches the pattern in <code>PurchasePlanWidget</code> and <code>PortfolioWidget</code>.</td></tr>
+    <tr><td>No trailing separator after last symbol</td><td>Index guard <code>i &lt; array.length - 1</code> instead of <code>join(' · ')</code> to maintain correct punctuation without post-processing.</td></tr>
+    <tr><td><code>assetType="SET"</code> passed to modal</td><td>All weekly scan symbols are SET-listed stocks; consistent with existing usage in the same file.</td></tr>
+    <tr><td>Modal <code>AnimatePresence</code> placed after expand block</td><td>Nesting two <code>AnimatePresence</code> blocks that control the same DOM subtree produces animation conflicts; placing them as siblings avoids this.</td></tr>
+    <tr><td>No new imports required</td><td><code>useState</code>, <code>AnimatePresence</code>, and <code>AnalyticsModal</code> (dynamic import) were already present in <code>Sidebar.tsx</code>.</td></tr>
+  </tbody>
+</table>
+
+<h2>10. Rate limiting</h2>
 <pre><code># backend/app/core/rate_limit.py
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -293,7 +347,7 @@ async def login(request: Request, body: LoginRequest, ...):
     # The `request: Request` parameter is required by SlowAPI for rate limiting
     ...</code></pre>
 
-<h2>10. Security middleware</h2>
+<h2>11. Security middleware</h2>
 <p>The current <code>SecurityHeadersMiddleware</code> sets seven security headers on every response. The backend's maximally-restrictive CSP (<code>default-src 'none'</code>) is appropriate because the API serves only JSON — no HTML, scripts, or external resources.</p>
 <table>
   <thead><tr><th>Header</th><th>Value</th></tr></thead>
@@ -308,7 +362,7 @@ async def login(request: Request, body: LoginRequest, ...):
   </tbody>
 </table>
 
-<h2>11. Model registration</h2>
+<h2>12. Model registration</h2>
 <p>All weekly scan models must be imported in <code>backend/main.py</code> before <code>Base.metadata.create_all</code>:</p>
 <pre><code>from app.models.weekly_scan import (       # noqa: F401
     UserScanConfig, UserSymbolList, WeeklyScan, WeeklyScanItem
