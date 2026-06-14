@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Weekly Review List — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 960px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600; font-family: 'Cascadia Code','Fira Code',monospace; letter-spacing: .02em }
+.blue { background: #1f3d6b; color: #58a6ff }
+.green { background: #1a3a2a; color: #3fb950 }
+.yellow { background: #3a2e0a; color: #d29922 }
+.red { background: #3a0f0f; color: #f85149 }
+.purple { background: #2d1f4a; color: #bc8cff }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+
+/* endpoint card */
+.endpoint { border: 1px solid #21262d; border-radius: 8px; padding: 1rem 1.2rem; margin: 1.2rem 0; background: #0d1117 }
+.endpoint-header { display: flex; align-items: baseline; gap: .7rem; margin-bottom: .5rem; flex-wrap: wrap }
+.endpoint-path { font-family: 'Cascadia Code','Fira Code',monospace; font-size: .93em; color: #e2e8f0; font-weight: 600 }
+.endpoint-desc { color: #8b949e; font-size: 13px }
+</style>
+</head>
+<body>
+
+<h1>API — Weekly Review List</h1>
+<p>Documents all endpoints for the Weekly Review List feature. This API allows analysts to record and annotate trade activity and open positions on a per-ISO-week basis.</p>
+
+<table style="margin-bottom:1.2rem">
+  <tbody>
+    <tr><td><strong>Base URL prefix</strong></td><td><code>/api/v1/review-list</code></td></tr>
+    <tr><td><strong>Authentication</strong></td><td>All endpoints require <code>Authorization: Bearer &lt;JWT&gt;</code>. Tokens are issued by <code>POST /api/v1/auth/login</code>.</td></tr>
+    <tr><td><strong>OpenAPI tag</strong></td><td><code>Review List</code></td></tr>
+    <tr><td><strong>Database tables</strong></td><td><code>weekly_reviews</code>, <code>weekly_review_items</code> — see <a href="DATABASE.html">DATABASE.html</a></td></tr>
+    <tr><td><strong>ORM models</strong></td><td><code>backend/app/models/weekly_review.py</code></td></tr>
+    <tr><td><strong>Router file</strong></td><td><code>backend/app/api/v1/review_list.py</code></td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>1. Data models</h2>
+
+<h3>ReviewSummary</h3>
+<p>Compact view of a review header — returned by the list and current-week endpoints. Does not include items.</p>
+<pre><code>{
+  "id":          "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "week_start":  "2026-06-08",
+  "week_end":    "2026-06-14",
+  "name":        "Week 24 (08 Jun–14 Jun 2026)",
+  "trade_count": 3,    // number of TRADE items
+  "hold_count":  2,    // number of HOLD items
+  "buy_count":   2,    // TRADE items with a buy leg this week
+  "sell_count":  1,    // TRADE items with a sell leg this week
+  "created_at":  "2026-06-08T09:00:00+00:00",
+  "updated_at":  "2026-06-13T14:22:00+00:00"
+}</code></pre>
+
+<h3>ReviewDetail</h3>
+<p>Full review including sorted items and open position suggestions — returned by <code>GET /{review_id}</code>.</p>
+<pre><code>{
+  "id":          "uuid",
+  "week_start":  "2026-06-08",
+  "week_end":    "2026-06-14",
+  "name":        "Week 24 (08 Jun–14 Jun 2026)",
+  "notes":       null,
+  "created_at":  "2026-06-08T09:00:00+00:00",
+  "updated_at":  "2026-06-13T14:22:00+00:00",
+  "trade_items": [ /* ReviewItem objects — see below */ ],
+  "hold_items":  [ /* ReviewItem objects */ ],
+  "open_suggestions": [
+    {
+      "id":            "uuid",
+      "symbol":        "ADVANC",
+      "entry_date":    "2026-05-15",
+      "entry_price":   188.00,
+      "position_size": 500,
+      "direction":     "long"
+    }
+  ]
+}</code></pre>
+<div class="callout tip"><code>trade_items</code> are sorted by in-week activity date: sell_date if the sell date falls in the review week, else buy_date if the buy date falls in the review week, else buy_date. <code>hold_items</code> are sorted alphabetically by symbol. <code>open_suggestions</code> lists active <code>portfolio_positions_db</code> positions that are not already present in <code>trade_items</code>, provided as candidates for the analyst to add as HOLD items.</div>
+
+<h3>ReviewItem</h3>
+<p>One position entry inside a review. The same shape is used in both <code>trade_items</code> and <code>hold_items</code> arrays and is returned by single-item POST/PATCH endpoints.</p>
+<pre><code>{
+  "id":                 "uuid",
+  "review_id":          "uuid",
+  "symbol":             "AOT",
+  "item_type":          "TRADE",       // "TRADE" | "HOLD"
+
+  // Buy leg — null if position was not entered this week
+  "buy_date":           "2026-06-09",
+  "buy_price":          52.50,
+  "buy_size":           1000,
+
+  // Sell leg — null if position was not exited this week
+  "sell_date":          null,
+  "sell_price":         null,
+  "sell_size":          null,
+
+  // Week price snapshot (populated by /refresh-prices)
+  "week_open_price":    51.00,
+  "week_close_price":   53.25,
+  "week_change_pct":    4.41,          // COMPUTED — not stored in DB
+
+  // Analyst annotations
+  "buy_reason":         "Strong breakout above resistance",
+  "buy_feeling":        4,             // 1–5 or null
+  "sell_reason":        null,
+  "sell_feeling":       null,
+
+  "source_position_id": "uuid-or-null",
+  "sort_order":         0,
+  "updated_at":         "2026-06-13T10:00:00+00:00"
+}</code></pre>
+<div class="callout"><code>week_change_pct</code> is a computed field: <code>(week_close_price &minus; week_open_price) / week_open_price &times; 100</code>. It is calculated by the API response serialiser and does not exist as a database column.</div>
+
+<h3>ReviewItemIn</h3>
+<p>Request body schema for creating or bulk-replacing items.</p>
+<pre><code>{
+  "symbol":             "AOT",
+  "item_type":          "TRADE",       // required: "TRADE" | "HOLD"
+  "buy_date":           "2026-06-09",  // optional
+  "buy_price":          52.50,         // optional
+  "buy_size":           1000,          // optional
+  "sell_date":          null,          // optional
+  "sell_price":         null,          // optional
+  "sell_size":          null,          // optional
+  "buy_reason":         "Breakout",    // optional
+  "buy_feeling":        4,             // optional: 1–5 or null
+  "sell_reason":        null,          // optional
+  "sell_feeling":       null,          // optional: 1–5 or null
+  "source_position_id": null,          // optional UUID
+  "sort_order":         0              // optional, default 0
+}</code></pre>
+
+<hr>
+
+<h2>2. Endpoints</h2>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge green">GET</span>
+    <span class="endpoint-path">/api/v1/review-list/current-week</span>
+    <span class="endpoint-desc">Get or create this week's review</span>
+  </div>
+  <p>Returns the review for the current ISO week (Monday–Sunday). If a review does not exist yet for the authenticated user, one is created automatically before responding. This is the primary entry point for the weekly review UI.</p>
+
+  <h4>Response 200 — ReviewSummary</h4>
+  <pre><code>{
+  "id":          "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "week_start":  "2026-06-08",
+  "week_end":    "2026-06-14",
+  "name":        "Week 24 (08 Jun–14 Jun 2026)",
+  "trade_count": 3,
+  "hold_count":  2,
+  "buy_count":   2,
+  "sell_count":  1,
+  "created_at":  "2026-06-08T09:00:00+00:00",
+  "updated_at":  "2026-06-13T14:22:00+00:00"
+}</code></pre>
+  <div class="callout tip">This endpoint is idempotent — calling it multiple times is safe. The auto-created review is given a name in the format <code>"Week {N} ({DD Mon}–{DD Mon YYYY})"</code> where N is the ISO week number.</div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge green">GET</span>
+    <span class="endpoint-path">/api/v1/review-list/</span>
+    <span class="endpoint-desc">List all reviews</span>
+  </div>
+  <p>Returns all reviews for the authenticated user, newest first. An optional <code>months</code> query parameter limits results to the last N months.</p>
+
+  <h4>Query parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>months</code></td><td>integer</td><td>No</td><td>Limit results to the last N months. Accepted values: <code>3</code>, <code>6</code>, <code>12</code>. Omit for all reviews.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Response 200 — array of ReviewSummary</h4>
+  <pre><code>[
+  {
+    "id":          "uuid-1",
+    "week_start":  "2026-06-08",
+    "week_end":    "2026-06-14",
+    "name":        "Week 24 (08 Jun–14 Jun 2026)",
+    "trade_count": 3,
+    "hold_count":  2,
+    "buy_count":   2,
+    "sell_count":  1,
+    "created_at":  "2026-06-08T09:00:00+00:00",
+    "updated_at":  "2026-06-13T14:22:00+00:00"
+  },
+  {
+    "id":          "uuid-2",
+    "week_start":  "2026-06-01",
+    "week_end":    "2026-06-07",
+    "name":        "Week 23 (01 Jun–07 Jun 2026)",
+    "trade_count": 5,
+    "hold_count":  3,
+    "buy_count":   3,
+    "sell_count":  2,
+    "created_at":  "2026-06-01T09:00:00+00:00",
+    "updated_at":  "2026-06-07T18:00:00+00:00"
+  }
+]</code></pre>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge blue">POST</span>
+    <span class="endpoint-path">/api/v1/review-list/</span>
+    <span class="endpoint-desc">Create a review manually</span>
+  </div>
+  <p>Creates a new weekly review for a given <code>week_start</code> date. The date must be a Monday (the API does not auto-adjust). If a review already exists for that week, a 409 is returned.</p>
+
+  <h4>Request body</h4>
+  <pre><code>{
+  "week_start": "2026-06-01",   // required — must be a Monday
+  "name":       "My custom name" // optional — auto-generated if omitted
+}</code></pre>
+
+  <h4>Response 201</h4>
+  <pre><code>{
+  "id":         "uuid",
+  "week_start": "2026-06-01",
+  "name":       "Week 23 (01 Jun–07 Jun 2026)"
+}</code></pre>
+
+  <h4>Response 409 — conflict</h4>
+  <pre><code>{ "detail": "A review already exists for the week starting 2026-06-01." }</code></pre>
+
+  <div class="callout warn">If <code>name</code> is omitted the server auto-generates it from the ISO week number and date range. The name can be changed later with <code>PUT /{review_id}</code>.</div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge green">GET</span>
+    <span class="endpoint-path">/api/v1/review-list/{review_id}</span>
+    <span class="endpoint-desc">Get full review detail</span>
+  </div>
+  <p>Returns the complete review including all TRADE and HOLD items in their sorted order, plus a list of open portfolio positions that have not yet been added as items (candidates for HOLD addition).</p>
+
+  <h4>Path parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>review_id</code></td><td>UUID</td><td>ID of the review to retrieve</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Response 200 — ReviewDetail</h4>
+  <pre><code>{
+  "id":          "uuid",
+  "week_start":  "2026-06-08",
+  "week_end":    "2026-06-14",
+  "name":        "Week 24 (08 Jun–14 Jun 2026)",
+  "notes":       null,
+  "created_at":  "2026-06-08T09:00:00+00:00",
+  "updated_at":  "2026-06-13T14:22:00+00:00",
+  "trade_items": [
+    {
+      "id":                 "uuid",
+      "review_id":          "uuid",
+      "symbol":             "AOT",
+      "item_type":          "TRADE",
+      "buy_date":           "2026-06-09",
+      "buy_price":          52.50,
+      "buy_size":           1000,
+      "sell_date":          null,
+      "sell_price":         null,
+      "sell_size":          null,
+      "week_open_price":    51.00,
+      "week_close_price":   53.25,
+      "week_change_pct":    4.41,
+      "buy_reason":         "Strong breakout above resistance",
+      "buy_feeling":        4,
+      "sell_reason":        null,
+      "sell_feeling":       null,
+      "source_position_id": null,
+      "sort_order":         0,
+      "updated_at":         "2026-06-13T10:00:00+00:00"
+    }
+  ],
+  "hold_items": [
+    {
+      "id":                 "uuid",
+      "review_id":          "uuid",
+      "symbol":             "ADVANC",
+      "item_type":          "HOLD",
+      "buy_date":           null,
+      "buy_price":          null,
+      "buy_size":           null,
+      "sell_date":          null,
+      "sell_price":         null,
+      "sell_size":          null,
+      "week_open_price":    188.00,
+      "week_close_price":   191.50,
+      "week_change_pct":    1.86,
+      "buy_reason":         null,
+      "buy_feeling":        null,
+      "sell_reason":        null,
+      "sell_feeling":       null,
+      "source_position_id": "uuid-portfolio-pos",
+      "sort_order":         0,
+      "updated_at":         "2026-06-13T11:00:00+00:00"
+    }
+  ],
+  "open_suggestions": [
+    {
+      "id":            "uuid-portfolio-pos-2",
+      "symbol":        "CPALL",
+      "entry_date":    "2026-05-20",
+      "entry_price":   62.50,
+      "position_size": 2000,
+      "direction":     "long"
+    }
+  ]
+}</code></pre>
+
+  <div class="callout">Sorting rules for <code>trade_items</code>: (1) sell_date if it falls within the review week; otherwise (2) buy_date if it falls within the review week; otherwise (3) buy_date. <code>hold_items</code> are sorted alphabetically by <code>symbol</code>.</div>
+  <div class="callout tip"><code>open_suggestions</code> are active positions from <code>portfolio_positions_db</code> that are not already represented in <code>trade_items</code> by their <code>source_position_id</code>. Use these to quickly add HOLD items without typing ticker symbols manually.</div>
+
+  <h4>Response 404</h4>
+  <pre><code>{ "detail": "Review not found." }</code></pre>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge yellow">PUT</span>
+    <span class="endpoint-path">/api/v1/review-list/{review_id}</span>
+    <span class="endpoint-desc">Update review header</span>
+  </div>
+  <p>Updates the review's <code>name</code> and/or <code>notes</code> fields. Both fields are optional — include only the fields you wish to change. Does not affect items.</p>
+
+  <h4>Path parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>review_id</code></td><td>UUID</td><td>ID of the review to update</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Request body</h4>
+  <pre><code>{
+  "name":  "Updated week name",          // optional
+  "notes": "Market was volatile this week, SET index fell 2.3%"  // optional
+}</code></pre>
+
+  <h4>Response 200</h4>
+  <pre><code>{ "status": "ok" }</code></pre>
+
+  <h4>Response 404</h4>
+  <pre><code>{ "detail": "Review not found." }</code></pre>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge red">DELETE</span>
+    <span class="endpoint-path">/api/v1/review-list/{review_id}</span>
+    <span class="endpoint-desc">Delete a review</span>
+  </div>
+  <p>Permanently deletes the review and all its items. This action is irreversible. The cascade is handled at the database level (<code>ON DELETE CASCADE</code> on <code>weekly_review_items.review_id</code>).</p>
+
+  <h4>Path parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>review_id</code></td><td>UUID</td><td>ID of the review to delete</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Response 204 — No Content</h4>
+  <p>Empty body. Indicates successful deletion.</p>
+
+  <h4>Response 404</h4>
+  <pre><code>{ "detail": "Review not found." }</code></pre>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge blue">POST</span>
+    <span class="endpoint-path">/api/v1/review-list/{review_id}/sync</span>
+    <span class="endpoint-desc">Auto-populate TRADE items from portfolio DB</span>
+  </div>
+  <p>Scans <code>portfolio_positions_db</code> for positions where <code>entry_date</code> OR <code>exit_date</code> falls within the review week. Matching positions are upserted as TRADE items keyed by <code>source_position_id</code>. Existing manually-entered items (where <code>source_position_id IS NULL</code>) are not affected.</p>
+
+  <h4>Path parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>review_id</code></td><td>UUID</td><td>ID of the review to sync</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Response 200</h4>
+  <pre><code>{ "added": 2, "updated": 1 }</code></pre>
+  <table>
+    <thead><tr><th>Field</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>added</code></td><td>Number of new TRADE items inserted</td></tr>
+      <tr><td><code>updated</code></td><td>Number of existing TRADE items (by <code>source_position_id</code>) updated with fresh data from the portfolio DB</td></tr>
+    </tbody>
+  </table>
+  <div class="callout tip">Run this after recording trades in the portfolio DB to pull them into the review automatically. Safe to run multiple times — it is idempotent.</div>
+
+  <h4>Response 404</h4>
+  <pre><code>{ "detail": "Review not found." }</code></pre>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge blue">POST</span>
+    <span class="endpoint-path">/api/v1/review-list/{review_id}/refresh-prices</span>
+    <span class="endpoint-desc">Fetch week open/close prices from Yahoo Finance</span>
+  </div>
+  <p>Fetches Monday-open and Friday-close prices from Yahoo Finance for every unique symbol in the review. All symbols are treated as Thai SET equities — the <code>.BK</code> suffix is appended automatically before querying yfinance. For reviews covering an in-progress week, the Friday close falls back to the latest available close price.</p>
+
+  <h4>Path parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>review_id</code></td><td>UUID</td><td>ID of the review to refresh prices for</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Response 200</h4>
+  <pre><code>{
+  "updated": 5,
+  "symbols": [
+    { "symbol": "AOT",    "week_open_price": 51.00,  "week_close_price": 53.25 },
+    { "symbol": "ADVANC", "week_open_price": 188.00, "week_close_price": 191.50 },
+    { "symbol": "CPALL",  "week_open_price": 62.50,  "week_close_price": 63.00 },
+    { "symbol": "SCB",    "week_open_price": 104.00, "week_close_price": 102.50 },
+    { "symbol": "PTT",    "week_open_price": 34.00,  "week_close_price": 34.75 }
+  ]
+}</code></pre>
+  <div class="callout warn">This call makes external HTTP requests to Yahoo Finance and may take several seconds for reviews with many symbols. The operation updates <code>week_open_price</code> and <code>week_close_price</code> in <code>weekly_review_items</code> for all items sharing the same symbol in this review.</div>
+
+  <h4>Response 404</h4>
+  <pre><code>{ "detail": "Review not found." }</code></pre>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge yellow">PUT</span>
+    <span class="endpoint-path">/api/v1/review-list/{review_id}/items</span>
+    <span class="endpoint-desc">Bulk replace all items</span>
+  </div>
+  <p>Replaces ALL items in the review atomically (delete then re-insert within a single transaction). Use this endpoint when the frontend manages the full item list locally and pushes the complete state on save. Any items not included in the request body are permanently deleted.</p>
+
+  <h4>Path parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>review_id</code></td><td>UUID</td><td>ID of the review whose items are being replaced</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Request body — array of ReviewItemIn</h4>
+  <pre><code>[
+  {
+    "symbol":             "AOT",
+    "item_type":          "TRADE",
+    "buy_date":           "2026-06-09",
+    "buy_price":          52.50,
+    "buy_size":           1000,
+    "sell_date":          null,
+    "sell_price":         null,
+    "sell_size":          null,
+    "buy_reason":         "Breakout above resistance",
+    "buy_feeling":        4,
+    "sell_reason":        null,
+    "sell_feeling":       null,
+    "source_position_id": null,
+    "sort_order":         0
+  },
+  {
+    "symbol":             "ADVANC",
+    "item_type":          "HOLD",
+    "source_position_id": "uuid-portfolio-pos",
+    "sort_order":         1
+  }
+]</code></pre>
+
+  <h4>Validation rules</h4>
+  <ul>
+    <li><code>item_type</code> must be <code>"TRADE"</code> or <code>"HOLD"</code> (case-sensitive)</li>
+    <li><code>buy_feeling</code> and <code>sell_feeling</code> must be an integer in the range 1–5 or <code>null</code></li>
+  </ul>
+
+  <h4>Response 200</h4>
+  <pre><code>{ "status": "ok" }</code></pre>
+
+  <div class="callout warn">This is a destructive operation — all existing items are deleted before the new set is inserted. If the request body is an empty array <code>[]</code>, all items are removed. Consider using <code>PATCH /{review_id}/items/{item_id}</code> for incremental updates.</div>
+
+  <h4>Response 400 — validation error</h4>
+  <pre><code>{ "detail": "Invalid item_type 'SELL'. Must be TRADE or HOLD." }</code></pre>
+
+  <h4>Response 404</h4>
+  <pre><code>{ "detail": "Review not found." }</code></pre>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge blue">POST</span>
+    <span class="endpoint-path">/api/v1/review-list/{review_id}/items</span>
+    <span class="endpoint-desc">Add one item</span>
+  </div>
+  <p>Appends a single item to the review. The new item is assigned the next available <code>sort_order</code> value if not explicitly provided.</p>
+
+  <h4>Path parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>review_id</code></td><td>UUID</td><td>ID of the review to add an item to</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Request body — ReviewItemIn</h4>
+  <pre><code>{
+  "symbol":             "SCB",
+  "item_type":          "TRADE",
+  "buy_date":           "2026-06-10",
+  "buy_price":          104.00,
+  "buy_size":           500,
+  "sell_date":          "2026-06-12",
+  "sell_price":         107.50,
+  "sell_size":          500,
+  "buy_reason":         "Oversold bounce",
+  "buy_feeling":        3,
+  "sell_reason":        "Reached target",
+  "sell_feeling":       5,
+  "source_position_id": null,
+  "sort_order":         2
+}</code></pre>
+
+  <h4>Response 201 — full ReviewItem</h4>
+  <pre><code>{
+  "id":                 "new-uuid",
+  "review_id":          "uuid",
+  "symbol":             "SCB",
+  "item_type":          "TRADE",
+  "buy_date":           "2026-06-10",
+  "buy_price":          104.00,
+  "buy_size":           500,
+  "sell_date":          "2026-06-12",
+  "sell_price":         107.50,
+  "sell_size":          500,
+  "week_open_price":    null,
+  "week_close_price":   null,
+  "week_change_pct":    null,
+  "buy_reason":         "Oversold bounce",
+  "buy_feeling":        3,
+  "sell_reason":        "Reached target",
+  "sell_feeling":       5,
+  "source_position_id": null,
+  "sort_order":         2,
+  "updated_at":         "2026-06-13T15:00:00+00:00"
+}</code></pre>
+  <div class="callout tip"><code>week_open_price</code> and <code>week_close_price</code> will be <code>null</code> until <code>POST /refresh-prices</code> is called.</div>
+
+  <h4>Response 400 — validation error</h4>
+  <pre><code>{ "detail": "buy_feeling must be an integer between 1 and 5, or null." }</code></pre>
+
+  <h4>Response 404</h4>
+  <pre><code>{ "detail": "Review not found." }</code></pre>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge purple">PATCH</span>
+    <span class="endpoint-path">/api/v1/review-list/{review_id}/items/{item_id}</span>
+    <span class="endpoint-desc">Update annotations only (auto-save)</span>
+  </div>
+  <p>Partially updates an item's annotation fields: <code>buy_reason</code>, <code>buy_feeling</code>, <code>sell_reason</code>, <code>sell_feeling</code>. Only fields present in the JSON body are written — absent fields are left unchanged (true PATCH semantics). Designed for auto-save use cases where the frontend sends the current annotation state on every keypress or on blur.</p>
+
+  <h4>Path parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>review_id</code></td><td>UUID</td><td>ID of the parent review</td></tr>
+      <tr><td><code>item_id</code></td><td>UUID</td><td>ID of the item to update</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Request body — all fields optional</h4>
+  <pre><code>{
+  "buy_reason":   "Good momentum setup",
+  "buy_feeling":  4,
+  "sell_reason":  "Hit take-profit target",
+  "sell_feeling": 5
+}</code></pre>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>buy_reason</code></td><td>string | null</td><td>Freeform rationale for the buy decision</td></tr>
+      <tr><td><code>buy_feeling</code></td><td>integer 1–5 | null</td><td>Emotional rating for the buy decision; null = unrated</td></tr>
+      <tr><td><code>sell_reason</code></td><td>string | null</td><td>Freeform rationale for the sell decision</td></tr>
+      <tr><td><code>sell_feeling</code></td><td>integer 1–5 | null</td><td>Emotional rating for the sell decision; null = unrated</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Response 200 — full ReviewItem</h4>
+  <p>Returns the complete updated item (same shape as the ReviewItem schema above).</p>
+
+  <h4>Response 400 — validation error</h4>
+  <pre><code>{ "detail": "sell_feeling must be an integer between 1 and 5, or null." }</code></pre>
+
+  <h4>Response 404</h4>
+  <pre><code>{ "detail": "Item not found or does not belong to this review." }</code></pre>
+
+  <div class="callout tip">This endpoint only updates the four annotation fields. To update trade fields (prices, dates, sizes), use the bulk <code>PUT /{review_id}/items</code> endpoint.</div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="endpoint">
+  <div class="endpoint-header">
+    <span class="badge red">DELETE</span>
+    <span class="endpoint-path">/api/v1/review-list/{review_id}/items/{item_id}</span>
+    <span class="endpoint-desc">Remove one item</span>
+  </div>
+  <p>Removes a single item from the review. Does not affect other items or the review header.</p>
+
+  <h4>Path parameters</h4>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>review_id</code></td><td>UUID</td><td>ID of the parent review</td></tr>
+      <tr><td><code>item_id</code></td><td>UUID</td><td>ID of the item to delete</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Response 204 — No Content</h4>
+  <p>Empty body. Indicates successful deletion.</p>
+
+  <h4>Response 404</h4>
+  <pre><code>{ "detail": "Item not found or does not belong to this review." }</code></pre>
+</div>
+
+<hr>
+
+<h2>3. Error responses</h2>
+<p>All error responses follow the standard FastAPI error envelope: <code>{ "detail": "..." }</code>. The table below summarises the conditions under which each HTTP status code is returned.</p>
+<table>
+  <thead><tr><th>Status</th><th>Condition</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>400 Bad Request</code></td>
+      <td>
+        <ul style="margin:0;padding-left:1.2rem">
+          <li><code>item_type</code> is not <code>TRADE</code> or <code>HOLD</code></li>
+          <li><code>buy_feeling</code> or <code>sell_feeling</code> is outside the 1–5 range</li>
+          <li>Malformed request body (missing required fields, wrong types)</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td><code>401 Unauthorized</code></td>
+      <td>Missing, expired, or invalid Bearer JWT in the <code>Authorization</code> header</td>
+    </tr>
+    <tr>
+      <td><code>404 Not Found</code></td>
+      <td>Review or item not found, or the resource belongs to a different user</td>
+    </tr>
+    <tr>
+      <td><code>409 Conflict</code></td>
+      <td>A review already exists for the given <code>week_start</code> date (POST / only)</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>4. Feeling rating scale</h2>
+<p>Both <code>buy_feeling</code> and <code>sell_feeling</code> use the same 5-point scale. Null means the field has not been rated yet.</p>
+<table>
+  <thead><tr><th>Value</th><th>Label</th><th>Intended meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>1</code></td><td>Very Bad</td><td>The decision was clearly wrong or emotional in hindsight</td></tr>
+    <tr><td><code>2</code></td><td>Bad</td><td>The decision had significant flaws</td></tr>
+    <tr><td><code>3</code></td><td>Moderate</td><td>The decision was acceptable but could have been better</td></tr>
+    <tr><td><code>4</code></td><td>Good</td><td>The decision followed the plan with good discipline</td></tr>
+    <tr><td><code>5</code></td><td>Very Good</td><td>The decision was well-timed, well-reasoned, and well-executed</td></tr>
+    <tr><td><code>null</code></td><td>Unrated</td><td>The field has not yet been evaluated</td></tr>
+  </tbody>
+</table>
+<div class="callout">The feeling rating reflects the <strong>quality of the decision</strong>, not the outcome. A well-executed buy that resulted in a loss can still be rated 5 if it followed the trading plan. An impulsive buy that happened to profit should be rated 1 or 2.</div>
+
+<hr>
+
+<h2>5. Endpoint summary</h2>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="badge green">GET</span></td>
+      <td><code>/current-week</code></td>
+      <td>Get or auto-create this week's review</td>
+    </tr>
+    <tr>
+      <td><span class="badge green">GET</span></td>
+      <td><code>/</code></td>
+      <td>List all reviews (optional <code>?months=</code> filter)</td>
+    </tr>
+    <tr>
+      <td><span class="badge blue">POST</span></td>
+      <td><code>/</code></td>
+      <td>Create a review manually for a given week</td>
+    </tr>
+    <tr>
+      <td><span class="badge green">GET</span></td>
+      <td><code>/{review_id}</code></td>
+      <td>Full review detail with items and open suggestions</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">PUT</span></td>
+      <td><code>/{review_id}</code></td>
+      <td>Update review header (name, notes)</td>
+    </tr>
+    <tr>
+      <td><span class="badge red">DELETE</span></td>
+      <td><code>/{review_id}</code></td>
+      <td>Delete review and all its items</td>
+    </tr>
+    <tr>
+      <td><span class="badge blue">POST</span></td>
+      <td><code>/{review_id}/sync</code></td>
+      <td>Auto-populate TRADE items from portfolio DB</td>
+    </tr>
+    <tr>
+      <td><span class="badge blue">POST</span></td>
+      <td><code>/{review_id}/refresh-prices</code></td>
+      <td>Fetch week open/close prices from Yahoo Finance</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">PUT</span></td>
+      <td><code>/{review_id}/items</code></td>
+      <td>Bulk replace all items (delete + re-insert)</td>
+    </tr>
+    <tr>
+      <td><span class="badge blue">POST</span></td>
+      <td><code>/{review_id}/items</code></td>
+      <td>Add one item</td>
+    </tr>
+    <tr>
+      <td><span class="badge purple">PATCH</span></td>
+      <td><code>/{review_id}/items/{item_id}</code></td>
+      <td>Update annotations only (reasons and feelings)</td>
+    </tr>
+    <tr>
+      <td><span class="badge red">DELETE</span></td>
+      <td><code>/{review_id}/items/{item_id}</code></td>
+      <td>Remove one item</td>
+    </tr>
+  </tbody>
+</table>
+
+</body>
+</html>

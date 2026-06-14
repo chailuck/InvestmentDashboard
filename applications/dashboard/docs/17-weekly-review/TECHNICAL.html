@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weekly Review — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Weekly Review — Technical Design</h1>
+
+<h2>1. Files</h2>
+
+<h3>Backend</h3>
+<pre><code>backend/app/models/weekly_review.py              — ORM models (WeeklyReview, WeeklyReviewItem)
+backend/app/schemas/weekly_review.py             — Pydantic schemas (4 classes)
+backend/app/api/v1/endpoints/review_list.py      — FastAPI router (~639 lines, 12 endpoints)</code></pre>
+
+<h3>Frontend</h3>
+<pre><code>frontend/src/app/(dashboard)/action-plan/review-list/[id]/page.tsx  — review detail editor (~761 lines)
+frontend/src/services/reviewList.ts                                  — API service layer and TypeScript types</code></pre>
+<div class="callout">There is no standalone review list index page — the review list is embedded within the Action Plan module at <code>/action-plan</code>. The <code>[id]</code> detail page is the primary UI surface for the Weekly Review module.</div>
+
+<h2>2. Database schema</h2>
+<p>Two tables. The <code>week_change_pct</code> field is computed in <code>_item_dict()</code> on every read and is never stored in the database.</p>
+<pre><code>users (1)
+  └─── weekly_reviews (N)        [user_id → users.id  ON DELETE CASCADE]
+         │    UNIQUE (user_id, week_start)
+         └─── weekly_review_items (N)  [review_id → weekly_reviews.id  ON DELETE CASCADE]
+                    source_position_id → portfolio_positions_db.id  ON DELETE SET NULL</code></pre>
+
+<h4>weekly_reviews</h4>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>PK, default uuid4</td><td></td></tr>
+    <tr><td><code>user_id</code></td><td>UUID</td><td>FK → users.id CASCADE, NOT NULL, indexed</td><td></td></tr>
+    <tr><td><code>week_start</code></td><td>Date</td><td>NOT NULL</td><td>Always the Monday of the ISO week</td></tr>
+    <tr><td><code>week_end</code></td><td>Date</td><td>NOT NULL</td><td>Always the Sunday of the ISO week</td></tr>
+    <tr><td><code>name</code></td><td>String(100)</td><td>NOT NULL</td><td>Auto-generated "Week N (DD Mon–DD Mon YYYY)"</td></tr>
+    <tr><td><code>notes</code></td><td>Text</td><td>nullable</td><td>Free-text overall weekly commentary</td></tr>
+    <tr><td><code>created_at</code></td><td>TIMESTAMPTZ</td><td>server_default=now()</td><td></td></tr>
+    <tr><td><code>updated_at</code></td><td>TIMESTAMPTZ</td><td>server_default=now(), onupdate=now()</td><td>Manually bumped by all item-level mutations</td></tr>
+  </tbody>
+</table>
+
+<h4>weekly_review_items</h4>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>PK, default uuid4</td><td></td></tr>
+    <tr><td><code>review_id</code></td><td>UUID</td><td>FK → weekly_reviews.id CASCADE, NOT NULL, indexed</td><td></td></tr>
+    <tr><td><code>symbol</code></td><td>String(30)</td><td>NOT NULL</td><td>Thai SET ticker (no .BK suffix stored)</td></tr>
+    <tr><td><code>item_type</code></td><td>String(10)</td><td>NOT NULL</td><td>TRADE | HOLD</td></tr>
+    <tr><td><code>buy_date</code></td><td>Date</td><td>nullable</td><td></td></tr>
+    <tr><td><code>buy_price</code></td><td>Numeric(14,4)</td><td>nullable</td><td></td></tr>
+    <tr><td><code>buy_size</code></td><td>Integer</td><td>nullable</td><td></td></tr>
+    <tr><td><code>sell_date</code></td><td>Date</td><td>nullable</td><td></td></tr>
+    <tr><td><code>sell_price</code></td><td>Numeric(14,4)</td><td>nullable</td><td></td></tr>
+    <tr><td><code>sell_size</code></td><td>Integer</td><td>nullable</td><td></td></tr>
+    <tr><td><code>buy_reason</code></td><td>Text</td><td>nullable</td><td></td></tr>
+    <tr><td><code>buy_feeling</code></td><td>SmallInteger</td><td>nullable</td><td>1–5 scale</td></tr>
+    <tr><td><code>sell_reason</code></td><td>Text</td><td>nullable</td><td></td></tr>
+    <tr><td><code>sell_feeling</code></td><td>SmallInteger</td><td>nullable</td><td>1–5 scale</td></tr>
+    <tr><td><code>week_open_price</code></td><td>Numeric(14,4)</td><td>nullable</td><td>Monday open for the review week</td></tr>
+    <tr><td><code>week_close_price</code></td><td>Numeric(14,4)</td><td>nullable</td><td>Friday close (or latest available close)</td></tr>
+    <tr><td><code>week_change_pct</code></td><td><em>not stored</em></td><td>—</td><td>Computed in _item_dict() on every read</td></tr>
+    <tr><td><code>source_position_id</code></td><td>UUID</td><td>nullable, FK → portfolio_positions_db.id SET NULL</td><td>Set by sync; null for manual entries</td></tr>
+    <tr><td><code>sort_order</code></td><td>Integer</td><td>NOT NULL, default 0</td><td>Used to order items in the ORM relationship</td></tr>
+    <tr><td><code>created_at</code></td><td>TIMESTAMPTZ</td><td>server_default=now()</td><td></td></tr>
+    <tr><td><code>updated_at</code></td><td>TIMESTAMPTZ</td><td>server_default=now(), onupdate=now()</td><td></td></tr>
+  </tbody>
+</table>
+
+<h2>3. Alembic migration history</h2>
+<div class="callout warn">This module's schema evolved through three migrations in rapid succession during initial development. All three must be applied in order for the schema to match the current models. The revision chain is linear: <code>b7d4e2f19a3c</code> → <code>c9e3a1f82b5d</code> → <code>d4f8c2e73b1a</code>.</div>
+<table>
+  <thead><tr><th>Revision</th><th>Date</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>b7d4e2f19a3c</code></td>
+      <td>2026-06-13 09:00</td>
+      <td>Initial <code>weekly_reviews</code> and <code>weekly_review_items</code> tables. Items used a single-leg schema with columns <code>transaction_date</code>, <code>price</code>, <code>size</code>. <code>item_type</code> accepted values: <code>BUY</code>, <code>SELL</code>, <code>HOLD</code>.</td>
+    </tr>
+    <tr>
+      <td><code>c9e3a1f82b5d</code></td>
+      <td>2026-06-13 16:00</td>
+      <td>Refactor to buy/sell leg model. Dropped <code>transaction_date</code>, <code>price</code>, <code>size</code>. Added <code>buy_date</code>, <code>buy_price</code>, <code>buy_size</code>, <code>sell_date</code>, <code>sell_price</code>, <code>sell_size</code>, <code>week_open_price</code>, <code>week_close_price</code>. Migrated <code>item_type</code> values: <code>BUY</code> → <code>TRADE</code>, <code>SELL</code> → <code>TRADE</code> (both legs now on one row).</td>
+    </tr>
+    <tr>
+      <td><code>d4f8c2e73b1a</code></td>
+      <td>2026-06-14 09:00</td>
+      <td>Split single <code>feeling</code> column into <code>buy_feeling</code> and <code>sell_feeling</code> to allow independent quality ratings for the buy decision and the sell decision on the same trade.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>4. Backend — core logic</h2>
+
+<h3>4.1 Auto-creation of current week review</h3>
+<p><code>GET /review-list/current-week</code> computes Monday of today's date using <code>_monday(date.today())</code>, then attempts to load an existing review for that Monday. If none is found it calls <code>_create_review()</code> and returns the summary. The operation is fully idempotent — concurrent calls for the same week are safe because the unique constraint on <code>(user_id, week_start)</code> prevents duplicate inserts at the database level.</p>
+<pre><code>def _monday(d: date) -&gt; date:
+    return d - timedelta(days=d.weekday())   # weekday() == 0 for Monday
+
+def _sunday(monday: date) -&gt; date:
+    return monday + timedelta(days=6)
+
+def _week_name(monday: date) -&gt; str:
+    sunday = _sunday(monday)
+    return f"Week {monday.isocalendar().week} ({monday.strftime('%d %b')}–{sunday.strftime('%d %b %Y')})"
+
+@router.get("/current-week")
+async def get_or_create_current_week(user_id: UserId, db: DB) -&gt; dict[str, Any]:
+    uid = uuid.UUID(user_id)
+    monday = _monday(date.today())
+
+    result = await db.execute(
+        select(WeeklyReview)
+        .where(WeeklyReview.user_id == uid, WeeklyReview.week_start == monday)
+        .options(selectinload(WeeklyReview.items))
+    )
+    review = result.scalar_one_or_none()
+
+    if not review:
+        review = await _create_review(user_id, monday, db)
+        # Re-fetch with items loaded after creation
+        result = await db.execute(
+            select(WeeklyReview)
+            .where(WeeklyReview.id == review.id)
+            .options(selectinload(WeeklyReview.items))
+        )
+        review = result.scalar_one()
+
+    return _review_summary(review)</code></pre>
+
+<h3>4.2 Sync logic</h3>
+<p>The sync endpoint (<code>POST /{review_id}/sync</code>) reads all user positions from <code>portfolio_positions_db</code> and upserts TRADE items. The full implementation:</p>
+<pre><code>for pos in positions:
+    in_week_buy  = bool(pos.entry_date and week_start &lt;= pos.entry_date &lt;= week_end)
+    in_week_sell = bool(pos.exit_date  and week_start &lt;= pos.exit_date  &lt;= week_end)
+
+    if not in_week_buy and not in_week_sell:
+        continue   # position has no activity in this review week
+
+    pos_key = str(pos.id)
+    if pos_key in existing_by_pos:
+        # Update: only add data that is not yet present (never overwrite annotations)
+        item = existing_by_pos[pos_key]
+        changed = False
+        if item.buy_date is None and pos.entry_date:
+            item.buy_date  = pos.entry_date
+            item.buy_price = pos.entry_price
+            item.buy_size  = pos.position_size
+            changed = True
+        if in_week_sell and item.sell_date is None:
+            item.sell_date  = pos.exit_date
+            item.sell_price = pos.exit_price
+            item.sell_size  = pos.position_size
+            changed = True
+        if changed:
+            updated += 1
+    else:
+        # Insert: always include buy leg from entry data for cost-basis context
+        item = WeeklyReviewItem(
+            review_id=review_id,
+            symbol=pos.symbol,
+            item_type="TRADE",
+            buy_date=pos.entry_date,           # always from position entry
+            buy_price=pos.entry_price,
+            buy_size=pos.position_size,
+            sell_date=pos.exit_date  if in_week_sell else None,
+            sell_price=pos.exit_price if in_week_sell else None,
+            sell_size=pos.position_size if in_week_sell else None,
+            source_position_id=pos.id,
+            sort_order=max_order + added,
+        )
+        db.add(item)
+        added += 1</code></pre>
+<p>Key design points:</p>
+<ul>
+  <li>Upsert key is <code>source_position_id</code> — only items with a matching source_position_id are considered for update</li>
+  <li>Buy leg is always populated from position entry data (even when entry was before the review week) so that sell-only records still show their cost basis</li>
+  <li>Sell leg is populated only when <code>exit_date</code> is within the review week — not simply because the position is closed</li>
+  <li>Existing field values are never overwritten — only null fields are filled in on update. This preserves any user corrections made after a previous sync</li>
+  <li>User-facing annotations (<code>buy_reason</code>, <code>buy_feeling</code>, <code>sell_reason</code>, <code>sell_feeling</code>) are never touched by sync</li>
+</ul>
+
+<h3>4.3 Price refresh</h3>
+<p>The refresh endpoint (<code>POST /{review_id}/refresh-prices</code>) fetches Monday open and Friday close prices from Yahoo Finance. All symbols are treated as Thai SET equities and the <code>.BK</code> suffix is appended. Each symbol's fetch runs in a thread via <code>asyncio.to_thread</code> to avoid blocking the async event loop on the synchronous yfinance call.</p>
+<pre><code>def _week_prices(symbol: str) -&gt; tuple[float | None, float | None]:
+    ticker = f"{symbol}.BK"
+    try:
+        df = yf.Ticker(ticker).history(
+            start=fetch_start,            # review.week_start.isoformat()
+            end=fetch_end,                # (review.week_end + timedelta(days=1)).isoformat()
+            interval="1d",
+            auto_adjust=False,
+            back_adjust=False,
+        )
+        if df.empty:
+            return None, None
+        opens  = df["Open"].dropna()
+        closes = df["Close"].dropna()
+        open_p  = float(opens.iloc[0])   if len(opens)  &gt;= 1 else None
+        close_p = float(closes.iloc[-1]) if len(closes) &gt;= 1 else None
+        return open_p, close_p
+    except Exception:
+        return None, None
+
+# Symbols fetched sequentially via asyncio.to_thread (one thread per symbol)
+for sym in symbols:
+    prices[sym] = await asyncio.to_thread(_week_prices, sym)</code></pre>
+<p>Important details:</p>
+<ul>
+  <li><strong>End date is exclusive</strong> — yfinance treats the <code>end</code> parameter as exclusive, so <code>week_end + 1 day</code> is passed to ensure Friday is included in the data window</li>
+  <li><strong>In-progress weeks</strong> — <code>closes.iloc[-1]</code> is the latest available close, which will be Wednesday's close (or most recent trading day) when run mid-week</li>
+  <li><strong>Errors are silently swallowed</strong> — any yfinance exception returns <code>(None, None)</code>; the item's prices are not modified if both values are null</li>
+  <li><strong>Only non-null prices update the item</strong> — if yfinance returns an open but no close (or vice versa), only the available value is written</li>
+</ul>
+
+<h3>4.4 _item_dict serialiser</h3>
+<p>All item API responses are produced by <code>_item_dict()</code>. This is where <code>week_change_pct</code> is computed — it is never stored in the database and exists only in the API response:</p>
+<pre><code>def _f(v: Any) -&gt; float | None:
+    return float(v) if v is not None else None
+
+def _item_dict(item: WeeklyReviewItem) -&gt; dict[str, Any]:
+    open_p  = _f(item.week_open_price)
+    close_p = _f(item.week_close_price)
+    week_change_pct: float | None = None
+    if open_p and close_p and open_p != 0:
+        week_change_pct = round((close_p - open_p) / open_p * 100, 2)
+    return {
+        "id": str(item.id),
+        "review_id": str(item.review_id),
+        "symbol": item.symbol,
+        "item_type": item.item_type,
+        "buy_date":   item.buy_date.isoformat()  if item.buy_date  else None,
+        "buy_price":  _f(item.buy_price),
+        "buy_size":   item.buy_size,
+        "sell_date":  item.sell_date.isoformat() if item.sell_date else None,
+        "sell_price": _f(item.sell_price),
+        "sell_size":  item.sell_size,
+        "week_open_price":  open_p,
+        "week_close_price": close_p,
+        "week_change_pct":  week_change_pct,      # computed — not stored
+        "buy_reason":  item.buy_reason,
+        "buy_feeling": item.buy_feeling,
+        "sell_reason": item.sell_reason,
+        "sell_feeling": item.sell_feeling,
+        "source_position_id": str(item.source_position_id) if item.source_position_id else None,
+        "sort_order": item.sort_order,
+        "updated_at": item.updated_at.isoformat(),
+    }</code></pre>
+<p>The <code>_f()</code> helper converts SQLAlchemy <code>Numeric</code> values (which arrive as Python <code>Decimal</code> objects) to <code>float</code>. JSON serialisation of <code>Decimal</code> would raise a <code>TypeError</code> without this conversion.</p>
+
+<h3>4.5 _item_sort_key</h3>
+<p>TRADE items in the detail response are sorted by the date most relevant to the review week, not by database insertion order. The sort key function:</p>
+<pre><code>def _item_sort_key(item: WeeklyReviewItem, week_start: date, week_end: date) -&gt; date:
+    """Sort priority: sell_date in-week > buy_date in-week > buy_date (any) > sentinel."""
+    in_week = lambda d: d is not None and week_start &lt;= d &lt;= week_end
+    if in_week(item.sell_date):
+        return item.sell_date   # sold this week — sort by exit date
+    if in_week(item.buy_date):
+        return item.buy_date    # bought this week — sort by entry date
+    return item.buy_date or date(9999, 12, 31)   # prior-week entry — sort by buy_date, nulls last</code></pre>
+<p>This ordering surfaces the most recent weekly activity first: exits during the week appear before entries during the week, which appear before pre-existing positions. HOLD items are sorted alphabetically by symbol, independently of TRADE items.</p>
+
+<h3>4.6 Patch semantics</h3>
+<p>The <code>PATCH /{review_id}/items/{item_id}</code> endpoint uses Pydantic's <code>model_fields_set</code> to distinguish between a field being explicitly set to <code>null</code> versus a field being absent from the request body. This is critical for feeling ratings, which must be clearable to <code>null</code>:</p>
+<pre><code>@router.patch("/{review_id}/items/{item_id}")
+async def patch_item(review_id, item_id, body: ReviewItemPatch, user_id, db):
+    ...
+    # Reasons: treat empty string as null, but only update if field was sent
+    if body.buy_reason is not None:
+        item.buy_reason = body.buy_reason or None    # "" → null
+    if "buy_feeling" in body.model_fields_set:
+        item.buy_feeling = body.buy_feeling          # explicit null clears the rating
+    if body.sell_reason is not None:
+        item.sell_reason = body.sell_reason or None
+    if "sell_feeling" in body.model_fields_set:
+        item.sell_feeling = body.sell_feeling</code></pre>
+<p>Sending <code>{ "buy_feeling": null }</code> clears the buy feeling because <code>"buy_feeling"</code> is present in <code>model_fields_set</code>. Sending <code>{ "buy_reason": "strong breakout" }</code> without <code>buy_feeling</code> leaves the feeling untouched. Reason fields use a simpler rule: not-in-payload (Pydantic defaults to <code>None</code>) is treated the same as "do not update", but an empty string sent explicitly is normalised to null.</p>
+
+<h2>5. Backend — validation</h2>
+
+<h3>item_type validator</h3>
+<pre><code>@field_validator("item_type")
+@classmethod
+def validate_type(cls, v: str) -&gt; str:
+    if v not in ("TRADE", "HOLD"):
+        raise ValueError("item_type must be TRADE or HOLD")
+    return v</code></pre>
+
+<h3>Feeling validator</h3>
+<p>Applied to both <code>buy_feeling</code> and <code>sell_feeling</code> in both <code>ReviewItemIn</code> and <code>ReviewItemPatch</code>:</p>
+<pre><code>@field_validator("buy_feeling", "sell_feeling")
+@classmethod
+def validate_feeling(cls, v: Optional[int]) -&gt; Optional[int]:
+    if v is not None and v not in range(1, 6):   # 1, 2, 3, 4, 5
+        raise ValueError("feeling must be 1–5")
+    return v</code></pre>
+<p>A <code>null</code> feeling is always valid (unrated state). Values 0, 6, or any non-integer raise a 422 Unprocessable Entity.</p>
+
+<h2>6. Frontend — state management</h2>
+
+<h3>React Query keys</h3>
+<table>
+  <thead><tr><th>Query key</th><th>Endpoint</th><th>staleTime</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>['review-detail', id]</code></td><td><code>GET /review-list/{id}</code></td><td>30 s</td><td>Full review detail including trade_items, hold_items, open_suggestions</td></tr>
+    <tr><td><code>['review-list']</code></td><td><code>GET /review-list</code></td><td>default</td><td>Summary list on the review list page; invalidated on any mutation</td></tr>
+  </tbody>
+</table>
+<p>Both keys are invalidated together by the <code>invalidate()</code> callback, which is called after every successful mutation (patch, delete, add, sync, refresh):</p>
+<pre><code>const invalidate = useCallback(() => {
+  queryClient.invalidateQueries({ queryKey: ['review-detail', id] })
+  queryClient.invalidateQueries({ queryKey: ['review-list'] })
+}, [queryClient, id])</code></pre>
+
+<h3>Mutations</h3>
+<table>
+  <thead><tr><th>Mutation</th><th>Trigger</th><th>Service call</th></tr></thead>
+  <tbody>
+    <tr><td><code>patchMutation</code></td><td>ReasonInput blur / FeelingPicker click</td><td><code>reviewListService.patchItem(reviewId, itemId, payload)</code></td></tr>
+    <tr><td><code>deleteMutation</code></td><td>Trash icon click on any item row</td><td><code>reviewListService.deleteItem(reviewId, itemId)</code></td></tr>
+    <tr><td>Sync (ad-hoc async)</td><td>"Sync from Portfolio" button</td><td><code>reviewListService.syncFromPortfolio(id)</code></td></tr>
+    <tr><td>Refresh (ad-hoc async)</td><td>"Refresh Prices" button</td><td><code>reviewListService.refreshPrices(id)</code></td></tr>
+    <tr><td>Add item (ad-hoc async)</td><td>AddItemModal submit</td><td><code>reviewListService.addItem(reviewId, payload)</code></td></tr>
+  </tbody>
+</table>
+<p>Sync and Refresh are implemented as plain <code>async</code> functions with local loading state (<code>syncing</code>, <code>refreshing</code>) rather than <code>useMutation</code>, because their success paths call <code>await invalidate()</code> which itself is async. Both guard against concurrent calls with the loading state booleans disabling the respective buttons.</p>
+
+<h3>Read-only mode</h3>
+<p>The detail page derives a <code>readOnly</code> boolean from the review's <code>week_end</code> date:</p>
+<pre><code>const today   = new Date()
+const weekEnd = new Date(review.week_end)
+const readOnly = weekEnd &lt; today &amp;&amp; weekEnd.toDateString() !== today.toDateString()</code></pre>
+<p>When <code>readOnly</code> is true, Add Item and Sync from Portfolio buttons are hidden, all <code>ReasonInput</code> textareas are disabled, and all <code>FeelingPicker</code> buttons are disabled. Refresh Prices remains available to back-fill historical prices.</p>
+
+<h2>7. Frontend — component structure</h2>
+
+<h3>TradeItemRow</h3>
+<p>Renders one row in the Part 1 TRADE table. Key implementation details:</p>
+<pre><code>function TradeItemRow({ item, readOnly, onPatch, onDelete }) {
+  // Sell win/loss — null when either price is missing
+  const sellIsWin = item.buy_price != null &amp;&amp; item.sell_price != null
+    ? item.sell_price &gt;= item.buy_price
+    : null
+
+  // Sell price colour class
+  const sellPriceClass = sellIsWin === null
+    ? 'text-ink-secondary'
+    : sellIsWin
+      ? 'text-gain'      // green
+      : 'text-loss'      // red
+}</code></pre>
+<p>Column order: Symbol | Price (week_close_price ?? week_open_price) | Buy Date | Buy P/Size | Buy Reason | Buy Feeling | Sell Date | Sell P/Size | Sell Reason | Sell Feeling | Mon/Fri/Wk% | Delete.</p>
+<p>Sell reason, sell feeling, and sell P/Size are conditionally rendered — they only appear when <code>item.sell_date</code> is non-null. When <code>sell_date</code> is null, those cells display a dash (<code>—</code>).</p>
+
+<h3>HoldItemRow</h3>
+<p>Renders one row in the Part 2 HOLD table. Simpler than TradeItemRow — no sell leg. The buy leg fields are re-labelled "Entry" in the column headers. Only <code>buy_reason</code> (labelled "Notes") and <code>buy_feeling</code> (labelled "Feel") are annotatable.</p>
+<p>Column order: Symbol | Price | Entry Date | Entry P/Size | Mon/Fri/Wk% | Notes | Feel | Delete.</p>
+
+<h3>FeelingPicker</h3>
+<p>A compact 2-row, 3-column grid of icon buttons (5 feelings displayed as: row 1 = feelings 5, 4, 3; row 2 = feelings 2, 1 with one empty cell). The exact layout is governed by <code>grid grid-cols-3 gap-0.5</code> on the container and <code>w-5 h-5</code> on each button. Lucide icons are rendered at <code>w-3 h-3</code> with <code>strokeWidth={2.5}</code>.</p>
+<pre><code>function FeelingPicker({ value, readOnly, onChange }) {
+  return (
+    &lt;div className="grid grid-cols-3 gap-0.5"&gt;
+      {FEELINGS.map(f =&gt; {
+        const Icon = FEELING_ICONS[f.iconKey]
+        const active = value === f.value
+        return (
+          &lt;button
+            key={f.value}
+            disabled={readOnly}
+            onClick={() =&gt; onChange(active ? null : f.value)}  // toggle: re-click clears
+            className={cn(
+              'w-5 h-5 rounded flex items-center justify-center border transition-all',
+              active
+                ? cn(f.color, f.bg, 'scale-110')
+                : 'border-border/30 text-ink-disabled hover:scale-110',
+            )}
+          &gt;
+            &lt;Icon className="w-3 h-3" strokeWidth={2.5} /&gt;
+          &lt;/button&gt;
+        )
+      })}
+    &lt;/div&gt;
+  )
+}</code></pre>
+<p>Changes call <code>onPatch(item.id, { buy_feeling: v })</code> or <code>onPatch(item.id, { sell_feeling: v })</code> immediately without waiting for blur. Passing <code>null</code> when toggling active clears the feeling.</p>
+
+<h3>ReasonInput</h3>
+<p>A <code>&lt;textarea rows={2}&gt;</code> with local state and a dirty-tracking ref. The save fires on blur only when the value has actually changed:</p>
+<pre><code>function ReasonInput({ value, placeholder, readOnly, onSave }) {
+  const [local, setLocal] = useState(value ?? '')
+  const dirty = useRef(false)
+
+  const handleBlur = () =&gt; {
+    if (dirty.current) {
+      onSave(local.trim() || null)   // empty string → null
+      dirty.current = false
+    }
+  }
+}</code></pre>
+<p>The <code>dirty</code> ref prevents unnecessary API calls when the user clicks into and out of a field without changing anything.</p>
+
+<h3>Group header spanning</h3>
+<p>The TRADE table uses a two-row thead. The first row contains group headers that span multiple columns:</p>
+<pre><code>&lt;thead&gt;
+  &lt;tr&gt;
+    &lt;th colSpan={2} /&gt;          {/* Symbol + Price — no group label */}
+    &lt;GroupTH colSpan={4}&gt;Buy&lt;/GroupTH&gt;   {/* Date, P/Size, Reason, Feel */}
+    &lt;GroupTH colSpan={4}&gt;Sell&lt;/GroupTH&gt;  {/* Date, P/Size, Reason, Feel */}
+    &lt;GroupTH colSpan={1}&gt;Week&lt;/GroupTH&gt;  {/* Mon/Fri/Wk% */}
+    &lt;th className="w-8" /&gt;      {/* Delete column */}
+  &lt;/tr&gt;
+  &lt;tr&gt;
+    {/* Individual column headers ... */}
+  &lt;/tr&gt;
+&lt;/thead&gt;</code></pre>
+<p>The HOLD table uses the same pattern with group headers: Symbol+Price (colSpan=2, no label), Entry (colSpan=2), Week (colSpan=1), then unlabelled columns for Notes, Feel, Delete.</p>
+
+<h3>Section component</h3>
+<p>Each table (TRADE, HOLD) is wrapped in a <code>Section</code> component that provides a collapsible card with a header showing the section title, an icon, and the item count. The HOLD section additionally renders the "Add open (N)" suggestion dropdown in the header's <code>actions</code> slot, preventing event propagation to the collapse toggle:</p>
+<pre><code>function Section({ title, icon: Icon, iconColor, count, actions, children }) {
+  const [expanded, setExpanded] = useState(true)
+  return (
+    &lt;div className="card overflow-hidden"&gt;
+      &lt;div onClick={() =&gt; setExpanded(e =&gt; !e)}&gt;
+        ...
+        {actions &amp;&amp; &lt;div onClick={e =&gt; e.stopPropagation()}&gt;{actions}&lt;/div&gt;}
+      &lt;/div&gt;
+      &lt;AnimatePresence&gt;
+        {expanded &amp;&amp; &lt;motion.div ...&gt;{children}&lt;/motion.div&gt;}
+      &lt;/AnimatePresence&gt;
+    &lt;/div&gt;
+  )
+}</code></pre>
+
+<h2>8. Security considerations</h2>
+<ul>
+  <li><strong>Authentication</strong> — all 12 endpoints require a valid Bearer JWT. The <code>get_current_user_id</code> dependency extracts and validates the token; unauthenticated requests receive HTTP 401.</li>
+  <li><strong>User-scoping on reads</strong> — all queries include <code>WeeklyReview.user_id == uuid.UUID(user_id)</code>. A user cannot read or modify another user's reviews.</li>
+  <li><strong>Ownership check returns 404 not 403</strong> — <code>_get_or_404()</code> raises HTTP 404 ("Review not found") for reviews that exist but belong to a different user. This prevents user enumeration by ID guessing — the caller cannot distinguish "does not exist" from "exists but is not yours".</li>
+  <li><strong>Item-level ownership check</strong> — the patch and delete item endpoints perform a separate ownership check on the parent review before loading the item, ensuring no item can be accessed by an authenticated user who does not own the review.</li>
+  <li><strong>Safe FK cascade for deleted positions</strong> — <code>source_position_id</code> uses <code>ON DELETE SET NULL</code>. If a portfolio position is deleted, review items are preserved and <code>source_position_id</code> is set to null. This prevents orphaned FK references without data loss.</li>
+  <li><strong>Input validation</strong> — all request bodies are validated by Pydantic schemas. <code>item_type</code> accepts only <code>TRADE</code> or <code>HOLD</code>; feelings accept only 1–5 or null; both are enforced at the schema level before any database write.</li>
+  <li><strong>No sensitive data in responses</strong> — review items contain trading data only; no user credentials, tokens, or PII are included in any endpoint response.</li>
+</ul>
+
+<h2>9. Observability</h2>
+
+<h3>updated_at propagation</h3>
+<p>SQLAlchemy's <code>onupdate=func.now()</code> on <code>WeeklyReview.updated_at</code> fires when the review row itself changes, but <em>not</em> when only child rows (<code>WeeklyReviewItem</code>) change. To ensure the parent's <code>updated_at</code> stays accurate for the review list page (which shows last-modified time), all item-level mutations explicitly issue a raw UPDATE:</p>
+<pre><code>await db.execute(
+    text("UPDATE weekly_reviews SET updated_at = NOW() WHERE id = :id"),
+    {"id": review_id},
+)</code></pre>
+<p>This pattern is used in: <code>sync_from_portfolio</code>, <code>refresh_prices</code>, <code>replace_items</code>, <code>patch_item</code>, <code>delete_item</code>, and <code>add_item</code>. It is the same pattern used in the Weekly Scan module for the same reason.</p>
+
+<h3>Review summary counters</h3>
+<p>The <code>_review_summary()</code> function computes four counts inline from the loaded items — no aggregation column is stored:</p>
+<pre><code>def _review_summary(review: WeeklyReview) -&gt; dict[str, Any]:
+    trade_count = sum(1 for i in review.items if i.item_type == "TRADE")
+    hold_count  = sum(1 for i in review.items if i.item_type == "HOLD")
+    buy_count   = sum(1 for i in review.items if i.buy_date is not None)
+    sell_count  = sum(1 for i in review.items if i.sell_date is not None)
+    ...</code></pre>
+<p>This requires eager loading of items with every summary query. The <code>selectinload(WeeklyReview.items)</code> option is included in all list and current-week queries for this reason.</p>
+
+<h2>10. Model registration</h2>
+<p>Both ORM classes must be imported in <code>backend/main.py</code> before <code>Base.metadata.create_all</code> runs at startup:</p>
+<pre><code>from app.models.weekly_review import WeeklyReview, WeeklyReviewItem  # noqa: F401</code></pre>
+<div class="callout warn">Forgetting this import means neither table will be created by <code>create_all()</code>, and Alembic's autogenerate will also fail to detect the models. The module will fail at runtime with a "relation does not exist" error on the first request to any <code>/review-list</code> endpoint.</div>
+</body>
+</html>

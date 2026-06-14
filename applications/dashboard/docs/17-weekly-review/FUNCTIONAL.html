@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weekly Review — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Weekly Review — Functional Specification</h1>
+
+<h2>1. Overview</h2>
+<p>The Weekly Review module (<code>/action-plan/review-list</code>) supports a disciplined post-trade journalling workflow structured around ISO calendar weeks (Monday–Sunday). At the end of each week the user records every transaction that occurred, annotates buy and sell decisions with written rationale and a feeling rating, and documents open positions that were held but not traded. Reviewing these records over time builds self-awareness of decision-making patterns and trading psychology.</p>
+<p>The module is <strong>personal</strong> — each user manages their own reviews independently. One user's reviews are never visible to another user. Each review covers exactly one ISO week and the system enforces a unique-per-user-per-week constraint.</p>
+<p>Each review has two structural parts:</p>
+<ul>
+  <li><strong>Part 1 — Transactions This Week</strong>: all positions where the user bought, sold, or both during the review week (TRADE items)</li>
+  <li><strong>Part 2 — Open Portfolio</strong>: all positions that were held open during the week with no buy or sell activity (HOLD items)</li>
+</ul>
+
+<h2>2. Core concepts</h2>
+
+<h3>2.1 Weekly Review record</h3>
+<p>A <strong>Weekly Review</strong> is the top-level record that anchors all items to a specific ISO week. Key properties:</p>
+<ul>
+  <li><strong>One review per user per week</strong> — enforced by a unique constraint on <code>(user_id, week_start)</code>. Attempting to create a second review for the same week returns HTTP 409.</li>
+  <li><strong>Auto-creation on first access</strong> — calling <code>GET /review-list/current-week</code> creates this week's review if it does not already exist, then returns it. The operation is idempotent; calling it multiple times is safe.</li>
+  <li><strong>Week boundaries always align to ISO week days</strong> — <code>week_start</code> is always the Monday and <code>week_end</code> is always the Sunday of the requested week, regardless of the date supplied by the caller.</li>
+  <li><strong>Auto-generated name</strong> — the default name follows the pattern <code>Week N (DD Mon–DD Mon YYYY)</code>, for example <code>Week 24 (09 Jun–15 Jun 2026)</code>. The user can rename the review at any time via the header edit.</li>
+  <li><strong>Optional notes field</strong> — a free-text area on the review header for overall weekly commentary not tied to individual positions.</li>
+</ul>
+
+<h3>2.2 Item types</h3>
+<p>Every item inside a review is classified as one of two types:</p>
+<table>
+  <thead><tr><th>Type</th><th>When to use</th><th>Legs available</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>TRADE</code></td>
+      <td>Any position where a buy transaction, a sell transaction, or both occurred during the review week. This includes: new positions opened this week; existing positions partially or fully closed this week; positions opened and closed within the same week (round-trips).</td>
+      <td>Buy leg + Sell leg (either or both may be populated)</td>
+    </tr>
+    <tr>
+      <td><code>HOLD</code></td>
+      <td>Positions that were open throughout the week with no transactional activity — the user simply held them. These appear in Part 2 to give a complete picture of the portfolio and allow mood/notes tracking for held positions.</td>
+      <td>Buy leg only (entry details); sell leg is not applicable</td>
+    </tr>
+  </tbody>
+</table>
+<div class="callout tip">A symbol may appear as either TRADE or HOLD in the same review, but not both. Open suggestions (section 5) exclude symbols already present in the TRADE list.</div>
+
+<h3>2.3 Buy and sell legs</h3>
+<p>Each TRADE item has two independent legs. Both legs are optional — they can be filled independently depending on what happened during the week:</p>
+<ul>
+  <li><strong>Buy leg</strong> (<code>buy_date</code>, <code>buy_price</code>, <code>buy_size</code>) — populated when the user opened or added to a position during the week. For items synced from Portfolio DB, this always reflects the original entry date and price even when the entry date is before the review week, so the sell side has its cost-basis reference visible.</li>
+  <li><strong>Sell leg</strong> (<code>sell_date</code>, <code>sell_price</code>, <code>sell_size</code>) — populated when the user closed or reduced a position during the week. Only synced when <code>exit_date</code> falls within the review week.</li>
+  <li><strong>Both legs set</strong> — valid for round-trip trades opened and closed within the same week.</li>
+  <li><strong>Only buy leg set</strong> — position was opened this week and is still held.</li>
+  <li><strong>Only sell leg set</strong> — position was closed this week but was originally opened in a prior week (sync will still include the buy leg from the portfolio entry data to give cost-basis context).</li>
+</ul>
+<p>For HOLD items, only the buy leg is used and it stores the original entry details (date, price, size) from the portfolio position, not a new transaction.</p>
+
+<h3>2.4 Feeling rating system</h3>
+<p>Each buy leg and sell leg carries an independent feeling rating — a 1–5 score that captures the user's subjective quality assessment of <strong>the decision itself</strong>, not the financial outcome. A trade can feel "Very Good" even if it results in a loss (the process was correct but the market moved against it), and vice versa.</p>
+<table>
+  <thead><tr><th>Value</th><th>Label</th><th>Icon</th><th>When to use</th></tr></thead>
+  <tbody>
+    <tr><td>5</td><td>Very Good</td><td>ChevronsUp</td><td>The decision was fully aligned with the plan; analysis was thorough; execution was precise</td></tr>
+    <tr><td>4</td><td>Good</td><td>ChevronUp</td><td>The decision was generally sound with minor reservations</td></tr>
+    <tr><td>3</td><td>Moderate</td><td>Minus</td><td>Mixed signals; decision was acceptable but uncertain</td></tr>
+    <tr><td>2</td><td>Bad</td><td>ChevronDown</td><td>The decision was poor in process — chased price, ignored stop, acted on emotion</td></tr>
+    <tr><td>1</td><td>Very Bad</td><td>ChevronsDown</td><td>Significant process failure — violated plan, no analysis, revenge trading</td></tr>
+  </tbody>
+</table>
+<div class="callout">Feeling ratings are independent for buy and sell legs. A user who made a well-planned entry (feeling 4) but panicked on exit (feeling 2) can record both accurately. A null rating means the leg has not been evaluated yet.</div>
+<p>Clicking an active feeling button deselects it (sets the value to null), allowing the user to clear a rating they no longer agree with. Changes to feelings save immediately without requiring a blur or submit action.</p>
+
+<h3>2.5 Week price snapshot</h3>
+<p>Every item stores two optional price points that describe how the symbol performed during the review week:</p>
+<ul>
+  <li><strong><code>week_open_price</code></strong> — the Monday opening price for the review week, fetched from Yahoo Finance via the Refresh Prices action</li>
+  <li><strong><code>week_close_price</code></strong> — the Friday closing price for the review week. For an in-progress week (where Friday has not yet occurred), the latest available close is used instead</li>
+</ul>
+<p>A third derived value, <strong><code>week_change_pct</code></strong>, is computed on-the-fly and never stored in the database:</p>
+<pre><code>week_change_pct = (week_close_price - week_open_price) / week_open_price * 100</code></pre>
+<p>The UI displays all three values stacked in a "Mon / Fri / Wk%" column. The percentage is green when positive and red when negative. If either price is null the column shows dashes.</p>
+<p>All symbols in the review are treated as Thai SET equities for price fetching — the <code>.BK</code> suffix is appended automatically. See section 3.4 for refresh behaviour.</p>
+
+<h2>3. User workflows</h2>
+
+<h3>3.1 Accessing this week's review</h3>
+<p>The current week's review is accessible from two entry points:</p>
+<ul>
+  <li><strong>Sidebar widget</strong> — the dashboard sidebar shows a summary card for the current week's review (trade count, hold count). Clicking it navigates directly to the review detail editor.</li>
+  <li><strong>Review list page</strong> — navigating to <code>/action-plan/review-list</code> shows all past reviews and automatically opens this week's review. If no review exists for the current week, one is created on arrival.</li>
+</ul>
+<p>Auto-creation is invisible to the user — the detail page loads immediately with the new (empty) review. The auto-generated name can be changed at any time by editing the review header.</p>
+
+<h3>3.2 Review list page</h3>
+<p>The review list page (<code>/action-plan/review-list</code>) shows all of the user's past reviews in reverse chronological order (newest first). Each row in the list displays:</p>
+<ul>
+  <li>Week name (e.g. <code>Week 24 (09 Jun–15 Jun 2026)</code>)</li>
+  <li>Week date range</li>
+  <li>Trade count / Hold count</li>
+  <li>Buy count / Sell count</li>
+  <li>Created and last-updated timestamps</li>
+</ul>
+<p>A <strong>month filter</strong> above the list allows the user to restrict the view to reviews from the last 3, 6, or 12 months, or show all reviews (the default). Clicking any review row navigates to its detail editor.</p>
+
+<h3>3.3 Sync from Portfolio</h3>
+<p>The <strong>Sync from Portfolio</strong> button (available on the detail page when the review is not read-only) automatically populates Part 1 with TRADE items drawn from the Portfolio DB module. The sync logic works as follows:</p>
+<ol>
+  <li>The backend scans all of the user's positions in <code>portfolio_positions_db</code>.</li>
+  <li>A position is included if its <code>entry_date</code> falls within the review week <em>or</em> its <code>exit_date</code> falls within the review week (or both).</li>
+  <li>For each matching position, a TRADE item is created (or updated if one already exists, matched by <code>source_position_id</code>):<ul>
+    <li>The <strong>buy leg</strong> is always populated from the position's entry date and price, even when the entry was in a prior week — this provides cost-basis context next to the sell.</li>
+    <li>The <strong>sell leg</strong> is populated only when <code>exit_date</code> falls inside the review week.</li>
+  </ul></li>
+  <li>Items are upserted by <code>source_position_id</code> — running sync multiple times will not create duplicate items. Existing annotation data (reasons, feelings) is never overwritten by a sync.</li>
+  <li>The response contains <code>{ added: N, updated: M }</code> to tell the user how many items were newly created versus refreshed.</li>
+</ol>
+<div class="callout tip">After syncing, use <strong>Refresh Prices</strong> to populate the week price snapshot for all synced symbols in one step.</div>
+<div class="callout warn">Sync is only available when the review is not in read-only mode. A review becomes read-only after its <code>week_end</code> date has passed.</div>
+
+<h3>3.4 Refresh Prices</h3>
+<p>The <strong>Refresh Prices</strong> button fetches Monday open and Friday close prices from Yahoo Finance for every symbol currently in the review (both TRADE and HOLD items). Key behaviour:</p>
+<ul>
+  <li>All symbols are treated as Thai SET equities — the <code>.BK</code> suffix is appended automatically (e.g. <code>BH</code> → <code>BH.BK</code>)</li>
+  <li>The yfinance query window is <code>week_start</code> to <code>week_end + 1 day</code> (the end date is exclusive in the yfinance API)</li>
+  <li>The Monday open price is taken from the first available open in the date range; the Friday close is taken from the last available close</li>
+  <li>For an in-progress week (today is before Friday), the Friday close falls back to the latest available close (e.g. Wednesday's close if run mid-week)</li>
+  <li>If Yahoo Finance returns no data for a symbol, that symbol's prices remain null; other symbols are unaffected</li>
+  <li>Refresh Prices is available even on read-only reviews so that historical prices can be back-filled</li>
+</ul>
+<p>The response identifies how many items were updated and lists each symbol with the prices retrieved.</p>
+
+<h3>3.5 Editing trade items</h3>
+<p>All annotation fields on a TRADE item are editable inline in the table. The save strategy differs by field type:</p>
+<ul>
+  <li><strong>Reason fields</strong> (<code>buy_reason</code>, <code>sell_reason</code>) — text areas that auto-save on blur. The user types freely; when focus leaves the field the current value is saved. Empty strings are saved as null (no reason).</li>
+  <li><strong>Feeling pickers</strong> (<code>buy_feeling</code>, <code>sell_feeling</code>) — compact button grids that save immediately on click. No blur required. Clicking the currently active button deselects it (clears the rating).</li>
+</ul>
+<p>Structural fields (symbol, dates, prices, sizes) are set at item-creation time and are not editable inline. To correct a structural field, delete the item and re-add it manually or re-sync from Portfolio.</p>
+<p>The sell price is colour-coded to immediately signal trade outcome:</p>
+<ul>
+  <li><strong>Green</strong> — <code>sell_price &gt;= buy_price</code> (profitable or break-even)</li>
+  <li><strong>Red</strong> — <code>sell_price &lt; buy_price</code> (loss)</li>
+  <li><strong>Gray</strong> — either price is null (outcome not determinable)</li>
+</ul>
+
+<h3>3.6 Adding items manually</h3>
+<p>The <strong>Add Item</strong> button opens a modal form. The user selects the item type and fills in the trade details:</p>
+<ul>
+  <li><strong>Symbol</strong> — the ticker symbol (auto-uppercased)</li>
+  <li><strong>Type</strong> — TRADE (Buy/Sell) or HOLD (open position)</li>
+  <li><strong>Buy leg</strong> — date, price, size (always shown; date defaults to today)</li>
+  <li><strong>Sell leg</strong> — date, price, size (shown only when type is TRADE; optional)</li>
+</ul>
+<p>Manual addition is appropriate when:</p>
+<ul>
+  <li>The position was tracked in an Excel file (not in Portfolio DB) and therefore not picked up by Sync</li>
+  <li>The user wants to add a HOLD item before using the open-suggestions panel</li>
+  <li>A specific position needs to be logged that does not exist in the portfolio system</li>
+</ul>
+<div class="callout tip">For positions tracked in Portfolio DB, prefer Sync from Portfolio over manual addition — the sync captures buy/sell legs from the actual position record and maintains the <code>source_position_id</code> back-link for traceability.</div>
+
+<h3>3.7 Deleting items</h3>
+<p>Each item row has a trash icon delete button. Deleting an item is permanent and immediate — there is no confirmation dialog. The review's <code>updated_at</code> timestamp is bumped on every item deletion. Deleted items cannot be recovered; re-running Sync will re-add any Portfolio DB positions that match the review week.</p>
+
+<h2>4. TRADE item detail</h2>
+
+<h3>Buy leg fields</h3>
+<table>
+  <thead><tr><th>Field</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>buy_date</code></td><td>The date the position was entered. For synced items this reflects the actual <code>entry_date</code> in Portfolio DB, which may predate the review week.</td></tr>
+    <tr><td><code>buy_price</code></td><td>Entry price per share. Displayed in Thai locale format (2 decimal places, comma separator).</td></tr>
+    <tr><td><code>buy_size</code></td><td>Number of shares purchased.</td></tr>
+    <tr><td><code>buy_reason</code></td><td>Free-text annotation explaining the buy decision — why the entry looked attractive at the time. Auto-saved on blur.</td></tr>
+    <tr><td><code>buy_feeling</code></td><td>1–5 rating of the quality of the buy decision (see feeling rating system). Saved immediately on selection.</td></tr>
+  </tbody>
+</table>
+
+<h3>Sell leg fields</h3>
+<table>
+  <thead><tr><th>Field</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>sell_date</code></td><td>The date the position was exited. Must fall within the review week to be synced automatically.</td></tr>
+    <tr><td><code>sell_price</code></td><td>Exit price per share. Coloured green (profit) or red (loss) relative to <code>buy_price</code>.</td></tr>
+    <tr><td><code>sell_size</code></td><td>Number of shares sold.</td></tr>
+    <tr><td><code>sell_reason</code></td><td>Free-text annotation explaining the sell decision. Only shown and editable when <code>sell_date</code> is set.</td></tr>
+    <tr><td><code>sell_feeling</code></td><td>1–5 rating of the quality of the sell decision. Only shown when <code>sell_date</code> is set.</td></tr>
+  </tbody>
+</table>
+<div class="callout">Sell reason and sell feeling controls are hidden when <code>sell_date</code> is null, keeping the table uncluttered for positions still held open.</div>
+
+<h3>Week price columns</h3>
+<p>The rightmost data column in the TRADE table shows three stacked values:</p>
+<ul>
+  <li><strong>Mon</strong> — <code>week_open_price</code> (Monday open for the review week), displayed in muted gray</li>
+  <li><strong>Fri</strong> — <code>week_close_price</code> (Friday close, or latest available), displayed in secondary text</li>
+  <li><strong>Wk%</strong> — <code>week_change_pct</code> computed as <code>(Fri − Mon) / Mon × 100</code>, green if positive, red if negative</li>
+</ul>
+<p>The "Price" column (second from left) shows <code>week_close_price</code> falling back to <code>week_open_price</code> if the close is null, giving the most current available price at a glance.</p>
+
+<h2>5. Open suggestions</h2>
+<p><strong>Open suggestions</strong> are active positions from Portfolio DB (<code>status = 'active'</code>) whose symbol does not already appear in the review's TRADE items. They represent the universe of positions the user might want to add to Part 2 as HOLD items.</p>
+<p>Suggestions appear in the Part 2 section header as an <strong>"Add open (N)"</strong> dropdown button. Hovering over the button reveals a list of suggested symbols with their entry prices. Clicking any suggestion creates a HOLD item pre-populated with the symbol, entry price, size, and <code>source_position_id</code> from the portfolio position.</p>
+<p>Suggestions are filtered on the client side — they exclude symbols already tracked in either the TRADE table or the HOLD table so that adding one from the dropdown immediately removes it from the suggestion list.</p>
+<div class="callout tip">If there are no open suggestions, the dropdown button is hidden entirely to keep the UI clean. Add HOLD items manually if needed.</div>
+
+<h2>6. Integration with other modules</h2>
+
+<h3>6.1 Portfolio DB</h3>
+<p>The Weekly Review module has a bidirectional relationship with Portfolio DB:</p>
+<ul>
+  <li><strong>Sync (read)</strong> — the Sync from Portfolio action reads <code>portfolio_positions_db</code> to auto-populate TRADE items for the review week. The <code>source_position_id</code> foreign key on each item links back to the originating position row.</li>
+  <li><strong>Open suggestions (read)</strong> — active positions are presented as HOLD item suggestions on every detail page load.</li>
+  <li><strong>Safe deletion</strong> — if a portfolio position is deleted, the corresponding review item's <code>source_position_id</code> is set to null via <code>ON DELETE SET NULL</code>, preserving the review item and all its annotations.</li>
+</ul>
+
+<h3>6.2 Sidebar widget</h3>
+<p>The dashboard sidebar includes a Weekly Review widget that shows a summary of the current week's review: review name, trade count, and hold count. The widget calls <code>GET /review-list/current-week</code> on page load, which creates the review if it doesn't yet exist. Clicking the widget navigates to the review detail editor.</p>
+
+<h3>6.3 Analytics modal</h3>
+<p>Clicking a symbol in the TRADE or HOLD table opens the Analytics modal with a full OHLCV candlestick chart for that symbol. This is the same chart component used throughout the dashboard (EChartsChart with RSI and Stochastic panels), accessible without leaving the review page.</p>
+
+<h2>7. Edge cases and empty states</h2>
+<table>
+  <thead><tr><th>Condition</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>No review exists for the current week</td>
+      <td><code>GET /review-list/current-week</code> creates one automatically with the auto-generated name. The detail page shows an empty review with both parts empty.</td>
+    </tr>
+    <tr>
+      <td>Part 1 is empty</td>
+      <td>The TRADE section shows a prompt: "No trades yet. Use Sync from Portfolio or Add Item to populate."</td>
+    </tr>
+    <tr>
+      <td>Part 2 is empty</td>
+      <td>The HOLD section shows a prompt: "No open positions tracked. Use Add open from your portfolio suggestions."</td>
+    </tr>
+    <tr>
+      <td>No open suggestions</td>
+      <td>The "Add open (N)" dropdown button is not rendered. All active positions are either already in the review or there are no active positions in Portfolio DB.</td>
+    </tr>
+    <tr>
+      <td>yfinance returns no data for a symbol</td>
+      <td><code>week_open_price</code> and <code>week_close_price</code> remain null for that symbol. The week price columns display dashes. Other symbols in the review are unaffected.</td>
+    </tr>
+    <tr>
+      <td>Refresh Prices run on an in-progress week</td>
+      <td>Friday close falls back to the most recent available close (e.g. Wednesday if run mid-week). Monday open is taken from the first row of data for the week.</td>
+    </tr>
+    <tr>
+      <td>Symbol appears in both TRADE and HOLD attempts</td>
+      <td>Open suggestions exclude symbols already in the TRADE list. If a HOLD item is manually added for a symbol already in TRADE, there is no server-side constraint preventing it — the user should avoid this manually.</td>
+    </tr>
+    <tr>
+      <td>Sync run on a week with no Portfolio DB activity</td>
+      <td>Returns <code>{ added: 0, updated: 0 }</code>. No items are created or modified. The review remains unchanged.</td>
+    </tr>
+    <tr>
+      <td>Attempt to create a duplicate week review</td>
+      <td>Manual <code>POST /review-list</code> with the same week returns HTTP 409 with detail "A review already exists for this week". The auto-create path (<code>GET /current-week</code>) handles this gracefully by returning the existing review.</td>
+    </tr>
+    <tr>
+      <td>Review week has ended (past week)</td>
+      <td>The detail page enters read-only mode: Add Item, Sync from Portfolio, and delete buttons are hidden. Refresh Prices remains available. Existing annotations cannot be changed.</td>
+    </tr>
+    <tr>
+      <td>Portfolio position deleted after syncing</td>
+      <td>The review item remains intact. Its <code>source_position_id</code> becomes null (ON DELETE SET NULL). All annotations (reasons, feelings) are preserved.</td>
+    </tr>
+    <tr>
+      <td>Months filter applied on the list page</td>
+      <td>Only reviews with <code>week_start &gt;= CURRENT_DATE - INTERVAL 'N months'</code> are returned. The current week's review is always visible regardless of filter if it falls within the range.</td>
+    </tr>
+  </tbody>
+</table>
+</body>
+</html>

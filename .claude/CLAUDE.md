@@ -20,7 +20,7 @@ Always optimize for:
 The goal is not merely to make code work.
 
 The goal is to deliver software that can be safely operated and maintained in production.
-
+Mandatory that program-director agent has to distribute works.
 ---
 
 # Agent Usage Policy
@@ -28,7 +28,7 @@ The goal is to deliver software that can be safely operated and maintained in pr
 Use the most appropriate available agents and skills for each task.
 
 Do not attempt to perform specialized work without invoking the corresponding agent when one exists.
-
+This is mandatory
 Examples:
 
 * Requirements → Business Analyst Agent
@@ -53,7 +53,7 @@ All work must follow the lifecycle below.
 No phase may be skipped unless explicitly requested.
 
 ## Phase 1: Requirement Analysis
-
+**Mandatory agent: `business-analyst`** 
 Perform:
 
 * Requirement review
@@ -74,7 +74,7 @@ Produce:
 ---
 
 ## Phase 2: Solution Design
-
+**Mandatory agent: `solution-architect`** 
 Perform:
 
 * Architecture analysis
@@ -100,7 +100,7 @@ For significant changes include:
 ---
 
 ## Phase 3: Implementation
-
+**Mandatory agent: `lead-engineer-reviewer` or `backend-engineer` or `frontend-engineer`**
 Code must be:
 
 * Production quality
@@ -165,7 +165,27 @@ Produce:
 
 ## Phase 6: Documentation
 
-Update all affected documentation.
+**Mandatory agent: `technical-writer`**
+
+Invoke the `technical-writer` agent after EVERY task that introduces or modifies any of the following. This is not optional.
+
+| Change type | Documents to update |
+|---|---|
+| New or changed API endpoint | `API-<module>.html`, `API-DESIGN.html` |
+| New or changed DB table/column | `DATABASE.html`, `DATABASE.md` |
+| New feature module or significant UI change | `<module>/FUNCTIONAL.html`, `<module>/TECHNICAL.html`, `app-guide.html` |
+| New documentation page | `docs/manifest.json` |
+| Schema migration | `DATABASE.html`, `14-migrations/TECHNICAL.html` |
+| Backup/restore changes | Operational docs, deployment notes |
+
+Produce (for any affected area):
+
+* Functional specification (FUNCTIONAL.html)
+* Technical design (TECHNICAL.html)
+* API reference page (API-*.html)
+* Database schema doc (DATABASE.html / DATABASE.md)
+* manifest.json (if new pages added)
+* app-guide.html section (if new module added)
 
 Documentation is part of the deliverable.
 
@@ -244,8 +264,13 @@ A task is NOT complete until ALL applicable items are satisfied.
 
 ## Documentation
 
-* Documentation updated
-* API documentation updated
+* `technical-writer` agent invoked for all affected areas
+* Functional specification updated (if feature or UX changed)
+* Technical design updated (if implementation changed)
+* API documentation updated (if any endpoint changed)
+* Database schema doc updated (if any schema changed)
+* `docs/manifest.json` updated (if new doc pages added)
+* `app-guide.html` updated (if a new feature module was introduced)
 * Deployment instructions updated
 * Runbooks updated if required
 

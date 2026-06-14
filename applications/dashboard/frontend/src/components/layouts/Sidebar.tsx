@@ -208,9 +208,11 @@ function PurchasePlanWidget() {
         <div className="flex-1 min-w-0">
           <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider">Purchase</span>
           <div className="flex items-center gap-0.5 mt-0.5">
-            <span className="text-[8px] text-ink-disabled">SL ·</span>
+            <span className="text-[8px] text-ink-disabled">SL ←</span>
             <Star className="w-2 h-2 text-yellow-300 fill-yellow-300 shrink-0" />
-            <span className="text-[8px] text-ink-disabled">Buy / ○ Price · TP</span>
+            <span className="text-[8px] text-ink-disabled">Target Buy /</span>
+            <span className="text-[8px] text-white/60 shrink-0">●</span>
+            <span className="text-[8px] text-ink-disabled">Price → TP</span>
           </div>
         </div>
         <button
@@ -284,8 +286,12 @@ function PurchasePlanWidget() {
                   </button>
                   {hasSL && <span className="text-loss font-semibold shrink-0">{item.sl!.toFixed(1)}</span>}
                   {hasSL && <span className="text-ink-disabled shrink-0">←</span>}
-                  <span className="text-ink-primary font-bold shrink-0">
+                  <span className="text-yellow-300 font-bold shrink-0">
                     {hasBuy ? item.buy_price!.toFixed(1) : '—'}
+                  </span>
+                  <span className="text-ink-disabled shrink-0">/</span>
+                  <span className="text-white font-bold shrink-0">
+                    {hasCur ? item.current_price!.toFixed(1) : '—'}
                   </span>
                   {hasTP && <span className="text-ink-disabled shrink-0">→</span>}
                   {hasTP && <span className="text-gain font-semibold shrink-0">{item.tp!.toFixed(1)}</span>}

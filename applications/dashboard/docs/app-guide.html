@@ -63,6 +63,7 @@
   <a href="#portfolio">Portfolio Tracker</a>
   <a href="#weekly-scan">Weekly Scan</a>
   <a href="#action-plan">Action Plan</a>
+  <a href="#weekly-review">Weekly Review</a>
   <a href="#analytics">Analytics</a>
   <a href="#ai">AI Copilot</a>
   <a href="#settings">Settings &amp; Admin</a>
@@ -1142,6 +1143,116 @@ Response:
 
   <h2>Integration with Weekly Scan</h2>
   <p>From the scan table, the "Add to Plan" modal appends any scan item to an existing purchase plan, carrying over buy_price, size, TP, SL, strategy, and symbol in one click.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="weekly-review">
+  <h1>Weekly Review</h1>
+
+  <h2>Overview</h2>
+  <p>
+    The Weekly Review module (<code>/action-plan/review-list</code>) provides a structured
+    post-trade journalling workflow. Each ISO week (Monday–Sunday) has exactly one review record
+    per user. The analyst records which positions were entered or exited during the week, rates
+    the quality of each buy and sell decision with an independent feeling score, and captures
+    the Monday-open / Friday-close price movement for every symbol reviewed.
+  </p>
+  <p>
+    A review is split into two parts: <strong>Part 1 — Trades</strong> (stocks that had buy or sell
+    activity this week) and <strong>Part 2 — Hold</strong> (open positions with no activity, used
+    for passive tracking). Active portfolio positions not yet in Part 1 are surfaced as
+    <em>open suggestions</em> to make it easy to add them as HOLD items.
+  </p>
+
+  <h2>Core concepts</h2>
+
+  <h3>Review record</h3>
+  <p>One <code>weekly_reviews</code> row per user per ISO week, uniquely constrained by
+  <code>(user_id, week_start)</code>. Auto-created by <code>GET /current-week</code> the first
+  time it is accessed. The auto-generated name format is
+  <code>Week {N} ({DD Mon}–{DD Mon YYYY})</code> and is freely editable.</p>
+
+  <h3>Item types</h3>
+  <table>
+    <tr><th>Type</th><th>Purpose</th><th>Typical data</th></tr>
+    <tr>
+      <td><span class="badge badge-blue">TRADE</span></td>
+      <td>Position with buy and/or sell activity this week</td>
+      <td>buy_date, buy_price, buy_size, sell_date, sell_price, sell_size (either or both legs may be populated)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-grey">HOLD</span></td>
+      <td>Open position with no activity this week</td>
+      <td>symbol, entry reference from portfolio DB, notes</td>
+    </tr>
+  </table>
+
+  <h3>Feeling rating (1–5)</h3>
+  <p>Each TRADE item carries two independent ratings — one for the buy decision and one for the sell decision. Ratings evaluate the <em>quality of the decision</em>, not the outcome.</p>
+  <table>
+    <tr><th>Value</th><th>Label</th><th>Meaning</th></tr>
+    <tr><td>5</td><td>Very Good</td><td>Clear setup, excellent timing, full conviction</td></tr>
+    <tr><td>4</td><td>Good</td><td>Solid reasoning, mostly confident</td></tr>
+    <tr><td>3</td><td>Moderate</td><td>Reasonable but uncertain; acceptable setup</td></tr>
+    <tr><td>2</td><td>Bad</td><td>FOMO or reactive; weak rationale</td></tr>
+    <tr><td>1</td><td>Very Bad</td><td>Impulsive; against the plan</td></tr>
+  </table>
+
+  <h2>Review list page (<code>/action-plan/review-list</code>)</h2>
+  <ul>
+    <li>Displays all past weekly reviews in reverse-chronological order</li>
+    <li>Each row shows: week name, date range, trade count, hold count, buy count, sell count, last-updated timestamp</li>
+    <li>Click a row to open the review detail editor</li>
+    <li><strong>Current Week</strong> button calls <code>GET /api/v1/review-list/current-week</code>, auto-creating the review for the current Monday if needed</li>
+    <li>Month filter (3 / 6 / 12 / All) for navigating history</li>
+  </ul>
+
+  <h2>Review detail page (<code>/action-plan/review-list/[id]</code>)</h2>
+
+  <h3>Part 1 — Trades table</h3>
+  <p>Inline-editable table of all TRADE items, sorted by in-week activity date.</p>
+  <table>
+    <tr><th>Column</th><th>Description</th></tr>
+    <tr><td>Symbol</td><td>Ticker; click to open Analytics modal</td></tr>
+    <tr><td>Price</td><td>Week close price (fetched via Refresh Prices)</td></tr>
+    <tr><td>Buy Date / Price / Size</td><td>Entry leg; stacked in one cell</td></tr>
+    <tr><td>Buy Reason</td><td>Free-text rationale for entering; auto-saved on blur</td></tr>
+    <tr><td>Buy Feeling</td><td>1–5 rating picker; auto-saved on select</td></tr>
+    <tr><td>Sell Date / Price / Size</td><td>Exit leg; price coloured <span class="badge badge-green">green</span> if sell ≥ buy, <span class="badge badge-red">red</span> if sell &lt; buy</td></tr>
+    <tr><td>Sell Reason</td><td>Free-text rationale for exiting</td></tr>
+    <tr><td>Sell Feeling</td><td>Independent 1–5 rating for the sell decision</td></tr>
+    <tr><td>Week Mon / Fri / %</td><td>Monday open, Friday close, and computed percentage change for the review week</td></tr>
+    <tr><td>Delete</td><td>Removes the item from the review</td></tr>
+  </table>
+
+  <h3>Part 2 — Hold table</h3>
+  <p>Open positions with no this-week activity. Columns: Symbol, Price, Entry Date/Price, Week prices, Notes, Feel, Delete.</p>
+
+  <h3>Toolbar actions</h3>
+  <table>
+    <tr><th>Action</th><th>What it does</th></tr>
+    <tr><td>Sync from Portfolio</td><td>Calls <code>POST /{id}/sync</code> — upserts TRADE items from <code>portfolio_positions_db</code> for positions with entry or exit dates inside the review week; matched by <code>source_position_id</code></td></tr>
+    <tr><td>Refresh Prices</td><td>Calls <code>POST /{id}/refresh-prices</code> — fetches Monday open and Friday close prices via yfinance (<code>.BK</code> suffix) for every symbol in the review; <code>week_change_pct</code> is derived client-side as <code>(close − open) / open × 100</code></td></tr>
+    <tr><td>Add Trade / Add Hold</td><td>Opens an inline form to manually add a TRADE or HOLD item</td></tr>
+  </table>
+
+  <h2>Integration with other modules</h2>
+  <ul>
+    <li><strong>Portfolio DB</strong> — Sync populates buy/sell legs from <code>portfolio_positions_db.entry_price</code>, <code>exit_price</code>, and <code>position_size</code>. The <code>source_position_id</code> FK links the review item back to its origin position.</li>
+    <li><strong>Analytics</strong> — Clicking any symbol in the review table opens the <code>AnalyticsModal</code> for chart inspection.</li>
+    <li><strong>Sidebar widget</strong> — The dashboard sidebar shows the current week's review summary when available.</li>
+  </ul>
+
+  <h2>API endpoints</h2>
+  <p>Full documentation: <a href="02-infrastructure/API-REVIEW-LIST.html"><code>API-REVIEW-LIST.html</code></a>. Quick reference:</p>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/review-list/current-week</code></td><td>Get or auto-create this week's review</td></tr>
+    <tr><td><span class="method-get">GET</span></td><td><code>/api/v1/review-list/{id}</code></td><td>Full detail with trade_items, hold_items, open_suggestions</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/review-list/{id}/sync</code></td><td>Populate from portfolio DB</td></tr>
+    <tr><td><span class="method-post">POST</span></td><td><code>/api/v1/review-list/{id}/refresh-prices</code></td><td>Fetch week prices from yfinance</td></tr>
+    <tr><td><span class="method-patch">PATCH</span></td><td><code>/api/v1/review-list/{id}/items/{item_id}</code></td><td>Auto-save reason / feeling (patch semantics)</td></tr>
+  </table>
 </section>
 
 <!-- ═══════════════════════════════════════════════════════════ -->

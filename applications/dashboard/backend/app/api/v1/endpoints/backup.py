@@ -34,7 +34,7 @@ DB       = Annotated[AsyncSession, Depends(get_db)]
 # Restore truncates in reverse order.
 TABLE_ORDER = [
     "users",
-    "dr_mappings",          # global config — no FK deps, back up early
+    "dr_mappings",              # global config — no FK deps, back up early
     "action_plans",
     "purchase_plan_items",
     "portfolio_plan_items",
@@ -44,6 +44,8 @@ TABLE_ORDER = [
     "weekly_scan_items",
     "symbol_notes",
     "portfolio_positions_db",
+    "weekly_reviews",           # FK → users.id
+    "weekly_review_items",      # FK → weekly_reviews.id + portfolio_positions_db.id (SET NULL)
 ]
 
 
@@ -172,7 +174,7 @@ async def create_backup(admin: AdminUser, db: DB) -> dict:
             tables[table] = []   # table absent or empty — non-fatal
 
     payload = {
-        "version": "1.0",
+        "version": "1.1",  # 1.1 adds weekly_reviews + weekly_review_items
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": str(admin.id),
         "tables": tables,

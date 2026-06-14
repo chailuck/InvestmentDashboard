@@ -171,6 +171,25 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
   </tbody>
 </table>
 
+<h3>Weekly Review</h3>
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/v1/review-list/current-week</code></td><td>Bearer</td><td>Get or auto-create this week's review (Mon–Sun ISO week)</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/review-list</code></td><td>Bearer</td><td>List all reviews newest first — optional <code>?months=3|6|12</code></td></tr>
+    <tr><td>POST</td><td><code>/api/v1/review-list</code></td><td>Bearer</td><td>Create review manually — body: <code>{week_start, name?}</code> — 409 if week already exists</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/review-list/{id}</code></td><td>Bearer</td><td>Full review detail: trade_items, hold_items, open_suggestions</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/review-list/{id}</code></td><td>Bearer</td><td>Update review header: name and/or notes</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/review-list/{id}</code></td><td>Bearer</td><td>Delete review and all items (CASCADE) — HTTP 204</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/review-list/{id}/sync</code></td><td>Bearer</td><td>Auto-populate TRADE items from portfolio_positions_db (upsert by source_position_id)</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/review-list/{id}/refresh-prices</code></td><td>Bearer</td><td>Fetch Mon-open / Fri-close week prices via yfinance for all symbols</td></tr>
+    <tr><td>PUT</td><td><code>/api/v1/review-list/{id}/items</code></td><td>Bearer</td><td>Bulk replace all items (delete-all then re-insert)</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/review-list/{id}/items</code></td><td>Bearer</td><td>Add a single item — HTTP 201 — body: ReviewItemIn</td></tr>
+    <tr><td>PATCH</td><td><code>/api/v1/review-list/{id}/items/{item_id}</code></td><td>Bearer</td><td>Update reasons / feelings only (auto-save patch)</td></tr>
+    <tr><td>DELETE</td><td><code>/api/v1/review-list/{id}/items/{item_id}</code></td><td>Bearer</td><td>Remove one item — HTTP 204</td></tr>
+  </tbody>
+</table>
+
 <h3>Analytics</h3>
 <table>
   <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>

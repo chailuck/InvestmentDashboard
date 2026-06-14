@@ -32,6 +32,7 @@
             { "id": "api-ai-copilot",        "label": "AI Copilot",        "file": "02-infrastructure/API-AI-COPILOT.html"        },
             { "id": "api-app-config",        "label": "App Configuration", "file": "02-infrastructure/API-APP-CONFIG.html"        },
             { "id": "api-weekly-scan",       "label": "Weekly Scan",       "file": "02-infrastructure/API-WEEKLY-SCAN.html"       },
+            { "id": "api-review-list",       "label": "Weekly Review",     "file": "02-infrastructure/API-REVIEW-LIST.html"       },
             { "id": "api-analytics",         "label": "Analytics",         "file": "02-infrastructure/API-ANALYTICS.html"         },
             { "id": "api-portfolio-db",      "label": "Portfolio DB",      "file": "02-infrastructure/API-PORTFOLIO-DB.html"      },
             { "id": "api-dr-mappings",       "label": "DR Mappings",       "file": "02-infrastructure/API-DR-MAPPINGS.html"       }
@@ -94,6 +95,15 @@
       "children": [
         { "id": "ws-functional", "label": "Functional Spec",  "file": "09-weekly-scan/FUNCTIONAL.html" },
         { "id": "ws-technical",  "label": "Technical Design", "file": "09-weekly-scan/TECHNICAL.html"  }
+      ]
+    },
+    {
+      "id": "weekly-review",
+      "label": "Weekly Review",
+      "children": [
+        { "id": "wr-functional", "label": "Functional Spec",  "file": "17-weekly-review/FUNCTIONAL.html" },
+        { "id": "wr-technical",  "label": "Technical Design", "file": "17-weekly-review/TECHNICAL.html"  },
+        { "id": "wr-api",        "label": "API Reference",    "file": "02-infrastructure/API-REVIEW-LIST.html" }
       ]
     },
     {
