@@ -1169,6 +1169,9 @@ function InvestmentTab({ portfolioId }: { portfolioId: string }) {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['investment-transactions'] })
+    queryClient.invalidateQueries({ queryKey: ['inv-balance-widget-tx'] })
+    queryClient.invalidateQueries({ queryKey: ['inv-balance-widget-perf'] })
+    queryClient.invalidateQueries({ queryKey: ['investment-transactions-balance'] })
     setShowForm(false); setEditTx(null)
   }
 

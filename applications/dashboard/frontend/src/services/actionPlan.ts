@@ -68,15 +68,15 @@ export const actionPlanService = {
     return data.name as string
   },
 
-  /** Fetch the latest closing price for a Thai SET stock. Returns null on error. */
-  async getStockPrice(symbol: string): Promise<number | null> {
+  /** Fetch the latest closing price + day change % for a Thai SET stock. Returns nulls on error. */
+  async getStockPrice(symbol: string): Promise<{ price: number | null; change_pct: number | null }> {
     try {
       const { data } = await apiClient.get('/action-plans/stock-price', {
         params: { symbol },
       })
-      return data.price as number
+      return { price: data.price as number, change_pct: (data.change_pct ?? null) as number | null }
     } catch {
-      return null
+      return { price: null, change_pct: null }
     }
   },
 

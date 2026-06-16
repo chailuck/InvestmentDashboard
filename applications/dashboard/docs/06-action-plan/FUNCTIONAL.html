@@ -104,9 +104,31 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <h4>Toolbar actions</h4>
 <ul>
   <li><strong>+ Add Row</strong> — appends a new blank row at the bottom</li>
+  <li><strong>Refresh Prices</strong> — fetches the latest live price for every stock row simultaneously and updates the CURRENT PRICE column in-memory (see below)</li>
   <li><strong>Save</strong> — persists all rows to the database (full replace: delete all + bulk insert)</li>
   <li><strong>Generate</strong> — opens a read-only modal with the plan in a copy-ready text format for sharing with a broker or tracking system</li>
 </ul>
+
+<h4>Refresh Prices button</h4>
+<p>The <strong>Refresh Prices</strong> button (RefreshCw icon) appears in the toolbar between Generate and Save. It re-fetches live current prices from Yahoo Finance for all rows that have a stock symbol, in parallel, and updates the CURRENT PRICE cells in-memory without saving to the database.</p>
+<p><strong>During refresh:</strong></p>
+<ul>
+  <li>The button label changes to <strong>Refreshing...</strong> and a spinner is displayed.</li>
+  <li>Both the Refresh Prices button and the Save button are disabled for the duration of the refresh.</li>
+  <li>Rows whose price fails to load retain their previous CURRENT PRICE value.</li>
+</ul>
+<p><strong>After refresh, an inline notification is shown below the toolbar:</strong></p>
+<table>
+  <thead><tr><th>Outcome</th><th>Notification message</th><th>Style</th></tr></thead>
+  <tbody>
+    <tr><td>All prices fetched successfully</td><td>Refreshed <em>N</em> price(s) successfully.</td><td><span class="badge green">Success</span></td></tr>
+    <tr><td>Some prices failed</td><td>Refreshed <em>N</em> of <em>M</em> prices. Failed: SYMBOL1, SYMBOL2 (and <em>K</em> more).</td><td><span class="badge yellow">Partial</span></td></tr>
+    <tr><td>All prices failed</td><td>Failed to refresh all <em>N</em> prices. Failed: SYMBOL1, SYMBOL2 (and <em>K</em> more).</td><td><span class="badge red">Failure</span></td></tr>
+    <tr><td>No symbols in the plan</td><td>No symbols to refresh.</td><td><span class="badge blue">Info</span></td></tr>
+  </tbody>
+</table>
+<p>The notification includes a <strong>Dismiss</strong> (×) button. It does not auto-dismiss. A new refresh replaces the previous notification.</p>
+<div class="callout tip">Refresh Prices does not save. The user must click <strong>Save</strong> separately to persist the updated prices to the database.</div>
 
 <h4>Generated text format</h4>
 <pre><code>STOCK,SIZE,BUY,TP,SL,STRATEGY
@@ -139,7 +161,7 @@ CPALL,200,14.5,51.25,45,BREAK OUT</code></pre>
     <tr><td>ORDER SIZE</td><td>Yes</td><td>Shares to buy/sell in the planned action; persisted</td></tr>
   </tbody>
 </table>
-<p><strong>Refresh button:</strong> Triggers the same Excel copy-and-reload as the Portfolio page refresh, then reloads the active positions. Use this when the Excel file has been updated since the page was opened.</p>
+<p><strong>Sidebar widget Refresh button:</strong> Appears in the collapsed <em>Portfolio Action Plan</em> sidebar widget (not the full editor). When clicked, the widget fetches the current plan directly from the server (bypassing any cached data), fetches live market prices for each symbol, writes the updated plan back to the server with only <code>current_price</code> overwritten, and then invalidates the React Query cache so the widget re-renders. All other plan fields (<code>entry_price</code>, <code>sl</code>, <code>tp</code>) are taken from the server's authoritative state, not from memory. See <a href="TECHNICAL.html#bug-fix-sidebar-refresh">TECHNICAL.html — sidebar refresh fix</a> for the implementation detail.</p>
 
 <h4>Generated text format</h4>
 <pre><code>PORTFOLIO ACTION PLAN

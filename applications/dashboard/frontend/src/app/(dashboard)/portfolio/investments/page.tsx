@@ -131,18 +131,20 @@ function TransactionForm({ portfolioId, initial, onClose, onSaved }: TxFormProps
     try {
       if (initial) {
         await investmentTransactionService.update(initial.id, {
-          date, action, amount: amt, currency, note: note || null,
+          date, action, amount: amt, currency, note: note.trim() || null,
         })
         toast.success('Transaction updated')
       } else {
         await investmentTransactionService.create({
-          portfolio_id: portfolioId, date, action, amount: amt, currency, note: note || null,
+          portfolio_id: portfolioId, date, action, amount: amt, currency, note: note.trim() || null,
         })
         toast.success('Transaction created')
       }
       onSaved()
-    } catch {
-      toast.error('Failed to save transaction')
+    } catch (err: unknown) {
+      const detail = (err as any)?.response?.data?.detail
+      toast.error(detail ? `Save failed: ${detail}` : 'Failed to save transaction')
+      console.error('Transaction save error:', err)
     } finally { setSaving(false) }
   }
 
@@ -324,6 +326,9 @@ export default function InvestmentsPage() {
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['investment-transactions'] })
+    queryClient.invalidateQueries({ queryKey: ['inv-balance-widget-tx'] })
+    queryClient.invalidateQueries({ queryKey: ['inv-balance-widget-perf'] })
+    queryClient.invalidateQueries({ queryKey: ['investment-transactions-balance'] })
     setShowForm(false)
     setEditTx(null)
   }, [queryClient])

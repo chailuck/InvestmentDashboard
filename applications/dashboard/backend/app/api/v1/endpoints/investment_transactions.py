@@ -1,9 +1,7 @@
 """Investment transaction endpoints — CASH_IN / CASH_OUT / ADJUST per portfolio."""
 
-from __future__ import annotations
-
 import uuid
-from datetime import date
+from datetime import date as DateType
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -27,7 +25,7 @@ VALID_ACTIONS = {"CASH_IN", "CASH_OUT", "ADJUST"}
 
 class TransactionCreate(BaseModel):
     portfolio_id: str
-    date: date
+    date: DateType
     action: str  # CASH_IN | CASH_OUT | ADJUST
     amount: float
     currency: str = "THB"
@@ -35,7 +33,7 @@ class TransactionCreate(BaseModel):
 
 
 class TransactionUpdate(BaseModel):
-    date: Optional[date] = None
+    date: Optional[DateType] = None
     action: Optional[str] = None
     amount: Optional[float] = None
     currency: Optional[str] = None
@@ -77,8 +75,8 @@ async def list_transactions(
     user_id: UserId,
     db: DB,
     portfolio_id: Optional[str] = Query(None),
-    from_date: Optional[date] = Query(None),
-    to_date: Optional[date] = Query(None),
+    from_date: Optional[DateType] = Query(None),
+    to_date: Optional[DateType] = Query(None),
     action: Optional[str] = Query(None),
 ) -> dict[str, Any]:
     uid = uuid.UUID(user_id)
@@ -153,20 +151,21 @@ async def update_transaction(transaction_id: str, body: TransactionUpdate, user_
     if not t:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
-    if body.date is not None:
+    fields_set = body.model_fields_set
+    if "date" in fields_set and body.date is not None:
         t.date = body.date
-    if body.action is not None:
+    if "action" in fields_set and body.action is not None:
         if body.action not in VALID_ACTIONS:
             raise HTTPException(status_code=400, detail=f"Invalid action. Must be one of: {', '.join(sorted(VALID_ACTIONS))}")
         t.action = body.action
-    if body.amount is not None:
+    if "amount" in fields_set and body.amount is not None:
         if body.amount <= 0:
             raise HTTPException(status_code=400, detail="Amount must be positive")
         t.amount = body.amount
-    if body.currency is not None:
+    if "currency" in fields_set and body.currency is not None:
         t.currency = body.currency
-    if body.note is not None:
-        t.note = body.note
+    if "note" in fields_set:
+        t.note = body.note  # allow explicit null to clear the note
 
     await db.commit()
     await db.refresh(t)

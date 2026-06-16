@@ -180,6 +180,84 @@ const onStockBlur = async (key: string, symbol: string) =&gt; {
   setRow(key, { current_price: price, fetchingPrice: false })
 }</code></pre>
 
+<h3>Refresh All Prices — implementation pattern</h3>
+<p>The <code>refreshAllPrices</code> function is an async handler attached to the Refresh Prices toolbar button. It fetches live prices for all rows concurrently using <code>Promise.all</code>, with per-item error isolation via <code>.catch</code>.</p>
+
+<h4>RefreshResult interface</h4>
+<pre><code>interface RefreshResult {
+  total:         number    // rows that had a non-empty stock symbol
+  succeeded:     number    // symbols for which a price was returned
+  failed:        number    // symbols that returned null or threw
+  failedSymbols: string[]  // list of the failed ticker names
+}</code></pre>
+
+<h4>rowsRef — ref for async access to current rows</h4>
+<p>The component keeps a <code>rowsRef = useRef(rows)</code> that is updated in the same effect that sets <code>rows</code> state. This is necessary because <code>refreshAllPrices</code> is wrapped in <code>useCallback</code> and reads the row list at call time — if it closed over the <code>rows</code> state variable directly it would capture a stale snapshot from the render in which the callback was created. The ref always reflects the current value regardless of when the callback fires.</p>
+<pre><code>// Keep ref in sync with state
+useEffect(() =&gt; { rowsRef.current = rows }, [rows])
+
+// Async handler reads from ref, not from rows state
+const refreshAllPrices = useCallback(async () =&gt; {
+  const currentRows = rowsRef.current
+  ...
+}, [])   // empty dependency array — no stale closure on rows</code></pre>
+
+<h4>Promise.all fan-out with per-item error isolation</h4>
+<p>Each row's price fetch is wrapped in its own <code>.catch</code> before being passed to <code>Promise.all</code>. This means a single failed fetch does not reject the whole batch — the failed item resolves to <code>null</code> and is counted in <code>failedSymbols</code>.</p>
+<pre><code>const results = await Promise.all(
+  symbolRows.map(row =&gt;
+    actionPlanService
+      .getStockPrice(row.stock.trim())
+      .then(price =&gt; ({ key: row._key, stock: row.stock, price }))
+      .catch(() =&gt; ({ key: row._key, stock: row.stock, price: null }))
+  )
+)
+
+// Apply successful results to rows state
+const updates: Record&lt;string, number | null&gt; = {}
+const failedSymbols: string[] = []
+for (const r of results) {
+  if (r.price !== null) updates[r.key] = r.price
+  else failedSymbols.push(r.stock)
+}
+setRows(prev =&gt; prev.map(row =&gt;
+  row._key in updates ? { ...row, current_price: updates[row._key] } : row
+))</code></pre>
+
+<h4>State machine — refreshing and refreshResult</h4>
+<table>
+  <thead><tr><th>State</th><th>Type</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>refreshing</code></td><td><code>boolean</code></td><td>Set to <code>true</code> at the start of the fetch; set back to <code>false</code> in the <code>finally</code> block. Disables both the Refresh Prices and Save buttons while <code>true</code>.</td></tr>
+    <tr><td><code>refreshResult</code></td><td><code>RefreshResult | null</code></td><td>Holds the outcome of the last refresh for notification display. <code>null</code> when no refresh has been run or after dismiss. Replaced (not appended) on each new refresh.</td></tr>
+  </tbody>
+</table>
+<pre><code>setRefreshing(true)
+setRefreshResult(null)    // clear previous notification
+try {
+  // ... fan-out, collect results ...
+  setRefreshResult({ total, succeeded, failed, failedSymbols })
+} finally {
+  setRefreshing(false)
+}</code></pre>
+
+<h4>formatSymbolList helper</h4>
+<p>Notification messages that list failed symbols are truncated at 5 to avoid overflowing the UI. The helper returns a comma-separated string with an optional <code>and N more</code> suffix.</p>
+<pre><code>const formatSymbolList = (symbols: string[], max = 5): string =&gt; {
+  if (symbols.length &lt;= max) return symbols.join(', ')
+  return `${symbols.slice(0, max).join(', ')} and ${symbols.length - max} more`
+}</code></pre>
+
+<h4>Data flow — refresh path</h4>
+<pre><code>User clicks Refresh Prices
+  → setRefreshing(true), setRefreshResult(null)
+  → read rowsRef.current for non-empty symbols
+  → Promise.all( symbolRows.map( sym → GET /stock-price?symbol=sym .catch → null ) )
+  → setRows: merge successful prices into existing row state
+  → setRefreshResult({ total, succeeded, failed, failedSymbols })
+  → setRefreshing(false)   [finally]
+  → notification rendered; Save button re-enabled</code></pre>
+
 <h3>Portfolio editor merge logic</h3>
 <p>On mount, the portfolio editor fetches both the saved plan and live positions in parallel, then merges them. The live position data takes precedence for read-only fields; saved plan values fill the editable TP/SL/order_size fields.</p>
 <pre><code>useEffect(() =&gt; {
@@ -207,7 +285,83 @@ const onStockBlur = async (key: string, symbol: string) =&gt; {
   load()
 }, [id])</code></pre>
 
-<h2>4. Data flow diagram</h2>
+<h2>4. Sidebar widget — Refresh button</h2>
+<p>The sidebar renders two compact widgets that surface the latest action plan without requiring the user to open the full editor pages: <strong>PurchasePlanWidget</strong> and <strong>PortfolioWidget</strong>. Both are implemented in <code>frontend/src/components/layouts/Sidebar.tsx</code>.</p>
+<p>Each widget has its own <code>handleRefresh</code> function. Unlike the full-editor <em>Refresh Prices</em> button — which only updates in-memory price cells — the sidebar <code>handleRefresh</code> also writes the updated payload back to the server, so the plan seen in the widget stays in sync with what the full editor would show.</p>
+
+<h3>Fetch-before-write pattern</h3>
+<p>Because the sidebar uses React Query with a <code>staleTime</code> of 2 minutes, the in-memory cache can hold data that pre-dates edits the user made in the full plan editor. To prevent those stale values from overwriting the server's authoritative state, <code>handleRefresh</code> always fetches the plan directly from the server before constructing the update payload.</p>
+<pre><code>// Step 1 — Fetch authoritative server state, bypassing React Query cache.
+//           If this fails, the function exits without any write.
+const serverPlan = await actionPlanService.get(planId)
+shouldInvalidate = true   // server was reached; cache will be invalidated regardless
+
+// Step 2 — Fetch live market prices for all symbols in parallel.
+const priceMap = ...
+
+// Step 3 — Build the update payload: spread server fields, overwrite only current_price.
+const updatedItems = serverPlan.purchase_items.map(item => ({
+  ...item,                // buy_price, sl, tp, strategy — all from server
+  current_price: priceMap.get(item.stock.trim()) ?? item.current_price,
+}))
+
+// Step 4 — Write back.
+await actionPlanService.update(planId, { purchase_items: updatedItems })
+
+// Step 5 — Invalidate cache so the widget re-renders with fresh data.
+if (shouldInvalidate) {
+  await queryClient.invalidateQueries({ queryKey: ['sidebar-purchase-plan-detail'] })
+  await queryClient.invalidateQueries({ queryKey: ['sidebar-purchase-plans'] })
+}</code></pre>
+<p>The PortfolioWidget follows the same pattern, using <code>serverPlan.portfolio_items</code> and spreading <code>entry_price</code>, <code>sl</code>, and <code>tp</code> from the server response.</p>
+
+<h3><code>shouldInvalidate</code> flag</h3>
+<p>The flag is declared as <code>let shouldInvalidate = false</code> before the try block. It is set to <code>true</code> immediately after the server fetch succeeds — before the write is attempted. This ensures that even if the subsequent <code>actionPlanService.update</code> call throws, the cache is still invalidated in the <code>finally</code>-equivalent <code>if (shouldInvalidate)</code> block. The result is that the widget always reflects the server state after a user-initiated refresh, regardless of whether the price write succeeded.</p>
+
+<h3>Sidebar widget data flow</h3>
+<pre><code>User clicks Refresh (sidebar widget)
+  → actionPlanService.get(planId)        // direct server call — bypasses React Query cache
+      ↓ success → shouldInvalidate = true
+  → GET /stock-price per symbol (parallel, errors isolated per symbol)
+      ↓
+  → Build payload: server items spread + current_price overwritten from live price
+      ↓
+  → actionPlanService.update(planId, payload)   // PUT /action-plans/{id}
+      ↓
+  → queryClient.invalidateQueries(...)   // always runs if server was reached
+      ↓
+  → React Query re-fetches; widget re-renders</code></pre>
+<div class="callout warn">If the initial <code>actionPlanService.get</code> call fails (network error, 404, 5xx), the function returns immediately. No write is attempted and <code>shouldInvalidate</code> remains <code>false</code>, so neither the server state nor the cache is touched.</div>
+
+<hr>
+
+<h2 id="bug-fix-sidebar-refresh">Bug fix — sidebar refresh stale-cache overwrite (2026-06-16)</h2>
+<p><strong>File:</strong> <code>frontend/src/components/layouts/Sidebar.tsx</code><br>
+<strong>Widgets affected:</strong> <code>PurchasePlanWidget.handleRefresh</code> and <code>PortfolioWidget.handleRefresh</code></p>
+
+<h3>The bug</h3>
+<p>Before this fix, both <code>handleRefresh</code> functions read the plan's line items directly from the React Query in-memory cache (stale time: 2 minutes). The cached snapshot was then used as the base for the update payload that was written back to the server. This created a silent data-loss path:</p>
+<ol>
+  <li>User opens the full plan editor and edits <code>buy_price</code>, <code>sl</code>, or <code>tp</code> (purchase plan) / <code>entry_price</code>, <code>sl</code>, or <code>tp</code> (portfolio plan), then saves.</li>
+  <li>Within the React Query stale window (up to 2 minutes), the user clicks Refresh on the sidebar widget.</li>
+  <li>The sidebar reads the stale cached values — which pre-date the editor save — and writes them back to the server, silently overwriting the user's edits with the stale data.</li>
+</ol>
+<div class="callout warn">The overwrite was silent: no error was shown and the widget appeared to refresh normally. The only observable symptom was that edited plan values reverted to their previous state.</div>
+
+<h3>The fix</h3>
+<p>Both widgets were changed to call <code>actionPlanService.get(planId)</code> as the first step of <code>handleRefresh</code>. This is a direct HTTP call that bypasses the React Query cache and retrieves the current authoritative state from the server. The server-returned items are then used as the base for the spread-and-override payload; only <code>current_price</code> is overwritten from the live market price API.</p>
+<table>
+  <thead><tr><th>Field</th><th>Before fix (source)</th><th>After fix (source)</th></tr></thead>
+  <tbody>
+    <tr><td><code>buy_price</code> / <code>entry_price</code></td><td>React Query cache (up to 2 min stale)</td><td>Server response from <code>actionPlanService.get</code></td></tr>
+    <tr><td><code>sl</code></td><td>React Query cache (up to 2 min stale)</td><td>Server response from <code>actionPlanService.get</code></td></tr>
+    <tr><td><code>tp</code></td><td>React Query cache (up to 2 min stale)</td><td>Server response from <code>actionPlanService.get</code></td></tr>
+    <tr><td><code>current_price</code></td><td>Live market price API</td><td>Live market price API (unchanged)</td></tr>
+  </tbody>
+</table>
+<p>The <code>shouldInvalidate</code> flag was also introduced to guarantee cache invalidation whenever the server was reached, even if the subsequent write step fails — preventing the widget from continuing to display data that is now known to be out of date.</p>
+
+<h2>5. Data flow diagram</h2>
 <pre><code>Browser → /api/proxy/api/v1/action-plans/...
            ↓ (Next.js server-side proxy, forwards JWT)
      http://backend:8000/api/v1/action-plans/...

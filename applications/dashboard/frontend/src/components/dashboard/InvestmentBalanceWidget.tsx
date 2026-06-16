@@ -11,10 +11,10 @@ import type { WidgetConfig } from '@/types'
 
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false })
 
-type Period = '1W' | '1M' | '3M' | '6M' | '1Y' | 'YTD'
-const PERIODS: Period[] = ['1W', '1M', '3M', '6M', '1Y', 'YTD']
+type Period = '1W' | '1M' | '3M' | '6M' | '1Y' | 'YTD' | 'All'
+const PERIODS: Period[] = ['1W', '1M', '3M', '6M', '1Y', 'YTD', 'All']
 
-function periodToParams(p: Period): { from_date: string; period: 'daily' | 'weekly' | 'monthly' } {
+function periodToParams(p: Period, earliestTxDate?: string): { from_date: string; period: 'daily' | 'weekly' | 'monthly' } {
   const today = new Date()
   const d = (dt: Date) => format(dt, 'yyyy-MM-dd')
   switch (p) {
@@ -24,6 +24,7 @@ function periodToParams(p: Period): { from_date: string; period: 'daily' | 'week
     case '6M':  return { from_date: d(subMonths(today, 6)),  period: 'weekly'  }
     case '1Y':  return { from_date: d(subMonths(today, 12)), period: 'monthly' }
     case 'YTD': return { from_date: d(startOfYear(today)),   period: 'monthly' }
+    case 'All': return { from_date: earliestTxDate ?? d(subMonths(today, 60)), period: 'monthly' }
   }
 }
 
@@ -48,7 +49,19 @@ export function InvestmentBalanceWidget({ config: _config }: { config: WidgetCon
     localStorage.setItem(PERIOD_KEY, p)
   }
 
-  const { from_date, period: apiPeriod } = periodToParams(period)
+  const { data: txData, isLoading: txLoading } = useQuery({
+    queryKey: ['inv-balance-widget-tx'],
+    queryFn: () => investmentTransactionService.list({}),
+    staleTime: 120_000,
+    refetchInterval: 5 * 60_000,
+  })
+
+  const earliestTxDate = useMemo(() => {
+    const dates = (txData?.transactions ?? []).map(tx => tx.date).filter(Boolean)
+    return dates.length > 0 ? dates.reduce((a, b) => (a < b ? a : b)) : undefined
+  }, [txData])
+
+  const { from_date, period: apiPeriod } = periodToParams(period, earliestTxDate)
   const toDate = format(new Date(), 'yyyy-MM-dd')
 
   const { data: perfData = [], isLoading: perfLoading } = useQuery({
@@ -56,13 +69,6 @@ export function InvestmentBalanceWidget({ config: _config }: { config: WidgetCon
     queryFn: () => portfolioTrackerService.getPerformance({ from_date, to_date: toDate, period: apiPeriod }),
     refetchInterval: 5 * 60_000,
     staleTime: 60_000,
-  })
-
-  const { data: txData, isLoading: txLoading } = useQuery({
-    queryKey: ['inv-balance-widget-tx'],
-    queryFn: () => investmentTransactionService.list({}),
-    staleTime: 120_000,
-    refetchInterval: 5 * 60_000,
   })
 
   const balanceData = useMemo(() => {

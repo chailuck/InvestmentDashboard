@@ -71,21 +71,36 @@ Authorization: Bearer eyJ...
 <hr>
 
 <h2>GET /api/v1/action-plans/stock-price</h2>
-<div class="obj">Fetches the latest closing price for a Thai SET stock via Yahoo Finance (appends <code>.BK</code>). Used by the action plan editor to auto-fill the current price field.</div>
+<div class="obj">Fetches the latest closing price for a Thai SET stock via Yahoo Finance. The backend tries <code>{SYMBOL}.BK</code> first, then falls back to the bare symbol, so both Thai and non-Thai tickers can be queried through the same endpoint. Used by the purchase plan editor both on individual stock-field blur and by the <strong>Refresh All Prices</strong> batch operation.</div>
+
+<h4>Authentication</h4>
+<p>Bearer JWT required. Returns <strong>401</strong> if the token is missing or invalid.</p>
 
 <h4>Query parameters</h4>
 <table>
-  <tr><th>Param</th><th>Required</th><th>Example</th></tr>
-  <tr><td><code>symbol</code></td><td>Yes</td><td><code>BH</code>, <code>GULF</code>, <code>ADVANC</code></td></tr>
+  <tr><th>Param</th><th>Required</th><th>Type</th><th>Example</th></tr>
+  <tr><td><code>symbol</code></td><td>Yes</td><td>string</td><td><code>BH</code>, <code>GULF</code>, <code>ADVANC</code></td></tr>
 </table>
 
-<h4>Sample</h4>
+<h4>Response 200 — success</h4>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>symbol</code></td><td>string</td><td>The symbol exactly as submitted in the query parameter</td></tr>
+  <tr><td><code>ticker</code></td><td>string</td><td>The Yahoo Finance ticker that returned data (<code>GULF.BK</code> or bare <code>GULF</code>)</td></tr>
+  <tr><td><code>price</code></td><td>number</td><td>Latest available closing price (float, in the stock's native currency — THB for SET stocks)</td></tr>
+</table>
 <pre><code>GET /api/v1/action-plans/stock-price?symbol=GULF
 Authorization: Bearer eyJ...
 
+HTTP/1.1 200 OK
 { "symbol": "GULF", "ticker": "GULF.BK", "price": 64.25 }</code></pre>
 
-<div class="err"><strong>404 Not Found</strong> — Yahoo Finance returns no data for <code>{SYMBOL}.BK</code>: <code>{"detail": "Price not found for GULF"}</code></div>
+<div class="err"><strong>401 Unauthorized</strong> — Token missing or expired: <code>{"detail": "Not authenticated"}</code></div>
+<div class="err"><strong>404 Not Found</strong> — Yahoo Finance returns no data for either <code>{SYMBOL}.BK</code> or bare <code>{SYMBOL}</code>: <code>{"detail": "Price not found for GULF"}</code></div>
+<div class="err"><strong>422 Unprocessable Entity</strong> — <code>symbol</code> query parameter is absent or empty: standard Pydantic validation error array.</div>
+
+<h4>Usage in Refresh All Prices</h4>
+<p>The frontend's <code>refreshAllPrices</code> function calls this endpoint once per non-empty row in parallel (<code>Promise.all</code> with per-item <code>.catch</code>). A 404 or network error for one symbol does not abort the batch — it is counted as a failed symbol in the refresh result notification. No automatic save occurs after a batch refresh; the user must click <strong>Save</strong> explicitly.</p>
 
 <hr>
 

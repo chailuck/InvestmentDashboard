@@ -171,7 +171,17 @@ async def get_stock_price(
             hist = yf.Ticker(ticker_sym).history(period="5d")
             if not hist.empty:
                 price = float(hist["Close"].iloc[-1])
-                return {"symbol": sym, "ticker": ticker_sym, "price": round(price, 2)}
+                change_pct: float | None = None
+                if len(hist) >= 2:
+                    prev_close = float(hist["Close"].iloc[-2])
+                    if prev_close != 0:
+                        change_pct = round((price - prev_close) / prev_close * 100, 2)
+                return {
+                    "symbol": sym,
+                    "ticker": ticker_sym,
+                    "price": round(price, 2),
+                    "change_pct": change_pct,
+                }
         except Exception:
             continue
 

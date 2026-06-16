@@ -3,6 +3,7 @@
 Endpoints covered
 -----------------
 GET  /api/v1/action-plans/suggest-name?plan_type=purchase
+GET  /api/v1/action-plans/stock-price?symbol=<SYMBOL>
 GET  /api/v1/action-plans?plan_type=purchase
 POST /api/v1/action-plans
 GET  /api/v1/action-plans/{id}
@@ -15,13 +16,16 @@ Notes
 * All endpoints require authentication (auth_client fixture).
 * plan_type must be 'purchase' or 'portfolio'.
 * suggest-name returns a date-based name (YYYY-MM-DD or YYYY-MM-DD-NN).
+* stock-price proxies yfinance; must be patched in tests to avoid live network calls.
 """
 
 from __future__ import annotations
 
 import re
 import uuid
+from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 from httpx import AsyncClient
 
@@ -302,3 +306,113 @@ async def test_duplicate_plan_copies_items(auth_client: AsyncClient):
     detail = await auth_client.get(f"/api/v1/action-plans/{dup_id}")
     stocks = [it["stock"] for it in detail.json()["purchase_items"]]
     assert "PTT" in stocks
+
+
+# ── Stock price ───────────────────────────────────────────────────────────────
+#
+# The endpoint calls yfinance at runtime.  We patch the module path that
+# FastAPI imports — `yfinance` inside the action_plan endpoint module — so no
+# live network requests are made.  The patch target must match the import
+# statement in the endpoint: `import yfinance as yf` inside the function body,
+# which resolves to the top-level `yfinance` module.
+#
+# TC-BE-01: valid symbol returns 200 with symbol/ticker/price fields
+# TC-BE-02: unknown / delisted symbol (empty history) returns 404
+# TC-BE-03: missing symbol query parameter returns 422
+# TC-BE-04: unauthenticated request returns 401
+# TC-BE-05: yfinance raises an exception — endpoint falls through and returns 404
+# TC-BE-06: symbol is normalised to upper-case in the response
+# TC-BE-07: price is rounded to 2 decimal places in the response
+#
+# Patch strategy
+# --------------
+# The endpoint does `import yfinance as yf` inside the function body, so there
+# is no module-level `yf` attribute to patch.  The correct patch target is
+# `yfinance.Ticker` — the attribute that the local `yf` alias will resolve to
+# at call time.  Using `patch("yfinance.Ticker")` replaces the class on the
+# module object itself before the local import runs, so the local `yf.Ticker`
+# call picks up the mock.
+
+
+def _make_history_df(price: float) -> "pd.DataFrame":
+    """Single-row Close DataFrame mimicking yfinance Ticker.history() output."""
+    close_series = pd.Series([price])
+    return pd.DataFrame({"Close": close_series})
+
+
+async def test_stock_price_valid_symbol(auth_client: AsyncClient):
+    """TC-BE-01: GET /stock-price?symbol=BH returns 200 with symbol, ticker, price."""
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = _make_history_df(150.25)
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        resp = await auth_client.get("/api/v1/action-plans/stock-price?symbol=BH")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["symbol"] == "BH"
+    assert body["price"] == 150.25
+    assert "ticker" in body
+    assert "change_pct" in body
+    assert body["change_pct"] is None  # single-row mock — no previous close available
+
+
+async def test_stock_price_unknown_symbol_returns_404(auth_client: AsyncClient):
+    """TC-BE-02: Symbol with no historical data (empty DataFrame) returns 404."""
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = pd.DataFrame()
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        resp = await auth_client.get("/api/v1/action-plans/stock-price?symbol=FAKEXYZ")
+
+    assert resp.status_code == 404
+    assert "FAKEXYZ" in resp.json()["detail"]
+
+
+async def test_stock_price_missing_symbol_returns_422(auth_client: AsyncClient):
+    """TC-BE-03: Omitting the symbol query parameter returns 422 (FastAPI validation)."""
+    resp = await auth_client.get("/api/v1/action-plans/stock-price")
+    assert resp.status_code == 422
+
+
+async def test_stock_price_unauthenticated(client: AsyncClient):
+    """TC-BE-04: Request without a JWT token returns 401."""
+    resp = await client.get("/api/v1/action-plans/stock-price?symbol=BH")
+    assert resp.status_code == 401
+
+
+async def test_stock_price_yfinance_exception_returns_404(auth_client: AsyncClient):
+    """TC-BE-05: When yfinance raises, the endpoint catches and returns 404, not 500."""
+    mock_ticker = MagicMock()
+    mock_ticker.history.side_effect = Exception("yfinance network error")
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        resp = await auth_client.get("/api/v1/action-plans/stock-price?symbol=ERR")
+
+    assert resp.status_code == 404
+
+
+async def test_stock_price_symbol_normalised_to_uppercase(auth_client: AsyncClient):
+    """TC-BE-06: Lower-case input symbol is returned as upper-case in the response."""
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = _make_history_df(75.0)
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        resp = await auth_client.get("/api/v1/action-plans/stock-price?symbol=advanc")
+
+    assert resp.status_code == 200
+    assert resp.json()["symbol"] == "ADVANC"
+
+
+async def test_stock_price_rounded_to_two_decimal_places(auth_client: AsyncClient):
+    """TC-BE-07: Price with many decimal places is rounded to 2dp in the response."""
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = _make_history_df(123.456789)
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        resp = await auth_client.get("/api/v1/action-plans/stock-price?symbol=PTT")
+
+    assert resp.status_code == 200
+    assert resp.json()["price"] == round(123.456789, 2)
+    assert "change_pct" in resp.json()
+    assert resp.json()["change_pct"] is None  # single-row mock — no previous close available

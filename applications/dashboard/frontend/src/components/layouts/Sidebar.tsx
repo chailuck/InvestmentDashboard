@@ -230,10 +230,51 @@ function PurchasePlanWidget() {
 
   const handleRefresh = async () => {
     setRefreshing(true)
+    let shouldInvalidate = false
     try {
-      await queryClient.invalidateQueries({ queryKey: ['sidebar-purchase-plan-detail'] })
-      await queryClient.invalidateQueries({ queryKey: ['sidebar-purchase-plans'] })
+      if (!latest) return
+
+      // Step 1: Fetch authoritative server state (bypasses React Query cache).
+      // Abort if this fails — no stale data is ever written back to the server.
+      const serverPlan = await actionPlanService.get(latest.id)
+      shouldInvalidate = true  // server reached; invalidate cache regardless of subsequent steps
+
+      const symbolItems = serverPlan.purchase_items.filter(item => item.stock && item.stock.trim() !== '')
+
+      if (symbolItems.length > 0) {
+        // Step 2: Fetch live prices concurrently — individual failures return null (graceful degradation).
+        const priceResults = await Promise.all(
+          symbolItems.map(item =>
+            actionPlanService.getStockPrice(item.stock.trim())
+              .then(result => ({ stock: item.stock.trim(), price: result.price }))
+              .catch(() => ({ stock: item.stock.trim(), price: null as number | null }))
+          )
+        )
+
+        const priceMap = new Map<string, number | null>()
+        for (const r of priceResults) {
+          priceMap.set(r.stock, r.price)
+        }
+
+        // Step 3: Merge — server fields authoritative, live price overwrites current_price only.
+        // Spread-and-override ensures any future PurchaseItem fields are preserved automatically.
+        const updatedItems = serverPlan.purchase_items.map(item => ({
+          ...item,
+          current_price: (item.stock && priceMap.has(item.stock.trim()) && priceMap.get(item.stock.trim()) !== null)
+            ? priceMap.get(item.stock.trim())!
+            : item.current_price,
+        }))
+
+        // Step 4: Persist merged result
+        await actionPlanService.update(latest.id, { purchase_items: updatedItems })
+      }
     } finally {
+      // Step 5: Always invalidate if the server was reached, even if the write failed,
+      // so the widget re-renders from the most recently known server state.
+      if (shouldInvalidate) {
+        await queryClient.invalidateQueries({ queryKey: ['sidebar-purchase-plan-detail'] })
+        await queryClient.invalidateQueries({ queryKey: ['sidebar-purchase-plans'] })
+      }
       setRefreshing(false)
     }
   }
@@ -487,11 +528,44 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
 
   const handleRefresh = async () => {
     setRefreshing(true)
+    let shouldInvalidate = false
     try {
-      await queryClient.invalidateQueries({ queryKey: ['sidebar-portfolio-positions'] })
-      await queryClient.invalidateQueries({ queryKey: ['sidebar-portfolio-plans'] })
-      await queryClient.invalidateQueries({ queryKey: ['sidebar-portfolio-plan-detail'] })
+      if (!isDbMode && latestPlan) {
+        // Fetch authoritative server state (bypasses React Query cache) before writing.
+        // This prevents stale cached entry_price, sl, tp from overwriting server-side edits.
+        const serverPlan = await actionPlanService.get(latestPlan.id)
+        shouldInvalidate = true  // server reached; invalidate cache regardless of subsequent steps
+
+        const symbolItems = serverPlan.portfolio_items.filter(item => item.symbol && item.symbol.trim() !== '')
+        if (symbolItems.length > 0) {
+          const priceResults = await Promise.all(
+            symbolItems.map(item =>
+              actionPlanService.getStockPrice(item.symbol.trim())
+                .then(result => ({ symbol: item.symbol.trim(), price: result.price }))
+                .catch(() => ({ symbol: item.symbol.trim(), price: null as number | null }))
+            )
+          )
+          const priceMap = new Map(priceResults.map(r => [r.symbol, r.price]))
+          // Spread-and-override: server fields authoritative, live price overwrites current_price only.
+          const updatedItems = serverPlan.portfolio_items.map((item, i) => ({
+            ...item,
+            sort_order: item.sort_order ?? i,
+            current_price: priceMap.has(item.symbol.trim()) ? (priceMap.get(item.symbol.trim()) ?? item.current_price) : item.current_price,
+          }))
+          await actionPlanService.update(latestPlan.id, { portfolio_items: updatedItems })
+        }
+      } else {
+        // DB mode — no plan write, but always invalidate to refresh live positions
+        shouldInvalidate = true
+      }
     } finally {
+      // Always invalidate if the server was reached (or in DB mode), even if the write failed,
+      // so the widget re-renders from the most recently known server state.
+      if (shouldInvalidate) {
+        await queryClient.invalidateQueries({ queryKey: ['sidebar-portfolio-positions'] })
+        await queryClient.invalidateQueries({ queryKey: ['sidebar-portfolio-plans'] })
+        await queryClient.invalidateQueries({ queryKey: ['sidebar-portfolio-plan-detail'] })
+      }
       setRefreshing(false)
     }
   }

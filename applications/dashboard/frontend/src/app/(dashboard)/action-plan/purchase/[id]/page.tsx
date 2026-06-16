@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Plus, Trash2, Save, FileDown, Copy, CheckCircle2,
-  Loader2, AlertTriangle, XCircle, X, BarChart2, Download, Upload,
+  Loader2, AlertTriangle, XCircle, X, BarChart2, Download, Upload, RefreshCw,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -22,6 +22,7 @@ interface Row {
   _key: string
   stock: string
   current_price: number | null
+  price_change_pct: number | null
   size: number | null
   buy_price: number | null
   tp: number | null
@@ -33,11 +34,19 @@ interface Row {
   triggered: boolean
 }
 
+interface RefreshResult {
+  total: number
+  succeeded: number
+  failed: number
+  failedSymbols: string[]
+}
+
 let _rowId = 0
 const newRow = (): Row => ({
   _key: `r${++_rowId}`,
   stock: '',
   current_price: null,
+  price_change_pct: null,
   size: null,
   buy_price: null,
   tp: null,
@@ -212,6 +221,7 @@ export default function PurchasePlanEditor() {
 
   const [planName, setPlanName] = useState('')
   const [rows, setRows] = useState<Row[]>([])
+  const rowsRef = useRef<Row[]>([])
   const [setAnalysis, setSetAnalysis] = useState('')
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(true)
@@ -220,7 +230,25 @@ export default function PurchasePlanEditor() {
   const importRef = useRef<HTMLInputElement>(null)
   const [generateText, setGenerateText] = useState<string | null>(null)
   const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
+  const autoRefreshDone = useRef(false)
+
+  useEffect(() => {
+    rowsRef.current = rows
+  }, [rows])
+
+  // Auto-refresh prices once after plan loads so % change is visible immediately
+  useEffect(() => {
+    if (!loading && !autoRefreshDone.current && rowsRef.current.some(r => r.stock.trim() !== '')) {
+      autoRefreshDone.current = true
+      // Small delay so render completes before the fetch starts
+      const t = setTimeout(() => { refreshAllPrices() }, 400)
+      return () => clearTimeout(t)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
 
   // Load plan on mount
   useEffect(() => {
@@ -236,6 +264,7 @@ export default function PurchasePlanEditor() {
           _key: `r${++_rowId}`,
           stock: item.stock,
           current_price: item.current_price,
+          price_change_pct: null,
           size: item.size,
           buy_price: item.buy_price,
           tp: item.tp,
@@ -271,9 +300,83 @@ export default function PurchasePlanEditor() {
   const fetchPrice = useCallback(async (key: string, symbol: string) => {
     if (!symbol.trim()) return
     updateRow(key, { fetchingPrice: true })
-    const price = await actionPlanService.getStockPrice(symbol.trim())
-    updateRow(key, { current_price: price, fetchingPrice: false })
+    const { price, change_pct } = await actionPlanService.getStockPrice(symbol.trim())
+    updateRow(key, { current_price: price, price_change_pct: change_pct, fetchingPrice: false })
   }, [])
+
+  // ── Refresh all prices ─────────────────────────────────────────────────────
+
+  const refreshAllPrices = useCallback(async () => {
+    if (refreshing || saving) return
+
+    const targetRows = rowsRef.current.filter(r => r.stock.trim() !== '')
+
+    if (targetRows.length === 0) {
+      setRefreshResult({ total: 0, succeeded: 0, failed: 0, failedSymbols: [] })
+      return
+    }
+
+    setRefreshing(true)
+    setRefreshResult(null)
+
+    setRows(prev =>
+      prev.map(r => r.stock.trim() !== '' ? { ...r, fetchingPrice: true } : r)
+    )
+
+    const results = await Promise.all(
+      targetRows.map(r =>
+        actionPlanService.getStockPrice(r.stock.trim())
+          .then(result => ({
+            key: r._key,
+            symbol: r.stock.trim().toUpperCase(),
+            price: result.price,
+            change_pct: result.change_pct,
+          }))
+          .catch(() => ({
+            key: r._key,
+            symbol: r.stock.trim().toUpperCase(),
+            price: null as number | null,
+            change_pct: null as number | null,
+          }))
+      )
+    )
+
+    const failedSymbols: string[] = []
+    let succeeded = 0
+    const patchMap = new Map<string, Partial<Row>>()
+
+    for (const result of results) {
+      patchMap.set(result.key, { current_price: result.price, price_change_pct: result.change_pct, fetchingPrice: false })
+      if (result.price === null) {
+        failedSymbols.push(result.symbol)
+      } else {
+        succeeded++
+      }
+    }
+
+    setRows(prev =>
+      prev.map(r => {
+        const patch = patchMap.get(r._key)
+        return patch ? { ...r, ...patch } : { ...r, fetchingPrice: false }
+      })
+    )
+
+    setRefreshResult({
+      total: targetRows.length,
+      succeeded,
+      failed: failedSymbols.length,
+      failedSymbols,
+    })
+
+    setRefreshing(false)
+  }, [refreshing, saving])
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  const formatSymbolList = (symbols: string[]) =>
+    symbols.length <= 5
+      ? symbols.join(', ')
+      : [...symbols.slice(0, 5), `+${symbols.length - 5} more`].join(', ')
 
   // ── Save ──────────────────────────────────────────────────────────────────
 
@@ -391,8 +494,19 @@ export default function PurchasePlanEditor() {
             Generate
           </button>
           <button
+            onClick={refreshAllPrices}
+            disabled={refreshing || saving}
+            className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5"
+          >
+            {refreshing
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <RefreshCw className="w-3.5 h-3.5" />
+            }
+            {refreshing ? 'Refreshing…' : 'Refresh Prices'}
+          </button>
+          <button
             onClick={save}
-            disabled={saving}
+            disabled={saving || refreshing}
             className="btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5"
           >
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -405,6 +519,34 @@ export default function PurchasePlanEditor() {
           )}
           {saveMsg === 'err' && (
             <span className="text-xs text-loss">Save failed</span>
+          )}
+          {refreshResult !== null && (
+            <span className={`text-xs flex items-center gap-1 ${
+              refreshResult.total === 0
+                ? 'text-amber-400'
+                : refreshResult.failed === 0
+                ? 'text-gain'
+                : refreshResult.succeeded === 0
+                ? 'text-loss'
+                : 'text-amber-400'
+            }`}>
+              {refreshResult.total === 0 ? (
+                <><AlertTriangle className="w-3.5 h-3.5" /> No symbols to refresh</>
+              ) : refreshResult.failed === 0 ? (
+                <><CheckCircle2 className="w-3.5 h-3.5" /> All {refreshResult.total} prices updated</>
+              ) : refreshResult.succeeded === 0 ? (
+                <><XCircle className="w-3.5 h-3.5" /> No prices retrieved. Failed: {
+                  formatSymbolList(refreshResult.failedSymbols)
+                }</>
+              ) : (
+                <><AlertTriangle className="w-3.5 h-3.5" /> {refreshResult.succeeded} of {refreshResult.total} updated. Failed: {
+                  formatSymbolList(refreshResult.failedSymbols)
+                }</>
+              )}
+              <button onClick={() => setRefreshResult(null)} className="ml-1 hover:opacity-70" aria-label="Dismiss">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
           )}
         </div>
       </div>
@@ -485,9 +627,19 @@ export default function PurchasePlanEditor() {
                     <td className="px-2.5 py-1.5 w-[80px] text-right tabular-nums">
                       <div className="flex items-center justify-end gap-1">
                         {row.fetchingPrice && <Loader2 className="w-3 h-3 animate-spin text-brand-400" />}
-                        <span className={row.current_price ? 'text-ink-primary' : 'text-ink-disabled'}>
-                          {row.current_price != null ? row.current_price.toFixed(2) : '—'}
-                        </span>
+                        <div>
+                          <div className={row.current_price ? 'text-ink-primary' : 'text-ink-disabled'}>
+                            {row.current_price != null ? row.current_price.toFixed(2) : '—'}
+                          </div>
+                          {row.price_change_pct != null && (
+                            <div className={cn(
+                              'text-[10px] tabular-nums',
+                              row.price_change_pct >= 0 ? 'text-gain/70' : 'text-loss/70'
+                            )}>
+                              {row.price_change_pct >= 0 ? '+' : ''}{row.price_change_pct.toFixed(2)}%
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                     {/* SIZE */}

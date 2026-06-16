@@ -27,7 +27,10 @@
       "Bash(curl -s http://localhost:8000/)",
       "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"admin@investpro.com\",\"password\":\"Admin123!\"}')",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('access_token','ERROR'\\)[:40]\\)\")",
-      "Bash(docker cp *)"
+      "Bash(docker cp *)",
+      "PowerShell(docker exec inv_backend *)",
+      "PowerShell($token = \\(Invoke-RestMethod -Uri \"http://localhost:8000/api/v1/auth/login\" -Method POST -ContentType \"application/json\" -Body '{\"email\":\"admin@demo.com\",\"password\":\"admin123\"}' 2>&1\\).access_token; Write-Host \"Token: $\\($token.Substring\\(0,20\\)\\)...\")",
+      "PowerShell($response = Invoke-RestMethod -Uri \"http://localhost:8000/api/v1/auth/login\" -Method POST -ContentType \"application/json\" -Body '{\"email\":\"admin@demo.com\",\"password\":\"Demo@1234\"}'; $token = $response.access_token; $txId = \"8d56d9cd-c4cc-4159-94d3-0d2642d98e26\"; $body = '{\"date\":\"2026-06-16\",\"action\":\"CASH_IN\",\"amount\":95000,\"currency\":\"THB\",\"note\":null}'; $result = Invoke-RestMethod -Uri \"http://localhost:8000/api/v1/investment-transactions/$txId\" -Method PUT -ContentType \"application/json\" -Headers @{Authorization=\"Bearer $token\"} -Body $body; Write-Host \"SUCCESS: $\\($result | ConvertTo-Json\\)\")"
     ]
   }
 }

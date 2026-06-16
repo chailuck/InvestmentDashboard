@@ -1,11 +1,24 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { TrendingUp, TrendingDown, BarChart2, Target, Percent } from 'lucide-react'
+import { TrendingUp, TrendingDown, Target, Percent } from 'lucide-react'
+import { subMonths, format } from 'date-fns'
 import { portfolioTrackerService } from '@/services/portfolioTracker'
 import { cn } from '@/lib/utils'
 import type { WidgetConfig } from '@/types'
+
+type Period = '3M' | '6M' | '1Y' | 'All'
+const PERIODS: Period[] = ['3M', '6M', '1Y', 'All']
+const PERIOD_KEY = 'trading-history-widget-period'
+
+function periodToFromDate(p: Period): string | undefined {
+  if (p === 'All') return undefined
+  const today = new Date()
+  const months = p === '3M' ? 3 : p === '6M' ? 6 : 12
+  return format(subMonths(today, months), 'yyyy-MM-dd')
+}
 
 function fmtTHB(n: number) {
   const sign = n >= 0 ? '+' : ''
@@ -15,9 +28,23 @@ function fmtTHB(n: number) {
 }
 
 export function TradingHistorySummaryWidget({ config }: { config: WidgetConfig }) {
+  const [period, setPeriod] = useState<Period>('3M')
+
+  useEffect(() => {
+    const saved = localStorage.getItem(PERIOD_KEY) as Period | null
+    if (saved && PERIODS.includes(saved)) setPeriod(saved)
+  }, [])
+
+  const handlePeriod = (p: Period) => {
+    setPeriod(p)
+    localStorage.setItem(PERIOD_KEY, p)
+  }
+
+  const from_date = periodToFromDate(period)
+
   const { data, isLoading } = useQuery({
-    queryKey: ['portfolio-summary'],
-    queryFn: () => portfolioTrackerService.getSummary({}),
+    queryKey: ['portfolio-summary', from_date],
+    queryFn: () => portfolioTrackerService.getSummary({ from_date }),
     refetchInterval: 60_000,
     staleTime: 30_000,
   })
@@ -71,7 +98,25 @@ export function TradingHistorySummaryWidget({ config }: { config: WidgetConfig }
   }
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 p-3 h-full content-start sm:gap-3 sm:p-4">
+    <div className="flex flex-col h-full">
+      {/* Period selector */}
+      <div className="flex items-center gap-1 px-3 pt-3 pb-1 sm:px-4 sm:pt-4">
+        {PERIODS.map(p => (
+          <button
+            key={p}
+            onClick={() => handlePeriod(p)}
+            className={cn(
+              'px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150',
+              period === p
+                ? 'bg-brand-500/15 text-brand-400 border border-brand-500/20'
+                : 'text-ink-muted hover:text-ink-secondary',
+            )}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 p-3 content-start sm:gap-3 sm:p-4">
       {metrics.map(({ label, value, sub, up, icon: Icon, highlight }) => (
         <motion.div
           key={label}
@@ -110,6 +155,7 @@ export function TradingHistorySummaryWidget({ config }: { config: WidgetConfig }
           {sub && <span className="text-[10px] sm:text-xs text-ink-muted leading-tight">{sub}</span>}
         </motion.div>
       ))}
+    </div>
     </div>
   )
 }
