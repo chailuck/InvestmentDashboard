@@ -17,10 +17,11 @@ const STRATEGY_ABBR: Record<string, string> = {
 interface PlanCellDisplayProps {
   item: PurchaseItem
   dayPrice: number | null
+  prevDayPrice: number | null
   compact?: boolean
 }
 
-export function PlanCellDisplay({ item, dayPrice, compact = false }: PlanCellDisplayProps) {
+export function PlanCellDisplay({ item, dayPrice, prevDayPrice = null, compact = false }: PlanCellDisplayProps) {
   const effectivePrice = dayPrice
   const hasSL  = item.sl != null
   const hasTP  = item.tp != null
@@ -33,10 +34,36 @@ export function PlanCellDisplay({ item, dayPrice, compact = false }: PlanCellDis
 
   const textSize = compact ? 'text-[9px]' : 'text-[10px]'
 
+  const changePct =
+    prevDayPrice != null && prevDayPrice !== 0 && dayPrice != null
+      ? ((dayPrice - prevDayPrice) / prevDayPrice) * 100
+      : null
+
+  const changePctLabel =
+    changePct === null
+      ? null
+      : Math.abs(changePct) < 0.005
+      ? '0.0%'
+      : changePct > 0
+      ? `+${changePct.toFixed(1)}%`
+      : `${changePct.toFixed(1)}%`
+
+  const changeColor =
+    changePct === null
+      ? ''
+      : changePct >= 0
+      ? 'text-gain'
+      : 'text-loss'
+
   return (
     <div className={cn('space-y-0.5', textSize)}>
-      {/* Line 1: TARGET | buy_price / CURR | effective_price | strategy */}
+      {/* Line 1: %change | TARGET | buy_price / CURR | effective_price | strategy */}
       <div className="flex items-center gap-1 tabular-nums">
+        {changePctLabel !== null && (
+          <span className={cn('font-semibold shrink-0', changeColor)}>
+            {changePctLabel}
+          </span>
+        )}
         <span className="text-[8px] text-ink-disabled shrink-0">TARGET:</span>
         <span className="text-yellow-300 font-bold shrink-0">
           {hasBuy ? item.buy_price!.toFixed(1) : '—'}

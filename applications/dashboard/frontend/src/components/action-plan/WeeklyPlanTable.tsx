@@ -111,13 +111,16 @@ export function WeeklyPlanTable({
                           </span>
                         )}
                       </th>
-                      {weekDays.map(day => {
+                      {weekDays.map((day, dayIdx) => {
                         const isFuture = day.date > todayMidnight
                         const dayPrice: number | null = isFuture
                           ? null
                           : day.isToday && isCurrentWeek
                             ? item.current_price
                             : priceMap.get(item.stock)?.get(day.isoDate) ?? null
+                        const prevDayPrice: number | null = dayIdx === 0
+                          ? null
+                          : priceMap.get(item.stock)?.get(weekDays[dayIdx - 1].isoDate) ?? null
                         return (
                           <td
                             key={day.label}
@@ -127,7 +130,7 @@ export function WeeklyPlanTable({
                             )}
                           >
                             {isFuture ? null : (
-                              <PlanCellDisplay item={item} dayPrice={dayPrice} />
+                              <PlanCellDisplay item={item} dayPrice={dayPrice} prevDayPrice={prevDayPrice} />
                             )}
                           </td>
                         )
