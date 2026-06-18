@@ -179,5 +179,72 @@ STA,20.0,18.4,500</code></pre>
   <li>The Portfolio Plan editor always loads <strong>live position data</strong> on every page open. The saved TP/SL/order_size values overlay the live data. Positions that have been closed since the plan was last saved will no longer appear in the live list.</li>
   <li>RR (risk/reward ratio) is <strong>display-only</strong> and is never stored in the database. It is recalculated client-side on every render from the current BUY, TP, and SL values.</li>
 </ol>
+
+<hr>
+
+<h2>5. Weekly Plan Dashboard</h2>
+
+<h3>5.1 Purpose and business value</h3>
+<p>The <strong>Weekly Plan Dashboard</strong> is a read-only section appended below the Review List on the <code>/action-plan</code> page. It gives traders an at-a-glance view of their active purchase watchlist and open portfolio positions mapped across the current Mon–Fri trading week. The goal is to let a trader open the Action Plan page once and see — without navigating into individual plan editors — exactly which stocks they are watching or holding and where prices stand relative to their targets and stop-losses.</p>
+
+<h3>5.2 Layout and structure</h3>
+<p>The dashboard is a single card rendered as the fifth section on <code>/action-plan</code>, after the Review List section. Its header shows a <strong>CalendarDays</strong> icon, the title "Weekly Plan Dashboard", and a date range label such as "Week of 16 Jun – 20 Jun" derived from the current calendar week.</p>
+<p>Inside the card, two independent sub-tables are stacked vertically:</p>
+<table>
+  <thead><tr><th>Table</th><th>Data source</th><th>Stock accessor</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Purchase Watchlist</strong></td><td>Most recent purchase action plan</td><td><code>item.stock</code></td></tr>
+    <tr><td><strong>Portfolio Positions</strong></td><td>Most recent portfolio action plan</td><td><code>item.symbol</code></td></tr>
+  </tbody>
+</table>
+
+<h3>5.3 Mon–Fri column grid</h3>
+<p>Each table has a fixed <strong>Stock</strong> column on the left followed by five day columns — Mon, Tue, Wed, Thu, Fri — for the current calendar week. Column headers show the abbreviated day name and the date in <em>D MMM</em> format (e.g., "Tue 17 Jun").</p>
+<p><strong>Today highlighting:</strong> The column corresponding to the current calendar day is visually distinguished with a blue-tinted background on its header cell (<code>bg-brand-500/10 text-brand-400</code>) and a lighter blue tint on all data cells in that column (<code>bg-brand-500/5</code>). No column is highlighted on weekends.</p>
+<p>Every data cell in a given row contains identical content — the same plan item data is repeated across all five day columns. The dashboard does not yet differentiate data by day; the grid structure establishes the weekly planning frame for future per-day annotation.</p>
+
+<h3>5.4 Cell content</h3>
+
+<h4>Purchase Watchlist cell</h4>
+<p>Each purchase cell shows two lines:</p>
+<ul>
+  <li><strong>Line 1:</strong> clickable symbol — TARGET: buy_price / CURR: current_price — strategy abbreviation (e.g., BO, BOD, ททกต)</li>
+  <li><strong>Line 2 (position bar):</strong> rendered only when both SL and TP are set. Shows SL value ← [bar] → TP value with a yellow star marker at the target entry price and a white dot at the current price. A white line segment connects the two markers.</li>
+</ul>
+<p>The <strong>Stock</strong> row-header cell additionally shows the SL / TP values as a small sub-label beneath the symbol in red / green text.</p>
+<p>If the item has a <code>triggered</code> flag set to <code>true</code>, the symbol displays a checkmark suffix (e.g., <code>BH✓</code>) and the symbol text turns green.</p>
+
+<h4>Portfolio Positions cell</h4>
+<p>Each portfolio cell shows two lines:</p>
+<ul>
+  <li><strong>Line 1:</strong> clickable symbol — P&amp;L percentage (green if positive, red if negative) — entry price / current price (current price coloured by profit/loss)</li>
+  <li><strong>Line 2 (position bar):</strong> rendered when the current price and at least one of SL or TP is available. Shows SL ← [bar] → TP with a purple dot at the entry price and a green (profit) or red (loss) dot at the current price. When SL or TP is missing, the bar is replaced by the current price value in the appropriate colour.</li>
+</ul>
+
+<h3>5.5 Symbol click — AnalyticsModal</h3>
+<p>Clicking any stock symbol in either table opens the <strong>AnalyticsModal</strong> for that symbol, with <code>assetType="SET"</code>. The modal is the same analytics overlay used by the Sidebar widgets and the Weekly Scan module. The clicked symbol is normalised to upper case before the modal is opened. Clicking outside the modal or pressing its close button dismisses it.</p>
+<p>Symbols containing characters outside the set <code>[A-Z 0-9 - .]</code> (case-insensitive, 1–12 characters) are silently ignored and the modal is not opened.</p>
+
+<h3>5.6 Loading states</h3>
+<p>Each sub-table (Purchase Watchlist and Portfolio Positions) shows its own loading state independently. While plan data is being fetched, the table area displays a spinning loader icon with the text "Loading…". The two tables can be in different loading states simultaneously if one query resolves before the other.</p>
+
+<h3>5.7 Error states</h3>
+<p>If any query in the chain (plan list or plan detail) fails, the affected sub-table replaces its content with an alert icon and the message "Failed to load plan data." The other table is unaffected.</p>
+
+<h3>5.8 Empty states</h3>
+<table>
+  <thead><tr><th>Condition</th><th>Displayed message</th></tr></thead>
+  <tbody>
+    <tr><td>No purchase plans exist for the user</td><td>"No active purchase plan found."</td></tr>
+    <tr><td>Purchase plan exists but has no items</td><td>"No purchase stocks found. Add stocks to your Purchase Action Plan above."</td></tr>
+    <tr><td>No portfolio plans exist for the user</td><td>"No active portfolio plan found."</td></tr>
+    <tr><td>Portfolio plan exists but has no items</td><td>"No portfolio stocks found. Add stocks to your Portfolio Action Plan above."</td></tr>
+  </tbody>
+</table>
+
+<h3>5.9 Data freshness</h3>
+<p>The Weekly Plan Dashboard shares the same TanStack Query cache keys as the sidebar widgets (<code>sidebar-purchase-plans</code>, <code>sidebar-purchase-plan-detail</code>, <code>sidebar-portfolio-plans</code>, <code>sidebar-portfolio-plan-detail</code>). Data is considered fresh for 2 minutes after the last fetch. After the stale window expires, the next navigation to or re-render of the page triggers a background refetch automatically.</p>
+<div class="callout tip">Price data shown in the dashboard reflects the <code>current_price</code> saved in the plan at the time it was last refreshed. To update prices in the dashboard, use the <strong>Refresh Prices</strong> button in the Purchase Action Plan editor or the Refresh button in the sidebar widget. No dedicated refresh control exists within the Weekly Plan Dashboard itself.</div>
+
 </body>
 </html>

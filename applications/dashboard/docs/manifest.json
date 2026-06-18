@@ -69,8 +69,9 @@
       "id": "action-plan",
       "label": "Action Plan",
       "children": [
-        { "id": "ap-functional", "label": "Functional Spec",  "file": "06-action-plan/FUNCTIONAL.html" },
-        { "id": "ap-technical",  "label": "Technical Design", "file": "06-action-plan/TECHNICAL.html"  }
+        { "id": "ap-functional",            "label": "Functional Spec",              "file": "06-action-plan/FUNCTIONAL.html"              },
+        { "id": "ap-technical",             "label": "Technical Design",             "file": "06-action-plan/TECHNICAL.html"               },
+        { "id": "ap-weekly-plan-enhancements", "label": "Weekly Plan Enhancements",  "file": "06-action-plan/WEEKLY-PLAN-ENHANCEMENTS.html" }
       ]
     },
     {

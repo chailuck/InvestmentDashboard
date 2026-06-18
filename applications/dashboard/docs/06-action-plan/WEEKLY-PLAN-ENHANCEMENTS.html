@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weekly Plan Dashboard — Enhancements — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Weekly Plan Dashboard — Enhancements</h1>
+<p><strong>Version:</strong> 1.0 &nbsp;&nbsp; <strong>Date:</strong> 2026-06-17 &nbsp;&nbsp; <strong>Status:</strong> <span class="badge green">Implemented</span></p>
+<p>This document describes three enhancements shipped together to the Weekly Plan Dashboard (the fifth section of <code>/action-plan</code>). Baseline architecture is described in <code>06-action-plan/TECHNICAL.html § 5</code>; this document records only the delta.</p>
+
+<h2>1. Feature overview</h2>
+<table>
+  <thead><tr><th>#</th><th>Enhancement</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>E-1</td>
+      <td>Per-day closing prices in week cells</td>
+      <td>Each Mon–Fri cell shows the historical closing price for that date instead of always showing the same live <code>current_price</code> from the plan record. Cells for future dates are blank; today's cell uses the live price from the plan.</td>
+    </tr>
+    <tr>
+      <td>E-2</td>
+      <td>Week selector (previous / next week navigation)</td>
+      <td>Users can scroll backward up to 52 weeks and forward to the current week. Column headers and all price cells update to match the selected week.</td>
+    </tr>
+    <tr>
+      <td>E-3</td>
+      <td>Symbol removed from cell body; moved to row header</td>
+      <td>Each row's symbol is shown once in the sticky row header <code>&lt;th&gt;</code> as a clickable button, not repeated inside every cell. This reduces visual noise and makes the symbol a single reliable click target.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>2. Backend — new endpoint</h2>
+
+<h3>Endpoint definition</h3>
+<table>
+  <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>Method</td><td><code>GET</code></td></tr>
+    <tr><td>Path</td><td><code>/api/v1/action-plans/price-history</code></td></tr>
+    <tr><td>Authentication</td><td>Bearer JWT (same <code>get_current_user_id</code> dependency as all other action-plan endpoints)</td></tr>
+    <tr><td>Router file</td><td><code>backend/app/api/v1/endpoints/action_plan.py</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Query parameters</h3>
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Validation</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>symbols</code></td><td>string</td><td>Yes</td><td>Comma-separated; max 20 items; each item must match <code>[A-Z0-9.\-]{1,20}</code></td><td>SET ticker symbols. Duplicates are silently deduplicated.</td></tr>
+    <tr><td><code>date_from</code></td><td>ISO date</td><td>Yes</td><td>Format <code>YYYY-MM-DD</code>; must be a Monday</td><td>First day of the requested week window.</td></tr>
+    <tr><td><code>date_to</code></td><td>ISO date</td><td>Yes</td><td>Format <code>YYYY-MM-DD</code>; must be exactly 4 calendar days after <code>date_from</code></td><td>Last day of the requested week window (Friday).</td></tr>
+  </tbody>
+</table>
+<div class="callout warn">The endpoint enforces that <code>date_to - date_from == 4 days</code> exactly. This prevents callers from requesting arbitrarily large date ranges via this endpoint. Requests spanning more than one week must be split by the caller.</div>
+
+<h3>Response — HTTP 200</h3>
+<pre><code>{
+  "date_from": "2026-06-16",
+  "date_to":   "2026-06-20",
+  "prices": {
+    "BH":    { "2026-06-16": 122.50, "2026-06-17": 124.00 },
+    "KBANK": { "2026-06-16": 141.00 },
+    "PTT":   {}
+  }
+}</code></pre>
+<p>The <code>prices</code> object contains one key per requested symbol. Each symbol maps to an object whose keys are ISO date strings and whose values are closing prices as floats. A symbol with no available data for any date in the range returns an empty object (<code>{}</code>), not an error.</p>
+
+<h3>TypeScript response type</h3>
+<pre><code>export type DailyPrices = Record&lt;string, number&gt;        // { "2026-06-16": 122.50 }
+export type WeekPriceMap = Record&lt;string, DailyPrices&gt;  // { "BH": DailyPrices }
+
+export interface PriceHistoryResponse {
+  date_from: string
+  date_to:   string
+  prices:    WeekPriceMap
+}</code></pre>
+<p>Defined in <code>frontend/src/services/actionPlan.ts</code>.</p>
+
+<h3>Error responses</h3>
+<table>
+  <thead><tr><th>HTTP status</th><th>Condition</th><th>Body</th></tr></thead>
+  <tbody>
+    <tr><td>400</td><td>Missing or invalid query parameters (symbol format, date format, date range not exactly 5 days)</td><td>FastAPI validation error JSON</td></tr>
+    <tr><td>401</td><td>Missing or invalid Bearer token</td><td><code>{"detail": "Not authenticated"}</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Partial failure behaviour</h3>
+<p>If the data source returns no closing prices for a symbol (e.g., the symbol is delisted, or market data is unavailable for the requested dates), the backend includes the symbol key in <code>prices</code> with an empty object. The frontend treats an absent key and an empty object identically — the affected cells are rendered blank. No error is surfaced to the user for individual symbol failures.</p>
+
+<h3>Frontend service method</h3>
+<pre><code>// frontend/src/services/actionPlan.ts
+actionPlanService.getPriceHistory(
+  symbols:   string[],
+  dateFrom:  string,   // "2026-06-16"
+  dateTo:    string    // "2026-06-20"
+): Promise&lt;PriceHistoryResponse&gt;</code></pre>
+<p>Constructs the <code>symbols</code> query parameter by joining the array with commas. Called once per week view render when the component mounts or when the user changes the selected week.</p>
+
+<hr>
+
+<h2>3. Frontend — component changes</h2>
+
+<h3>Modified files</h3>
+<pre><code>frontend/src/lib/weekDates.ts                                        — WeekDay gains isoDate field
+frontend/src/services/actionPlan.ts                                  — new types + getPriceHistory()
+frontend/src/components/action-plan/WeeklyPlanDashboard.tsx          — week offset state + price fetch
+frontend/src/components/action-plan/WeeklyPlanTable.tsx              — priceMap + isCurrentWeek props; symbol in &lt;th&gt;
+frontend/src/components/action-plan/PlanCellDisplay.tsx              — symbol removed; dayPrice prop added
+frontend/src/components/action-plan/PortfolioCellDisplay.tsx         — symbol removed; dayPrice prop added</code></pre>
+
+<h3>weekDates.ts — isoDate field added to WeekDay</h3>
+<p>The <code>WeekDay</code> interface gains one field. This is the only change to <code>weekDates.ts</code>.</p>
+<pre><code>export interface WeekDay {
+  date:      Date     // JavaScript Date object
+  label:     string   // 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri'
+  dateLabel: string   // 'd MMM' format, e.g. '16 Jun'
+  isToday:   boolean  // true when this date matches system date
+  isoDate:   string   // NEW — "YYYY-MM-DD", e.g. "2026-06-16"; used as price map key
+}</code></pre>
+<p>The existing <code>getCurrentWeekDays()</code> is renamed to <code>getWeekDays(weekOffset: number): WeekDay[]</code>. A <code>weekOffset</code> of <code>0</code> returns the current ISO week (Mon–Fri); <code>-1</code> returns the previous week; positive offsets advance into the future. <code>isToday</code> continues to reflect the system date regardless of offset — it will be <code>false</code> for all cells when a past or future week is selected.</p>
+<div class="callout warn">The rename of <code>getCurrentWeekDays</code> to <code>getWeekDays</code> is a breaking change to any other caller of the old function. As of this document no other file imports <code>getCurrentWeekDays</code> directly — confirm before future refactors.</div>
+
+<h3>WeeklyPlanDashboard.tsx — week selector state</h3>
+<pre><code>const [weekOffset, setWeekOffset] = useState&lt;number&gt;(0)
+const weekDays = useMemo(() =&gt; getWeekDays(weekOffset), [weekOffset])
+
+// Derived date range for price history fetch
+const dateFrom = weekDays[0].isoDate   // Monday isoDate
+const dateTo   = weekDays[4].isoDate   // Friday isoDate
+
+// Price history query (TanStack Query)
+const { data: priceHistory } = useQuery({
+  queryKey: ['weekly-price-history', dateFrom, dateTo, symbolList],
+  queryFn:  () =&gt; actionPlanService.getPriceHistory(symbols, dateFrom, dateTo),
+  enabled:  symbols.length &gt; 0,
+  staleTime: 5 * 60 * 1000,   // 5 minutes — prices for past weeks are immutable
+})
+
+// Build the Map used by WeeklyPlanTable
+const priceMap = useMemo(() =&gt; {
+  const map = new Map&lt;string, Map&lt;string, number&gt;&gt;()
+  if (priceHistory) {
+    for (const [symbol, dailyPrices] of Object.entries(priceHistory.prices)) {
+      map.set(symbol, new Map(Object.entries(dailyPrices)))
+    }
+  }
+  return map
+}, [priceHistory])</code></pre>
+
+<h4>Week selector navigation controls</h4>
+<p>Two chevron buttons are rendered in the dashboard header.</p>
+<table>
+  <thead><tr><th>Button</th><th>Action</th><th>Disabled condition</th></tr></thead>
+  <tbody>
+    <tr><td>Previous week (left chevron)</td><td><code>setWeekOffset(n =&gt; n - 1)</code></td><td><code>weekOffset &lt;= -52</code></td></tr>
+    <tr><td>Next week (right chevron)</td><td><code>setWeekOffset(n =&gt; n + 1)</code></td><td><code>weekOffset &gt;= 0</code></td></tr>
+  </tbody>
+</table>
+<p>The next-week button is disabled when <code>weekOffset &gt;= 0</code> to prevent navigation into future weeks. The 52-week lookback limit on the previous-week button is a UX guard; the backend has no corresponding date limit.</p>
+
+<h3>WeeklyPlanTable.tsx — updated props interface</h3>
+<pre><code>interface WeeklyPlanTableProps {
+  variant:        'purchase' | 'portfolio'
+  items:          PurchaseItem[] | PortfolioItem[]
+  weekDays:       WeekDay[]
+  isLoading:      boolean
+  isError:        boolean
+  hasActivePlan:  boolean
+  onSymbolClick:  (symbol: string) =&gt; void   // now handled by &lt;th&gt; only
+  priceMap:       Map&lt;string, Map&lt;string, number&gt;&gt;   // NEW
+  isCurrentWeek:  boolean                             // NEW — weekOffset === 0
+}</code></pre>
+
+<h4>Symbol in row header (E-3)</h4>
+<p>The row header <code>&lt;th&gt;</code> now renders the symbol as a <code>&lt;button&gt;</code>. The <code>onSymbolClick</code> prop is wired here, not inside the cell components.</p>
+<pre><code>&lt;th&gt;
+  &lt;button
+    onClick={() =&gt; onSymbolClick(symbol)}
+    className="symbol-btn"
+  &gt;
+    {symbol}
+  &lt;/button&gt;
+&lt;/th&gt;</code></pre>
+<p><code>onSymbolClick</code> is no longer passed as a prop to <code>PlanCellDisplay</code> or <code>PortfolioCellDisplay</code>.</p>
+
+<h4>dayPrice resolution (E-1)</h4>
+<p>For each cell, the table resolves a <code>dayPrice</code> before rendering:</p>
+<pre><code>const dayPrice: number | null = (() =&gt; {
+  const symbolPrices = priceMap.get(symbol)
+  if (!symbolPrices) return null
+
+  const day = weekDays[colIndex]
+
+  // Future date — no price available
+  if (!isCurrentWeek &amp;&amp; !day.isToday /* always false for non-current week */ ) {
+    // Use isoDate comparison against today to determine future
+  }
+  if (day.isoDate &gt; todayIso) return null
+
+  // Today on the current week — use live price from plan item
+  if (day.isToday &amp;&amp; isCurrentWeek) return item.current_price ?? null
+
+  // Historical date — use price map
+  return symbolPrices.get(day.isoDate) ?? null
+})()
+</code></pre>
+<p>The resolved <code>dayPrice</code> is passed to the cell component as a required prop. Cells render a price when <code>dayPrice</code> is a number, or render blank when it is <code>null</code>.</p>
+
+<h3>PlanCellDisplay.tsx — symbol removed, dayPrice added</h3>
+<p>The symbol string is removed from the component's render output. The <code>dayPrice: number | null</code> prop is added and is required.</p>
+<pre><code>interface PlanCellDisplayProps {
+  item:       PurchaseItem
+  compact?:   boolean
+  dayPrice:   number | null   // NEW — null = blank, number = display value
+  // onSymbolClick removed — handled by &lt;th&gt; in WeeklyPlanTable
+}</code></pre>
+<p>The cell displays <code>dayPrice</code> in place of <code>item.current_price</code> for the price row. The position bar continues to use <code>item.current_price</code> (live price from plan record) for SL–TP visualisation, as the bar is a planning aid that should always reflect the latest known price rather than a historical snapshot.</p>
+
+<h3>PortfolioCellDisplay.tsx — symbol removed, dayPrice added</h3>
+<p>Identical pattern to <code>PlanCellDisplay</code>. The P&amp;L percentage calculation continues to use <code>item.current_price</code> and <code>item.entry_price</code> — <code>dayPrice</code> is used only for the price display field in the cell header row.</p>
+<pre><code>interface PortfolioCellDisplayProps {
+  item:       PortfolioItem
+  compact?:   boolean
+  dayPrice:   number | null   // NEW
+  // onSymbolClick removed
+}</code></pre>
+
+<hr>
+
+<h2>4. Data flow diagram</h2>
+<pre><code>
+USER INTERACTION
+================
+
+User changes weekOffset (prev/next chevron)
+  → getWeekDays(weekOffset)       — pure, no I/O
+      → new weekDays[0..4].isoDate values
+  → TanStack Query key changes: ['weekly-price-history', dateFrom, dateTo, symbols]
+      → cache miss → GET /api/proxy/api/v1/action-plans/price-history
+            ↓ (Next.js server-side proxy, forwards JWT)
+          FastAPI: GET /api/v1/action-plans/price-history
+            ↓
+          Price data source (yfinance or DB — see assumption below)
+            ↓
+          PriceHistoryResponse { date_from, date_to, prices: WeekPriceMap }
+            ↓
+      WeeklyPlanDashboard.useMemo
+        → priceMap: Map&lt;symbol, Map&lt;isoDate, price&gt;&gt;
+            ↓
+        WeeklyPlanTable (purchase)        WeeklyPlanTable (portfolio)
+          for each row × 5 day columns:    for each row × 5 day columns:
+            dayPrice = resolve(             dayPrice = resolve(
+              priceMap, symbol, day)          priceMap, symbol, day)
+            → &lt;PlanCellDisplay               → &lt;PortfolioCellDisplay
+                dayPrice={dayPrice} /&gt;           dayPrice={dayPrice} /&gt;
+
+
+PRICE RESOLUTION PER CELL
+==========================
+
+Given symbol S and day D (WeekDay):
+
+  D.isoDate &gt; today     → dayPrice = null           (future — blank cell)
+  D.isToday &amp;&amp; current  → dayPrice = item.current_price  (live plan price)
+  D.isoDate &lt;= today    → dayPrice = priceMap
+                               .get(S)
+                               ?.get(D.isoDate)
+                             ?? null                 (historical or no data)
+
+
+SYMBOL CLICK PATH (unchanged from baseline)
+===========================================
+
+  User clicks symbol button in &lt;th&gt;
+    → WeeklyPlanTable.onSymbolClick(symbol)
+        → WeeklyPlanDashboard.handleSymbolClick(symbol)
+            → regex validate
+                → setModalSymbol(symbol.toUpperCase())
+                    → AnalyticsModal opens
+</code></pre>
+
+<hr>
+
+<h2>5. Architecture decisions</h2>
+
+<h3>ADR-WP1: Batch price fetch over per-symbol fetch</h3>
+<table>
+  <thead><tr><th>Attribute</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Status</strong></td><td><span class="badge green">Accepted</span></td></tr>
+    <tr><td><strong>Date</strong></td><td>2026-06-17</td></tr>
+    <tr><td><strong>Deciders</strong></td><td>Weekly Plan Dashboard team</td></tr>
+  </tbody>
+</table>
+
+<h4>Context</h4>
+<p>The Weekly Plan Dashboard shows price cells for N symbols × 5 days. Two fetch strategies were evaluated for loading historical prices.</p>
+
+<h4>Decision</h4>
+<p>We will use a single batch endpoint (<code>GET /price-history?symbols=A,B,C&amp;date_from=...&amp;date_to=...</code>) that returns all symbols and all dates in one response.</p>
+
+<h4>Alternatives considered</h4>
+<table>
+  <thead><tr><th>Alternative</th><th>Pros</th><th>Cons</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Per-symbol fetch (N requests, one per row)</td>
+      <td>Simpler endpoint; partial results load progressively</td>
+      <td>N concurrent HTTP requests; N separate TanStack Query cache entries to invalidate; no single coordinated loading state</td>
+    </tr>
+    <tr>
+      <td>Batch endpoint (chosen)</td>
+      <td>Single network round-trip; one cache entry keyed on the full symbol list + date range; single loading/error state in the UI</td>
+      <td>All-or-nothing: if the batch request fails the entire price grid is unavailable (mitigated by per-symbol empty-object partial failure within a successful response)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>Consequences</h4>
+<ul>
+  <li>The symbol list passed as a query parameter must be deterministically ordered to avoid cache key fragmentation from different symbol orderings. The frontend should sort symbols before joining.</li>
+  <li>The 20-symbol cap on the endpoint limits the maximum number of tracked symbols in a single weekly view. This is acceptable for a personal portfolio tool.</li>
+  <li>Cache <code>staleTime</code> for past weeks is set to 5 minutes (longer than the 2-minute stale time for plan data) because historical closing prices are immutable once a trading day closes.</li>
+</ul>
+
+<h4>Risks</h4>
+<ul>
+  <li>If the symbol list grows beyond 20, the endpoint must be called in batches of 20 and results merged client-side. No such batching is implemented in this version.</li>
+</ul>
+
+<hr>
+
+<h3>ADR-WP2: Price data prop-drilled from Dashboard through Table to Cell</h3>
+<table>
+  <thead><tr><th>Attribute</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Status</strong></td><td><span class="badge green">Accepted</span></td></tr>
+    <tr><td><strong>Date</strong></td><td>2026-06-17</td></tr>
+    <tr><td><strong>Deciders</strong></td><td>Weekly Plan Dashboard team</td></tr>
+  </tbody>
+</table>
+
+<h4>Context</h4>
+<p>Price data needed to reach the individual cell components (<code>PlanCellDisplay</code>, <code>PortfolioCellDisplay</code>). Two delivery patterns were considered.</p>
+
+<h4>Decision</h4>
+<p>We will prop-drill the <code>priceMap</code> (and the resolved <code>dayPrice</code>) from <code>WeeklyPlanDashboard</code> through <code>WeeklyPlanTable</code> to each cell. Cell components are purely presentational and receive a resolved <code>dayPrice: number | null</code> scalar — they never initiate network requests.</p>
+
+<h4>Alternatives considered</h4>
+<table>
+  <thead><tr><th>Alternative</th><th>Pros</th><th>Cons</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Cell-level fetch (each cell calls <code>useQuery</code> for its own price)</td>
+      <td>Cells are self-contained; no prop drilling</td>
+      <td>N × 5 separate query subscriptions; each cell has its own loading state, making a unified "loading" skeleton impossible; defeats the batch fetch in ADR-WP1</td>
+    </tr>
+    <tr>
+      <td>React Context (price data in a context provider)</td>
+      <td>Avoids prop drilling through Table layer</td>
+      <td>Adds a context boundary for a small two-level tree; overkill for the current component depth; makes data flow less explicit</td>
+    </tr>
+    <tr>
+      <td>Prop drilling (chosen)</td>
+      <td>Explicit data flow; cells remain stateless presentational components; single TanStack Query subscription in Dashboard; one coordinated loading state</td>
+      <td>WeeklyPlanTable receives and forwards <code>priceMap</code> without using it directly (pass-through prop)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>Consequences</h4>
+<ul>
+  <li><code>WeeklyPlanTable</code> now carries a <code>priceMap</code> prop purely to pass it down. This is acceptable given the shallow depth (Dashboard → Table → Cell).</li>
+  <li>Adding a third table type (if a new plan type is introduced) will require threading the same <code>priceMap</code> prop again.</li>
+</ul>
+
+<h4>Risks</h4>
+<ul>
+  <li>If component depth increases significantly, the prop-drilling approach should be revisited in favour of Context or a shared query hook.</li>
+</ul>
+
+<hr>
+
+<h2>6. Technical debt register</h2>
+<table>
+  <thead><tr><th>Item</th><th>Location</th><th>Description</th><th>Suggested resolution</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Symbol list ordering for cache keys</td>
+      <td><code>WeeklyPlanDashboard.tsx</code></td>
+      <td>The symbols array passed to <code>getPriceHistory</code> and used as part of the TanStack Query key must be consistently sorted to prevent cache fragmentation. If symbols arrive in different order across renders, duplicate network requests will be made for the same data.</td>
+      <td>Sort symbols alphabetically before building the query key and the API call parameter: <code>const symbolList = [...symbols].sort().join(',')</code></td>
+    </tr>
+    <tr>
+      <td>No batching when symbol count exceeds 20</td>
+      <td><code>frontend/src/services/actionPlan.ts</code></td>
+      <td>The <code>getPriceHistory</code> endpoint enforces a maximum of 20 symbols per request. The frontend does not implement chunking. If a user tracks more than 20 symbols, the request will fail with a 400 error and all price cells will be blank.</td>
+      <td>In <code>getPriceHistory</code>, split the symbols array into chunks of 20, issue parallel requests, and merge the <code>WeekPriceMap</code> responses before returning.</td>
+    </tr>
+    <tr>
+      <td>Position bar uses live price, not dayPrice</td>
+      <td><code>PlanCellDisplay.tsx</code>, <code>PortfolioCellDisplay.tsx</code></td>
+      <td>The SL–TP position bar in each cell uses <code>item.current_price</code> (the live price stored in the plan record) rather than <code>dayPrice</code> (the historical price for the selected day). On past weeks, the bar position reflects today's price, not the price on that historical day.</td>
+      <td>Pass <code>dayPrice</code> to the bar calculation in place of <code>item.current_price</code> when <code>dayPrice</code> is non-null and the selected week is not the current week.</td>
+    </tr>
+    <tr>
+      <td><code>getCurrentWeekDays</code> rename breaks callers</td>
+      <td><code>frontend/src/lib/weekDates.ts</code></td>
+      <td>The function was renamed from <code>getCurrentWeekDays()</code> to <code>getWeekDays(weekOffset)</code>. Any future file importing the old name will fail silently at runtime if TypeScript strict mode is not enforced at the import site.</td>
+      <td>Add a deprecated re-export alias in <code>weekDates.ts</code> and remove it after confirming no other callers exist via a codebase search.</td>
+    </tr>
+  </tbody>
+</table>
+
+</body>
+</html>

@@ -57,6 +57,19 @@ export interface ActionPlan {
   portfolio_items: PortfolioItem[]
 }
 
+// ── Price history ─────────────────────────────────────────────────────────────
+
+/** Map of isoDate → closing price, keyed by symbol */
+export type DailyPrices = Record<string, number>
+/** Map of symbol → DailyPrices */
+export type WeekPriceMap = Record<string, DailyPrices>
+
+export interface PriceHistoryResponse {
+  date_from: string
+  date_to: string
+  prices: WeekPriceMap
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export const actionPlanService = {
@@ -118,6 +131,21 @@ export const actionPlanService = {
   /** Hard-delete a plan (irreversible). */
   async delete(id: string): Promise<void> {
     await apiClient.delete(`/action-plans/${id}`)
+  },
+
+  /**
+   * Fetch historical closing prices for a set of symbols over a date range.
+   * Returns a map of symbol → { isoDate → price }.
+   */
+  async getPriceHistory(
+    symbols: string[],
+    dateFrom: string,
+    dateTo: string,
+  ): Promise<PriceHistoryResponse> {
+    const { data } = await apiClient.get('/action-plans/price-history', {
+      params: { symbols: symbols.join(','), date_from: dateFrom, date_to: dateTo },
+    })
+    return data as PriceHistoryResponse
   },
 
   /** Duplicate a plan with a new name. Returns the new plan id + name. */

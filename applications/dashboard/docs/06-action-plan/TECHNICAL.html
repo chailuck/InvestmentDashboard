@@ -361,7 +361,154 @@ if (shouldInvalidate) {
 </table>
 <p>The <code>shouldInvalidate</code> flag was also introduced to guarantee cache invalidation whenever the server was reached, even if the subsequent write step fails — preventing the widget from continuing to display data that is now known to be out of date.</p>
 
-<h2>5. Data flow diagram</h2>
+<h2>5. Weekly Plan Dashboard — technical design</h2>
+
+<h3>File locations</h3>
+<pre><code>frontend/src/lib/weekDates.ts                                         — date utility
+frontend/src/lib/weekDates.test.ts                                    — 21 unit tests
+frontend/src/components/action-plan/WeeklyPlanDashboard.tsx           — orchestrator
+frontend/src/components/action-plan/WeeklyPlanTable.tsx               — grid table
+frontend/src/components/action-plan/PlanCellDisplay.tsx               — purchase cell
+frontend/src/components/action-plan/PortfolioCellDisplay.tsx          — portfolio cell
+frontend/src/app/(dashboard)/action-plan/page.tsx                     — mount point (5th section)</code></pre>
+
+<h3>Component hierarchy</h3>
+<pre><code>ActionPlanPage (page.tsx)
+  └── WeeklyPlanDashboard            — fetches data, owns AnalyticsModal state
+        ├── WeeklyPlanTable variant="purchase"
+        │     └── PlanCellDisplay    — rendered once per row × 5 day columns
+        └── WeeklyPlanTable variant="portfolio"
+              └── PortfolioCellDisplay  — rendered once per row × 5 day columns</code></pre>
+
+<p><code>WeeklyPlanTable</code> accepts a discriminated-union-style <code>variant</code> prop that selects which cell component to render and determines title text and empty-state labels. Both item-list types (<code>PurchaseItem[]</code> and <code>PortfolioItem[]</code>) flow in as the same <code>items</code> prop and are narrowed inside the table via a runtime variant check.</p>
+
+<h3>WeeklyPlanTable props interface</h3>
+<pre><code>interface WeeklyPlanTableProps {
+  variant:       'purchase' | 'portfolio'
+  items:         PurchaseItem[] | PortfolioItem[]
+  weekDays:      WeekDay[]
+  isLoading:     boolean
+  isError:       boolean
+  hasActivePlan: boolean
+  onSymbolClick: (symbol: string) => void
+}</code></pre>
+
+<h3>Data flow — TanStack Query cache sharing</h3>
+<p><code>WeeklyPlanDashboard</code> opens four queries, all sharing the same cache keys as the sidebar widgets. This means if the sidebar already loaded the data within the 2-minute stale window, the dashboard reads from cache with no network request.</p>
+<table>
+  <thead><tr><th>Query key</th><th>Query function</th><th>staleTime</th><th>Condition</th></tr></thead>
+  <tbody>
+    <tr><td><code>['sidebar-purchase-plans']</code></td><td><code>actionPlanService.list('purchase', null)</code></td><td>2 min</td><td>always enabled</td></tr>
+    <tr><td><code>['sidebar-purchase-plan-detail', id]</code></td><td><code>actionPlanService.get(id)</code></td><td>2 min</td><td>enabled when <code>latestPurchaseId</code> is defined</td></tr>
+    <tr><td><code>['sidebar-portfolio-plans']</code></td><td><code>actionPlanService.list('portfolio', null)</code></td><td>2 min</td><td>always enabled</td></tr>
+    <tr><td><code>['sidebar-portfolio-plan-detail', id]</code></td><td><code>actionPlanService.get(id)</code></td><td>2 min</td><td>enabled when <code>latestPortfolioId</code> is defined</td></tr>
+  </tbody>
+</table>
+<p>The dashboard selects the most recent plan by reading <code>plans[0].id</code> from the list response (the backend returns plans ordered by <code>updated_at DESC</code>). If no plans exist, <code>latestPurchaseId</code> / <code>latestPortfolioId</code> remain <code>undefined</code>, the detail query is disabled, and the empty state is shown.</p>
+<p>Combined loading and error flags are derived as:</p>
+<pre><code>const isPurchaseLoading = purchasePlansLoading || purchaseDetailLoading
+const isPurchaseError   = purchasePlansError   || purchaseDetailError
+// (same pattern for portfolio)</code></pre>
+
+<h3>handleSymbolClick — input validation</h3>
+<p>Before opening <code>AnalyticsModal</code>, the clicked symbol is validated against a regex to reject malformed input:</p>
+<pre><code>function handleSymbolClick(symbol: string) {
+  if (/^[A-Z0-9\-\.]{1,12}$/i.test(symbol)) {
+    setModalSymbol(symbol.toUpperCase())
+  }
+}</code></pre>
+<p>The pattern accepts 1–12 characters drawn from the SET/DR ticker alphabet (letters, digits, hyphen, dot) and is case-insensitive. Any symbol that fails the check is silently dropped — no error is shown to the user. The validated symbol is stored in upper case in <code>modalSymbol</code> state.</p>
+<div class="callout warn">The regex does not enforce SET-specific rules (e.g., maximum suffix length for DR tickers). It is a basic sanity guard, not a domain validator.</div>
+
+<h3>AnalyticsModal — dynamic import</h3>
+<p><code>AnalyticsModal</code> is loaded with <code>next/dynamic</code> at the <code>WeeklyPlanDashboard</code> level, with <code>ssr: false</code> and a <code>null</code> loading fallback. This defers the modal's JavaScript bundle until first interaction and avoids hydration errors. The modal is wrapped in <code>AnimatePresence</code> to support enter/exit transitions driven by Framer Motion.</p>
+
+<hr>
+
+<h3>weekDates.ts — utility reference</h3>
+
+<h4>WeekDay interface</h4>
+<pre><code>export interface WeekDay {
+  date:      Date    // JavaScript Date object for the calendar day
+  label:     string  // 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri'
+  dateLabel: string  // date-fns format 'd MMM', e.g. '16 Jun' (no leading zero)
+  isToday:   boolean // true only when this Date matches the system date
+}</code></pre>
+
+<h4>getCurrentWeekDays()</h4>
+<pre><code>export function getCurrentWeekDays(): WeekDay[]</code></pre>
+<p>Returns an array of exactly five <code>WeekDay</code> objects representing Monday through Friday of the week that contains the current system date. Internally, it calls <code>date-fns/startOfWeek</code> with <code>{ weekStartsOn: 1 }</code> (ISO Monday anchor) and then applies <code>addDays(monday, 0..4)</code>.</p>
+
+<h4>Weekend behaviour</h4>
+<p>When called on a Saturday or Sunday, the function returns the Mon–Fri of the <em>same ISO week</em> (i.e., the five days that just passed). No <code>isToday</code> flag will be <code>true</code> because neither Saturday nor Sunday is in the returned array.</p>
+
+<h4>dateLabel format</h4>
+<p>Uses the <code>date-fns</code> format token <code>'d MMM'</code> — a non-padded day number followed by the three-letter English month abbreviation. Examples: <code>'1 Jun'</code>, <code>'15 Jun'</code>, <code>'2 Jan'</code>. The function handles month and year boundaries correctly (verified by unit tests covering 29 Jun → 3 Jul and 29 Dec → 2 Jan spans).</p>
+
+<h4>Test coverage</h4>
+<p>The 21 unit tests in <code>weekDates.test.ts</code> cover: array shape (length, field types), label order, Monday anchor invariant, day-spacing invariant, <code>isToday</code> correctness for each weekday, Saturday and Sunday behaviour (5-day return, no <code>isToday</code>), <code>dateLabel</code> format and no-leading-zero rule, month-boundary span, year-boundary span, idempotent successive calls, and mutation-isolation of the returned array.</p>
+
+<hr>
+
+<h3>PlanCellDisplay — purchase cell</h3>
+<p>Accepts a <code>PurchaseItem</code> and an optional <code>onSymbolClick</code> callback. When <code>onSymbolClick</code> is provided, the symbol is rendered as a <code>&lt;button&gt;</code>; otherwise as a <code>&lt;span&gt;</code>. A <code>compact</code> prop (default <code>false</code>) reduces font sizes for use in constrained layouts.</p>
+
+<h4>Position bar calculation</h4>
+<pre><code>const range  = hasSL && hasTP ? item.tp - item.sl : 0
+const buyPct = range > 0 && hasBuy
+  ? Math.max(0, Math.min(100, ((item.buy_price - item.sl) / range) * 100))
+  : null
+const curPct = range > 0 && hasCur
+  ? Math.max(0, Math.min(100, ((item.current_price - item.sl) / range) * 100))
+  : null
+const showBar = hasSL && hasTP && (buyPct !== null || curPct !== null)</code></pre>
+<p>Both percentages are clamped to [0, 100] so markers never overflow the bar even when the price is outside the SL–TP range.</p>
+
+<h4>STRATEGY_ABBR mapping</h4>
+<p>Strategy labels are abbreviated before display to fit the compact cell layout:</p>
+<pre><code>const STRATEGY_ABBR: Record&lt;string, string&gt; = {
+  'BREAK OUT':          'BO',
+  'BUY ON DIP':         'BOD',
+  'แท่งเทียนกลับตัว':  'ททกต',
+  'ยยจท':              'ยยจท',
+  'NEWS':               'NEWS',
+  'AJ PAO':             'AJPAO',
+  'OTHERS':             'OTHER',
+}</code></pre>
+<p>Strategies not found in the map are displayed as-is (<code>?? item.strategy</code>).</p>
+<div class="callout warn"><strong>Technical debt:</strong> <code>STRATEGY_ABBR</code> is defined independently in <code>PlanCellDisplay.tsx</code>. The same strategy options are also listed in the purchase plan editor page. These two definitions are not shared, creating a risk of divergence if a new strategy option is added in one place but not the other. A future refactor should extract this map to a shared constants file and import it in both locations.</div>
+
+<hr>
+
+<h3>PortfolioCellDisplay — portfolio cell</h3>
+<p>Accepts a <code>PortfolioItem</code> and an optional <code>onSymbolClick</code> callback. The P&amp;L percentage is derived client-side:</p>
+<pre><code>const pnlPct = hasEntry && hasCur
+  ? ((item.current_price - item.entry_price) / item.entry_price) * 100
+  : null</code></pre>
+<p>The position bar uses separate markers for entry price (purple dot) and current price (green/red dot). The bar is shown only when <code>current_price</code> is available and at least one of <code>sl</code> or <code>tp</code> is set. When <code>slTpPct</code> cannot be calculated (because both SL and TP are null), the bar is replaced by the current price value as text.</p>
+
+<hr>
+
+<h3>Technical debt register</h3>
+<table>
+  <thead><tr><th>Item</th><th>Location</th><th>Description</th><th>Suggested resolution</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>STRATEGY_ABBR</code> duplication</td>
+      <td><code>PlanCellDisplay.tsx</code></td>
+      <td>Strategy abbreviation map is not shared with the purchase plan editor. Adding a new strategy requires updating two files.</td>
+      <td>Extract to <code>src/lib/strategyOptions.ts</code> and import in both locations.</td>
+    </tr>
+    <tr>
+      <td>Discriminated union props pattern</td>
+      <td><code>WeeklyPlanTable.tsx</code></td>
+      <td>The <code>items</code> prop accepts <code>PurchaseItem[] | PortfolioItem[]</code> and is narrowed at runtime via the <code>variant</code> check. TypeScript cannot enforce at compile time that <code>variant="purchase"</code> and <code>items: PortfolioItem[]</code> cannot be combined.</td>
+      <td>Replace with a proper discriminated union: two separate overloaded interfaces (<code>PurchaseTableProps</code> and <code>PortfolioTableProps</code>) merged via a union type, so the compiler enforces consistent pairing.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>6. Data flow diagram</h2>
 <pre><code>Browser → /api/proxy/api/v1/action-plans/...
            ↓ (Next.js server-side proxy, forwards JWT)
      http://backend:8000/api/v1/action-plans/...

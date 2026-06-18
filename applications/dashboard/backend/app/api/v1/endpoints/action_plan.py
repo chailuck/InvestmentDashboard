@@ -13,8 +13,10 @@ POST /action-plans/{id}/duplicate        â†’ copy plan with new name
 """
 
 
+import asyncio
+import re
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -23,7 +25,9 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.v1.endpoints.analytics import _ticker_sym
 from app.auth.dependencies import get_current_user_id
+from app.core.logging import get_logger
 from app.database.session import get_db
 from app.models.action_plan import ActionPlan, PortfolioPlanItem, PurchasePlanItem
 from app.schemas.action_plan import ActionPlanCreate, ActionPlanUpdate
@@ -32,6 +36,11 @@ router = APIRouter(prefix="/action-plans", tags=["Action Plans"])
 
 UserId = Annotated[str, Depends(get_current_user_id)]
 DB = Annotated[AsyncSession, Depends(get_db)]
+
+_log = get_logger("action_plan")
+
+_SYMBOL_RE = re.compile(r"^[A-Z0-9.\-]{1,20}$")
+_MAX_SYMBOLS = 20
 
 
 # â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -245,7 +254,124 @@ async def create_plan(body: ActionPlanCreate, user_id: UserId, db: DB) -> dict[s
     return {"id": str(plan.id), "name": plan.name, "plan_type": plan.plan_type}
 
 
-# â”€â”€ Get plan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Price history ─────────────────────────────────────────────────────────────
+
+
+def _fetch_week_closes(symbol: str, date_from: date, date_to: date) -> dict[str, float]:
+    """Fetch daily closing prices for *symbol* over the [date_from, date_to] range.
+
+    Uses yfinance with auto_adjust=False, back_adjust=False to return raw
+    unadjusted closes.  The end date passed to yfinance is date_to + 1 day
+    because yfinance treats the end parameter as exclusive.
+
+    Returns a mapping of ISO-date string → rounded close price.
+    Returns an empty dict when no data is available (holiday, delisted, etc.).
+    """
+    import pandas as pd
+    import yfinance as yf
+
+    end = date_to + timedelta(days=1)
+    start_str = date_from.strftime("%Y-%m-%d")
+    end_str = end.strftime("%Y-%m-%d")
+
+    for ticker_sym in _ticker_sym(symbol, "SET"):
+        try:
+            hist = yf.Ticker(ticker_sym).history(
+                start=start_str,
+                end=end_str,
+                interval="1d",
+                auto_adjust=False,
+                back_adjust=False,
+            )
+            if hist.empty:
+                continue
+            result: dict[str, float] = {}
+            for dt in hist.index:
+                # strftime on a tz-aware Timestamp formats in its own timezone (Bangkok),
+                # producing the correct trading date regardless of UTC offset.
+                date_key = pd.Timestamp(dt).strftime("%Y-%m-%d")
+                result[date_key] = round(float(hist.loc[dt, "Close"]), 2)
+            if result:
+                return result
+        except Exception:
+            continue
+    return {}
+
+
+@router.get("/price-history")
+async def get_price_history(
+    _: UserId,
+    symbols: str = Query(..., description="Comma-separated SET stock symbols, max 20"),
+    date_from: str = Query(..., description="Week start date YYYY-MM-DD (Monday)"),
+    date_to: str = Query(..., description="Week end date YYYY-MM-DD (Friday), must be exactly 4 days after date_from"),
+) -> dict[str, Any]:
+    """Return daily closing prices for a set of symbols over a trading week.
+
+    Every requested symbol always appears in the ``prices`` map even when no
+    data is available for that symbol (returned as an empty dict).  HTTP errors
+    are only raised for validation failures (400) or authentication issues (401).
+    Partial symbol failures yield an empty map for that symbol and are logged as
+    warnings rather than errors.
+    """
+    # ── Validate symbols ──────────────────────────────────────────────────────
+    raw_parts = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not raw_parts:
+        raise HTTPException(status_code=400, detail="symbols must not be empty")
+    if len(raw_parts) > _MAX_SYMBOLS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"symbols must not exceed {_MAX_SYMBOLS}; received {len(raw_parts)}",
+        )
+    for sym in raw_parts:
+        if not _SYMBOL_RE.match(sym):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid symbol '{sym}': must be 1-20 alphanumeric characters, dots, or hyphens",
+            )
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    raw_symbols: list[str] = []
+    for sym in raw_parts:
+        if sym not in seen:
+            seen.add(sym)
+            raw_symbols.append(sym)
+
+    # ── Validate dates ────────────────────────────────────────────────────────
+    try:
+        d_from = date.fromisoformat(date_from)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"date_from '{date_from}' is not a valid YYYY-MM-DD date")
+    try:
+        d_to = date.fromisoformat(date_to)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"date_to '{date_to}' is not a valid YYYY-MM-DD date")
+    if (d_to - d_from).days != 4:
+        raise HTTPException(
+            status_code=400,
+            detail=f"date_to must be exactly 4 days after date_from; got {(d_to - d_from).days} day(s)",
+        )
+
+    # ── Fetch prices concurrently ─────────────────────────────────────────────
+    loop = asyncio.get_running_loop()
+    results = await asyncio.gather(
+        *[loop.run_in_executor(None, _fetch_week_closes, sym, d_from, d_to) for sym in raw_symbols],
+        return_exceptions=True,
+    )
+
+    prices: dict[str, dict[str, float]] = {}
+    for sym, result in zip(raw_symbols, results):
+        if isinstance(result, Exception):
+            _log.warning("Failed to fetch price history for symbol", symbol=sym, error=str(result))
+            prices[sym] = {}
+        else:
+            prices[sym] = result  # type: ignore[assignment]
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "prices": prices,
+    }
+
 
 @router.get("/{plan_id}")
 async def get_plan(plan_id: uuid.UUID, user_id: UserId, db: DB) -> dict[str, Any]:

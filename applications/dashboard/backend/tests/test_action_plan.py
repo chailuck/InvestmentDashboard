@@ -416,3 +416,156 @@ async def test_stock_price_rounded_to_two_decimal_places(auth_client: AsyncClien
     assert resp.json()["price"] == round(123.456789, 2)
     assert "change_pct" in resp.json()
     assert resp.json()["change_pct"] is None  # single-row mock — no previous close available
+
+
+# ── Price history ─────────────────────────────────────────────────────────────
+#
+# Endpoint: GET /api/v1/action-plans/price-history
+#
+# Patch strategy: same as stock-price tests — patch "yfinance.Ticker" so that
+# the local `import yfinance as yf` inside _fetch_week_closes picks up the mock.
+# The mock history() return value must be a pd.DataFrame with a DatetimeIndex
+# and a "Close" column so that the endpoint can iterate over the index and look
+# up hist.loc[dt, "Close"].
+#
+# TC-PH-01: single symbol, 5 rows → 200, prices["BH"] has 5 date keys
+# TC-PH-02: two symbols → both present in prices map
+# TC-PH-03: date_to - date_from is 3 days (not 4) → 400
+# TC-PH-04: 21 symbols → 400
+# TC-PH-05: symbol with invalid chars → 400
+# TC-PH-06: yfinance raises exception → 200, prices[symbol] is {}
+# TC-PH-07: yfinance returns empty DataFrame → 200, prices[symbol] is {}
+
+
+def _make_week_history_df(
+    date_strings: list[str],
+    prices: list[float] | None = None,
+) -> pd.DataFrame:
+    """Build a yfinance-style history DataFrame with a tz-aware DatetimeIndex.
+
+    The real yfinance history() returns an index in Asia/Bangkok timezone for
+    .BK tickers.  We simulate that here so the endpoint's tz_localize(None) call
+    has realistic input to normalise.
+    """
+    if prices is None:
+        prices = [100.0 + i for i in range(len(date_strings))]
+    index = pd.DatetimeIndex(
+        [pd.Timestamp(d, tz="Asia/Bangkok") for d in date_strings]
+    )
+    return pd.DataFrame({"Close": prices}, index=index)
+
+
+async def test_price_history_single_symbol_returns_five_dates(auth_client: AsyncClient):
+    """TC-PH-01: Single symbol with 5 trading days returns 200 and 5 date keys."""
+    dates = [
+        "2026-06-16",
+        "2026-06-17",
+        "2026-06-18",
+        "2026-06-19",
+        "2026-06-20",
+    ]
+    close_prices = [122.50, 124.00, 123.75, 125.00, 126.25]
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = _make_week_history_df(dates, close_prices)
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        resp = await auth_client.get(
+            "/api/v1/action-plans/price-history"
+            "?symbols=BH&date_from=2026-06-16&date_to=2026-06-20"
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["date_from"] == "2026-06-16"
+    assert body["date_to"] == "2026-06-20"
+    assert "BH" in body["prices"]
+    bh_prices = body["prices"]["BH"]
+    assert len(bh_prices) == 5
+    for d in dates:
+        assert d in bh_prices
+        assert isinstance(bh_prices[d], float)
+
+
+async def test_price_history_two_symbols_both_present(auth_client: AsyncClient):
+    """TC-PH-02: Two symbols → both keys present in the prices map."""
+    dates = ["2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19", "2026-06-20"]
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = _make_week_history_df(dates)
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        resp = await auth_client.get(
+            "/api/v1/action-plans/price-history"
+            "?symbols=BH,KBANK&date_from=2026-06-16&date_to=2026-06-20"
+        )
+
+    assert resp.status_code == 200
+    prices = resp.json()["prices"]
+    assert "BH" in prices
+    assert "KBANK" in prices
+
+
+async def test_price_history_date_range_not_four_days_returns_400(auth_client: AsyncClient):
+    """TC-PH-03: date_to - date_from = 3 days (not 4) → 400."""
+    resp = await auth_client.get(
+        "/api/v1/action-plans/price-history"
+        "?symbols=BH&date_from=2026-06-16&date_to=2026-06-19"
+    )
+    assert resp.status_code == 400
+
+
+async def test_price_history_too_many_symbols_returns_400(auth_client: AsyncClient):
+    """TC-PH-04: 21 symbols in request → 400."""
+    symbols = ",".join([f"S{i:02d}" for i in range(21)])
+    resp = await auth_client.get(
+        f"/api/v1/action-plans/price-history"
+        f"?symbols={symbols}&date_from=2026-06-16&date_to=2026-06-20"
+    )
+    assert resp.status_code == 400
+
+
+async def test_price_history_invalid_symbol_chars_returns_400(auth_client: AsyncClient):
+    """TC-PH-05: Symbol with invalid characters (BH$$) → 400."""
+    resp = await auth_client.get(
+        "/api/v1/action-plans/price-history"
+        "?symbols=BH$$&date_from=2026-06-16&date_to=2026-06-20"
+    )
+    assert resp.status_code == 400
+
+
+async def test_price_history_yfinance_exception_returns_200_with_empty_map(auth_client: AsyncClient):
+    """TC-PH-06: yfinance raises an exception → 200 with prices[symbol] = {}."""
+    mock_ticker = MagicMock()
+    mock_ticker.history.side_effect = Exception("network error")
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        resp = await auth_client.get(
+            "/api/v1/action-plans/price-history"
+            "?symbols=BH&date_from=2026-06-16&date_to=2026-06-20"
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["prices"]["BH"] == {}
+
+
+async def test_price_history_empty_dataframe_returns_200_with_empty_map(auth_client: AsyncClient):
+    """TC-PH-07: yfinance returns empty DataFrame → 200 with prices[symbol] = {}."""
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = pd.DataFrame()
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        resp = await auth_client.get(
+            "/api/v1/action-plans/price-history"
+            "?symbols=PTT&date_from=2026-06-16&date_to=2026-06-20"
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["prices"]["PTT"] == {}
+
+
+async def test_price_history_unauthenticated_returns_401(client: AsyncClient):
+    """TC-PH-14: Unauthenticated request returns 401."""
+    resp = await client.get(
+        "/api/v1/action-plans/price-history"
+        "?symbols=BH&date_from=2026-06-16&date_to=2026-06-20"
+    )
+    assert resp.status_code == 401
