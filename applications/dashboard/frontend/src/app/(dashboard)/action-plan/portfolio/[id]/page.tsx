@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Save, FileDown, Copy, CheckCircle2,
-  Loader2, X, RefreshCw, AlertCircle, Download, Upload,
+  Loader2, X, RefreshCw, AlertCircle, Download, Upload, ClipboardCopy,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -34,6 +34,22 @@ function calcPnl(price: number | null, entry: number | null, size: number | null
 function calcPnlPct(price: number | null, entry: number | null) {
   if (price == null || entry == null || entry === 0) return null
   return ((price - entry) / entry) * 100
+}
+
+function calcRR(
+  tp: number | null,
+  entryPrice: number | null,
+  sl: number | null,
+): number | null {
+  if (tp == null || entryPrice == null || sl == null) return null
+  const denominator = entryPrice - sl
+  if (denominator === 0) return null
+  return (tp - entryPrice) / denominator
+}
+
+function fmtRR(v: number | null): string {
+  if (v == null) return '—'
+  return `${v.toFixed(1)}R`
 }
 
 function fmtPnl(v: number | null) {
@@ -121,13 +137,17 @@ function NotePanel({
 
 // ── Editable number cell ──────────────────────────────────────────────────────
 
+const AUTO_SAVE_DEBOUNCE_MS = 300
+
 const NumInput = ({
   value,
   onChange,
+  onBlur,
   placeholder,
 }: {
   value: number | null
   onChange: (v: number | null) => void
+  onBlur?: () => void
   placeholder?: string
 }) => (
   <input
@@ -135,6 +155,7 @@ const NumInput = ({
     step="any"
     value={value ?? ''}
     onChange={e => onChange(e.target.value === '' ? null : parseFloat(e.target.value))}
+    onBlur={onBlur}
     placeholder={placeholder}
     className="input text-xs py-1 px-1.5 w-full text-right tabular-nums"
   />
@@ -172,9 +193,12 @@ export default function PortfolioPlanEditor() {
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<'ok' | 'err' | null>(null)
+  const [copyingPrev, setCopyingPrev] = useState(false)
+  const [copyMsg, setCopyMsg] = useState<string | null>(null)
   const [generateText, setGenerateText] = useState<string | null>(null)
   const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout>>()
   const importRef = useRef<HTMLInputElement>(null)
 
   // ── Load plan + positions ─────────────────────────────────────────────────
@@ -225,6 +249,12 @@ export default function PortfolioPlanEditor() {
 
   useEffect(() => { loadData() }, [loadData])
 
+  useEffect(() => {
+    return () => {
+      clearTimeout(autoSaveTimer.current)
+    }
+  }, [])
+
   // ── Refresh portfolio (copy Excel + reload) ───────────────────────────────
 
   const handleRefresh = async () => {
@@ -239,6 +269,64 @@ export default function PortfolioPlanEditor() {
     } finally {
       setRefreshing(false)
       setTimeout(() => setRefreshMsg(null), 4000)
+    }
+  }
+
+  // ── Copy Order Size / TP / SL from previous portfolio plan ───────────────
+
+  const copyFromPreviousPlan = async () => {
+    setCopyingPrev(true)
+    setCopyMsg(null)
+    try {
+      const plans = await actionPlanService.list('portfolio', null)
+      // plans are sorted newest-first; find the first plan that is not the current one
+      const prevPlan = plans.find(p => p.id !== id)
+      if (!prevPlan) {
+        setCopyMsg('No previous plan found.')
+        return
+      }
+
+      const prevDetail = await actionPlanService.get(prevPlan.id)
+
+      // Build lookup: symbol → { order_size, tp, sl }
+      const prevMap = new Map(
+        prevDetail.portfolio_items.map(item => [
+          item.symbol.toUpperCase(),
+          { order_size: item.order_size, tp: item.tp, sl: item.sl },
+        ])
+      )
+
+      let copied = 0
+      setRows(prev =>
+        prev.map(row => {
+          // Only copy into rows that have ALL three fields unset (not yet configured)
+          if (row.order_size !== null || row.tp !== null || row.sl !== null) {
+            return row
+          }
+          const match = prevMap.get(row.symbol.toUpperCase())
+          if (!match) return row
+          // Only apply if the previous plan actually had something to copy
+          if (match.order_size === null && match.tp === null && match.sl === null) return row
+          copied++
+          return {
+            ...row,
+            order_size: match.order_size,
+            tp: match.tp,
+            sl: match.sl,
+          }
+        })
+      )
+
+      if (copied === 0) {
+        setCopyMsg('Nothing to copy — all rows already have values, or no matching symbols.')
+      } else {
+        setCopyMsg(`Copied values for ${copied} row${copied === 1 ? '' : 's'} from "${prevPlan.name}". Press Save to persist.`)
+      }
+    } catch {
+      setCopyMsg('Failed to load previous plan.')
+    } finally {
+      setCopyingPrev(false)
+      setTimeout(() => setCopyMsg(null), 6000)
     }
   }
 
@@ -277,6 +365,16 @@ export default function PortfolioPlanEditor() {
       saveTimer.current = setTimeout(() => setSaveMsg(null), 3000)
     }
   }
+
+  // ── Auto-save on blur ─────────────────────────────────────────────────────
+
+  const handleBlur = useCallback(() => {
+    if (saving) return
+    clearTimeout(autoSaveTimer.current)
+    autoSaveTimer.current = setTimeout(() => {
+      save()
+    }, AUTO_SAVE_DEBOUNCE_MS)
+  }, [saving, save])
 
   // ── Export / Restore ──────────────────────────────────────────────────────
 
@@ -369,6 +467,19 @@ export default function PortfolioPlanEditor() {
             Refresh
           </button>
 
+          <button
+            onClick={copyFromPreviousPlan}
+            disabled={copyingPrev || saving}
+            className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5"
+            title="Copy Order Size, TP, and SL from the previous portfolio plan for unconfigured rows"
+          >
+            {copyingPrev
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <ClipboardCopy className="w-3.5 h-3.5" />
+            }
+            Copy Prev Plan
+          </button>
+
           <input ref={importRef} type="file" accept=".txt" className="hidden" onChange={restoreList} />
           <button onClick={exportList}
             className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5">
@@ -422,6 +533,25 @@ export default function PortfolioPlanEditor() {
         </div>
       )}
 
+      {/* Copy-from-previous-plan feedback */}
+      {copyMsg && (
+        <div className={cn(
+          'flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs border',
+          copyMsg.startsWith('Failed') || copyMsg.startsWith('No previous')
+            ? 'bg-loss/8 border-loss/20 text-loss'
+            : copyMsg.startsWith('Nothing')
+            ? 'bg-surface-elevated border-border/40 text-ink-muted'
+            : 'bg-gain/8 border-gain/20 text-gain',
+        )}>
+          {copyMsg.startsWith('Failed') || copyMsg.startsWith('No previous')
+            ? <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            : copyMsg.startsWith('Nothing')
+            ? <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            : <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
+          {copyMsg}
+        </div>
+      )}
+
       {/* Info */}
       <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-500/8 border border-brand-500/20 text-brand-400 text-xs">
         <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -437,7 +567,7 @@ export default function PortfolioPlanEditor() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs" style={{ minWidth: '1100px' }}>
+            <table className="w-full text-xs" style={{ minWidth: '1170px' }}>
               <thead>
                 <tr className="border-b border-border/50 bg-surface-elevated/40">
                   {/* SYMBOL */}
@@ -478,6 +608,11 @@ export default function PortfolioPlanEditor() {
                     SL P&L
                     <div className="text-[9px] font-normal text-ink-disabled">Amt / %</div>
                   </th>
+                  {/* RR — read-only */}
+                  <th className="px-3 py-2.5 text-center font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
+                    RR
+                    <div className="text-[9px] font-normal text-ink-disabled">TP/SL ratio</div>
+                  </th>
                   {/* REMAINING ORDER SIZE */}
                   <th className="px-3 py-2.5 pr-4 text-right font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
                     REMAINING
@@ -496,6 +631,7 @@ export default function PortfolioPlanEditor() {
                   const remaining = row.order_size != null && row.size != null
                     ? row.order_size - row.size
                     : null
+                  const rr = calcRR(row.tp, row.entry_price, row.sl)
 
                   return (
                     <tr key={idx} className="border-b border-border/25 hover:bg-surface-elevated/30 transition-colors">
@@ -539,6 +675,7 @@ export default function PortfolioPlanEditor() {
                         <NumInput
                           value={row.order_size}
                           onChange={v => updateRow(idx, { order_size: v != null ? Math.round(v) : null })}
+                          onBlur={handleBlur}
                           placeholder="Qty"
                         />
                       </td>
@@ -548,6 +685,7 @@ export default function PortfolioPlanEditor() {
                         <NumInput
                           value={row.tp}
                           onChange={v => updateRow(idx, { tp: v })}
+                          onBlur={handleBlur}
                           placeholder="TP"
                         />
                       </td>
@@ -567,6 +705,7 @@ export default function PortfolioPlanEditor() {
                         <NumInput
                           value={row.sl}
                           onChange={v => updateRow(idx, { sl: v })}
+                          onBlur={handleBlur}
                           placeholder="SL"
                         />
                       </td>
@@ -580,6 +719,19 @@ export default function PortfolioPlanEditor() {
                         </div>
                       </td>
                       <td className="w-0 p-0" />
+
+                      {/* RR — read-only (border-l) */}
+                      <td className="border-l border-border/30 px-3 py-2 text-center whitespace-nowrap">
+                        <span className={cn(
+                          'text-xs font-medium tabular-nums',
+                          rr == null   ? 'text-ink-disabled'
+                          : rr >= 2.0  ? 'text-gain'
+                          : rr >= 1.0  ? 'text-warning'
+                          :               'text-ink-disabled',
+                        )}>
+                          {fmtRR(rr)}
+                        </span>
+                      </td>
 
                       {/* REMAINING ORDER SIZE (border-l) */}
                       <td className="border-l border-border/30 px-3 py-2 pr-4 tabular-nums text-right whitespace-nowrap">

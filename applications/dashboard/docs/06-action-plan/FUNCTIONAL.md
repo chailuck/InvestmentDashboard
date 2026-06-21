@@ -108,20 +108,45 @@ URL: `/action-plan/portfolio/[id]`
 
 **Toolbar buttons:**
 - **Refresh** — re-copies the Excel source file (same as Portfolio page refresh) then reloads positions.
-- **Save** — persists TP, SL, Order Size (and a snapshot of position data) to the database.
+- **Copy Prev Plan** — copies Order Size, TP, and SL from the most-recently-saved portfolio plan (other than the current plan) into the current plan. Only rows where all three fields are currently null are updated; rows that already have any value set are left untouched. Provides a count of rows updated and names the source plan in a feedback banner. Values are applied to local state only — the user must press **Save** to persist.
+- **Export** — downloads the current symbol list as a plain-text file.
+- **Restore** — imports a symbol list from a plain-text file, replacing the current list.
 - **Generate PortAction** — modal with copyable text.
+- **Save** — persists TP, SL, Order Size (and a snapshot of position data) to the database.
 
 **Table columns:**
 
-| Column | Editable | Source |
-|--------|----------|--------|
-| SYMBOL | ❌ | Portfolio tracker |
-| CURRENT PRICE | ❌ | Portfolio tracker |
-| SIZE | ❌ | Portfolio tracker |
-| ENTRY PRICE | ❌ | Portfolio tracker |
-| TP | ✅ | User input (persisted) |
-| SL | ✅ | User input (persisted) |
-| ORDER SIZE | ✅ | User input (persisted) |
+| Column | Editable | Source | Notes |
+|--------|----------|--------|-------|
+| SYMBOL | ❌ | Portfolio tracker | |
+| CURRENT PRICE | ❌ | Portfolio tracker | |
+| SIZE | ❌ | Portfolio tracker | |
+| ENTRY PRICE | ❌ | Portfolio tracker | |
+| CURRENT P&L | ❌ | Derived (current price vs entry) | Amount and % |
+| ORDER SIZE | ✅ | User input (persisted) | Auto-saves on blur |
+| TP | ✅ | User input (persisted) | Auto-saves on blur |
+| TP P&L | ❌ | Derived (TP vs entry) | |
+| SL | ✅ | User input (persisted) | Auto-saves on blur |
+| SL P&L | ❌ | Derived (SL vs entry) | |
+| RR | ❌ | Derived (computed) | Read-only; never persisted |
+| REMAINING | ❌ | Derived (Order Size − Size) | |
+
+**RR Column:**
+- Formula: `RR = (TP − Entry Price) / (Entry Price − SL)` (LONG positions only)
+- Display format: `2.5R` (one decimal place followed by R)
+- Colour coding:
+  - RR ≥ 2.0 → green (good risk/reward)
+  - 1.0 ≤ RR < 2.0 → amber (acceptable)
+  - RR < 1.0 or undefined → grey (poor or insufficient data)
+- Only shown when TP, SL, and Entry Price are all populated and Entry Price ≠ SL
+- Never stored in the database
+
+**Auto-save on Blur:**
+- When focus leaves any of the three editable numeric fields (Order Size, TP, SL), the current plan state is automatically saved to the database.
+- A 300 ms debounce collapses rapid tab-throughs into a single save call.
+- The manual Save button remains available and coexists with auto-save.
+- Visual feedback is shown in the same location as the manual Save confirmation ("Saved" with a checkmark icon, auto-clearing after 3 seconds).
+- Auto-save is suppressed if a manual save is already in progress.
 
 **Generated text format:**
 ```
@@ -142,3 +167,6 @@ STA,20.0,18.4,500
 4. Duplicating a plan copies all line items exactly.
 5. The portfolio plan editor always pulls **live position data** on load; the saved TP/SL/order_size overlay on top.
 6. RR is display-only and is never stored.
+7. **Copy Prev Plan** only populates rows where Order Size, TP, and SL are all null. A row with any one of those fields already set is considered "configured" and will not be overwritten. The copy is applied to in-memory state only — no data is persisted until the user explicitly clicks Save.
+8. RR is a derived display value computed from TP, SL, and Entry Price. It is never stored in the database and is not included in the save payload.
+9. Auto-save fires on blur of the Order Size, TP, and SL fields. It is debounced at 300 ms. Programmatic row updates (Copy Prev Plan, Restore) do not trigger auto-save.
