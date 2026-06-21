@@ -2,12 +2,13 @@
 
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, Rows3, Columns3 } from 'lucide-react'
 import { AnimatePresence } from 'framer-motion'
 import dynamic from 'next/dynamic'
+import { cn } from '@/lib/utils'
 import { actionPlanService, type PurchaseItem, type PortfolioItem } from '@/services/actionPlan'
 import { getWeekDays } from '@/lib/weekDates'
-import { WeeklyPlanTable } from './WeeklyPlanTable'
+import { WeeklyPlanTable, type WeeklyPlanViewMode } from './WeeklyPlanTable'
 
 const AnalyticsModal = dynamic(
   () => import('@/components/analytics/AnalyticsModal').then(m => ({ default: m.AnalyticsModal })),
@@ -17,6 +18,7 @@ const AnalyticsModal = dynamic(
 export function WeeklyPlanDashboard() {
   const [modalSymbol, setModalSymbol] = useState<string | null>(null)
   const [weekOffset, setWeekOffset] = useState<number>(0)
+  const [viewMode, setViewMode] = useState<WeeklyPlanViewMode>('by-date')
 
   const weekDays = getWeekDays(weekOffset)
   const dateFrom = weekDays[0].isoDate
@@ -98,9 +100,40 @@ export function WeeklyPlanDashboard() {
   return (
     <div className="card overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 border-b border-border/50 flex items-center gap-3">
+      <div className="px-5 py-4 border-b border-border/50 flex items-center gap-3 flex-wrap">
         <CalendarDays className="w-4 h-4 text-brand-400 shrink-0" />
-        <h2 className="text-sm font-semibold text-ink-primary flex-1">Weekly Plan Dashboard</h2>
+        <h2 className="text-sm font-semibold text-ink-primary flex-1 min-w-0">Weekly Plan Dashboard</h2>
+
+        {/* View mode toggle */}
+        <div className="flex items-center gap-0.5 bg-surface-elevated rounded-lg p-0.5 border border-border/40">
+          <button
+            onClick={() => setViewMode('by-stock')}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+              viewMode === 'by-stock'
+                ? 'bg-brand-500/20 text-brand-400'
+                : 'text-ink-muted hover:text-ink-primary',
+            )}
+            title="By Stock — rows are stocks, columns are dates"
+          >
+            <Rows3 className="w-3 h-3" />
+            By Stock
+          </button>
+          <button
+            onClick={() => setViewMode('by-date')}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+              viewMode === 'by-date'
+                ? 'bg-brand-500/20 text-brand-400'
+                : 'text-ink-muted hover:text-ink-primary',
+            )}
+            title="By Date — rows are dates, columns are stocks"
+          >
+            <Columns3 className="w-3 h-3" />
+            By Date
+          </button>
+        </div>
+
         {/* Week selector */}
         <div className="flex items-center gap-1 text-xs text-ink-muted">
           <button
@@ -138,6 +171,7 @@ export function WeeklyPlanDashboard() {
           onSymbolClick={handleSymbolClick}
           priceMap={priceMap}
           isCurrentWeek={weekOffset === 0}
+          viewMode={viewMode}
         />
 
         <WeeklyPlanTable
@@ -150,6 +184,7 @@ export function WeeklyPlanDashboard() {
           onSymbolClick={handleSymbolClick}
           priceMap={priceMap}
           isCurrentWeek={weekOffset === 0}
+          viewMode={viewMode}
         />
       </div>
 

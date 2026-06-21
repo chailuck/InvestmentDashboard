@@ -6,10 +6,11 @@ import type { PortfolioItem } from '@/services/actionPlan'
 interface PortfolioCellDisplayProps {
   item: PortfolioItem
   dayPrice: number | null
+  prevDayPrice?: number | null
   compact?: boolean
 }
 
-export function PortfolioCellDisplay({ item, dayPrice, compact = false }: PortfolioCellDisplayProps) {
+export function PortfolioCellDisplay({ item, dayPrice, prevDayPrice = null, compact = false }: PortfolioCellDisplayProps) {
   const effectivePrice = dayPrice
   const hasEntry = item.entry_price != null
   const hasCur   = effectivePrice != null
@@ -23,6 +24,16 @@ export function PortfolioCellDisplay({ item, dayPrice, compact = false }: Portfo
   const pnlPct = hasEntry && hasCur
     ? ((effectivePrice! - item.entry_price!) / item.entry_price!) * 100
     : null
+
+  const changePct = prevDayPrice != null && prevDayPrice !== 0 && effectivePrice != null
+    ? ((effectivePrice - prevDayPrice) / prevDayPrice) * 100
+    : null
+  const changePctLabel = changePct === null
+    ? null
+    : Math.abs(changePct) < 0.005 ? '0.0%'
+    : changePct > 0 ? `+${changePct.toFixed(1)}%`
+    : `${changePct.toFixed(1)}%`
+  const changeColor = changePct === null ? '' : changePct >= 0 ? 'text-gain' : 'text-loss'
 
   const range   = hasSL && hasTP ? item.tp! - item.sl! : 0
   const showSlTp = (hasSL || hasTP) && hasCur
@@ -39,29 +50,39 @@ export function PortfolioCellDisplay({ item, dayPrice, compact = false }: Portfo
 
   return (
     <div className={cn('space-y-0.5', textSize)}>
-      {/* Line 1: ±pnl% | entry/current */}
-      <div className="flex items-center gap-1.5 tabular-nums">
+      {/* Line 1: P&L%: +15.0% | Entry: 56.50 | Current: 65.00 | Change%: +1.4% */}
+      <div className="flex items-center gap-1 tabular-nums flex-wrap">
         {pnlPct !== null && (
-          <span className={cn(
-            'font-semibold shrink-0 tabular-nums',
-            pnlPct >= 0 ? 'text-gain' : 'text-loss',
-          )}>
-            {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%
-          </span>
+          <>
+            <span className="text-[8px] text-white shrink-0">P&amp;L%:</span>
+            <span className={cn('font-semibold shrink-0', pnlPct >= 0 ? 'text-gain' : 'text-loss')}>
+              {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%
+            </span>
+          </>
         )}
-        {hasEntry && hasCur ? (
-          <span className="text-[9px] text-ink-disabled tabular-nums flex-1 truncate">
-            {item.entry_price!.toFixed(2)}
-            <span className="mx-0.5">/</span>
-            <span className={cn(isProfit ? 'text-gain' : 'text-loss')}>
+        {hasEntry && (
+          <>
+            {pnlPct !== null && <span className="text-ink-disabled shrink-0">|</span>}
+            <span className="text-[8px] text-white shrink-0">Entry:</span>
+            <span className="text-white font-bold shrink-0">{item.entry_price!.toFixed(2)}</span>
+          </>
+        )}
+        {hasCur && (
+          <>
+            <span className="text-ink-disabled shrink-0">|</span>
+            <span className="text-[8px] text-white shrink-0">Current:</span>
+            <span className={cn('font-bold shrink-0', isProfit ? 'text-gain' : 'text-loss')}>
               {effectivePrice!.toFixed(2)}
             </span>
-          </span>
-        ) : hasEntry ? (
-          <span className="text-[9px] text-ink-disabled tabular-nums flex-1">
-            @{item.entry_price!.toFixed(2)}
-          </span>
-        ) : null}
+          </>
+        )}
+        {changePctLabel !== null && (
+          <>
+            <span className="text-ink-disabled shrink-0">|</span>
+            <span className="text-[8px] text-white shrink-0">Change%:</span>
+            <span className={cn('font-semibold shrink-0', changeColor)}>{changePctLabel}</span>
+          </>
+        )}
       </div>
 
       {/* Line 2: SL ← [bar with entry marker + current marker] → TP */}

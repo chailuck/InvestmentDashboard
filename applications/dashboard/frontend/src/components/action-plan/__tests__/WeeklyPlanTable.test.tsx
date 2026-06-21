@@ -111,6 +111,16 @@ const EMPTY_PRICE_MAP = new Map<string, Map<string, number>>()
 // ---------------------------------------------------------------------------
 
 describe('WeeklyPlanTable — future days render blank', () => {
+  // Pin the clock to Wednesday 2026-06-17 so that Thu/Fri in WEEK_DAYS_WITH_TODAY
+  // are always in the future regardless of when the suite runs.
+  beforeAll(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-17T12:00:00'))
+  })
+  afterAll(() => {
+    vi.useRealTimers()
+  })
+
   it('TC-FE-01a: cells for future days render no price content (purchase)', () => {
     render(
       <WeeklyPlanTable
@@ -482,5 +492,218 @@ describe('WeeklyPlanTable — loading and error states', () => {
       />,
     )
     expect(screen.getByText(/No active purchase plan found/i)).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Suite: By-Date view — stock column cap (TC-BDC-1 through TC-BDC-7)
+// ---------------------------------------------------------------------------
+
+describe('WeeklyPlanTable — by-date view: stock column cap', () => {
+  /** Build N purchase items with distinct symbols STK1…STKN */
+  function makePurchaseItems(count: number): PurchaseItem[] {
+    return Array.from({ length: count }, (_, idx) => ({
+      ...PURCHASE_ITEM,
+      id: `item-stk${idx + 1}`,
+      stock: `STK${idx + 1}`,
+      sort_order: idx,
+    }))
+  }
+
+  /** Build N portfolio items with distinct symbols SYM1…SYMN */
+  function makePortfolioItems(count: number): PortfolioItem[] {
+    return Array.from({ length: count }, (_, idx) => ({
+      id: `item-sym${idx + 1}`,
+      sort_order: idx,
+      symbol: `SYM${idx + 1}`,
+      current_price: 100.00,
+      size: 100,
+      entry_price: 95.00,
+      tp: 110.00,
+      sl: 90.00,
+      order_size: null,
+    }))
+  }
+
+  it('TC-BDC-1: column count capped at 5 when 8 purchase items provided (by-date)', () => {
+    const items = makePurchaseItems(8)
+
+    render(
+      <WeeklyPlanTable
+        variant="purchase"
+        items={items}
+        weekDays={WEEK_DAYS_PAST}
+        priceMap={EMPTY_PRICE_MAP}
+        isCurrentWeek={false}
+        isLoading={false}
+        isError={false}
+        hasActivePlan={true}
+        onSymbolClick={() => {}}
+        viewMode="by-date"
+      />,
+    )
+
+    // 1 "Date" header + 5 stock headers = 6 total
+    expect(screen.getAllByRole('columnheader')).toHaveLength(6)
+
+    // STK1–STK5 must be present
+    for (let i = 1; i <= 5; i++) {
+      expect(screen.getByText(`STK${i}`)).toBeInTheDocument()
+    }
+
+    // STK6–STK8 must NOT be present
+    expect(screen.queryByText('STK6')).toBeNull()
+    expect(screen.queryByText('STK7')).toBeNull()
+    expect(screen.queryByText('STK8')).toBeNull()
+  })
+
+  it('TC-BDC-2: exactly 6 items — STK5 visible, STK6 absent (cap boundary, by-date)', () => {
+    // 6 items: exactly one above the cap. Confirms the slice cutoff is at index 5
+    // (i.e. the 5th item is included and the 6th is excluded).
+    const items = makePurchaseItems(6)
+
+    render(
+      <WeeklyPlanTable
+        variant="purchase"
+        items={items}
+        weekDays={WEEK_DAYS_PAST}
+        priceMap={EMPTY_PRICE_MAP}
+        isCurrentWeek={false}
+        isLoading={false}
+        isError={false}
+        hasActivePlan={true}
+        onSymbolClick={() => {}}
+        viewMode="by-date"
+      />,
+    )
+
+    // STK5 must be present (it is within the cap)
+    expect(screen.getByText('STK5')).toBeInTheDocument()
+    // STK6 must be absent (it is the first item beyond the cap)
+    expect(screen.queryByText('STK6')).toBeNull()
+    // Column count: 1 Date + 5 stocks = 6
+    expect(screen.getAllByRole('columnheader')).toHaveLength(6)
+  })
+
+  it('TC-BDC-3: fewer than 5 stocks — all render, no cap applied (by-date)', () => {
+    const items = makePurchaseItems(3)
+
+    render(
+      <WeeklyPlanTable
+        variant="purchase"
+        items={items}
+        weekDays={WEEK_DAYS_PAST}
+        priceMap={EMPTY_PRICE_MAP}
+        isCurrentWeek={false}
+        isLoading={false}
+        isError={false}
+        hasActivePlan={true}
+        onSymbolClick={() => {}}
+        viewMode="by-date"
+      />,
+    )
+
+    // 1 "Date" header + 3 stock headers = 4 total
+    expect(screen.getAllByRole('columnheader')).toHaveLength(4)
+
+    expect(screen.getByText('STK1')).toBeInTheDocument()
+    expect(screen.getByText('STK2')).toBeInTheDocument()
+    expect(screen.getByText('STK3')).toBeInTheDocument()
+  })
+
+  it('TC-BDC-4: exactly 5 stocks — all render (boundary, by-date)', () => {
+    const items = makePurchaseItems(5)
+
+    render(
+      <WeeklyPlanTable
+        variant="purchase"
+        items={items}
+        weekDays={WEEK_DAYS_PAST}
+        priceMap={EMPTY_PRICE_MAP}
+        isCurrentWeek={false}
+        isLoading={false}
+        isError={false}
+        hasActivePlan={true}
+        onSymbolClick={() => {}}
+        viewMode="by-date"
+      />,
+    )
+
+    // 1 "Date" header + 5 stock headers = 6 total
+    expect(screen.getAllByRole('columnheader')).toHaveLength(6)
+
+    for (let i = 1; i <= 5; i++) {
+      expect(screen.getByText(`STK${i}`)).toBeInTheDocument()
+    }
+  })
+
+  it('TC-BDC-5: portfolio variant also caps at 5 (by-date)', () => {
+    const items = makePortfolioItems(7)
+
+    render(
+      <WeeklyPlanTable
+        variant="portfolio"
+        items={items}
+        weekDays={WEEK_DAYS_PAST}
+        priceMap={EMPTY_PRICE_MAP}
+        isCurrentWeek={false}
+        isLoading={false}
+        isError={false}
+        hasActivePlan={true}
+        onSymbolClick={() => {}}
+        viewMode="by-date"
+      />,
+    )
+
+    // 1 "Date" header + 5 symbol headers = 6 total
+    expect(screen.getAllByRole('columnheader')).toHaveLength(6)
+
+    // SYM6 and SYM7 must NOT be present
+    expect(screen.queryByText('SYM6')).toBeNull()
+    expect(screen.queryByText('SYM7')).toBeNull()
+  })
+
+  it('TC-BDC-6: by-stock view unaffected — all 8 stocks render as rows', () => {
+    const items = makePurchaseItems(8)
+
+    render(
+      <WeeklyPlanTable
+        variant="purchase"
+        items={items}
+        weekDays={WEEK_DAYS_PAST}
+        priceMap={EMPTY_PRICE_MAP}
+        isCurrentWeek={false}
+        isLoading={false}
+        isError={false}
+        hasActivePlan={true}
+        onSymbolClick={() => {}}
+        viewMode="by-stock"
+      />,
+    )
+
+    // One <th scope="row"> per stock — all 8 must be present
+    expect(screen.getAllByRole('rowheader')).toHaveLength(8)
+  })
+
+  it('TC-BDC-7: row count in by-date view remains 5 regardless of stock count', () => {
+    const items = makePurchaseItems(8)
+
+    render(
+      <WeeklyPlanTable
+        variant="purchase"
+        items={items}
+        weekDays={WEEK_DAYS_PAST}
+        priceMap={EMPTY_PRICE_MAP}
+        isCurrentWeek={false}
+        isLoading={false}
+        isError={false}
+        hasActivePlan={true}
+        onSymbolClick={() => {}}
+        viewMode="by-date"
+      />,
+    )
+
+    // tbody must have exactly 5 rows (one per weekday)
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(5)
   })
 })

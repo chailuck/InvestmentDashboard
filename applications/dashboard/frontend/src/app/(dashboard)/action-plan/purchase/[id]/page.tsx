@@ -14,6 +14,7 @@ import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const STRATEGIES = ['BREAK OUT', 'BUY ON DIP', 'แท่งเทียนกลับตัว', 'ยยจท', 'NEWS', 'AJ PAO', 'OTHERS'] as const
+const AUTO_SAVE_DEBOUNCE_MS = 300
 type StrategyOption = (typeof STRATEGIES)[number]
 
 // ── Row type ──────────────────────────────────────────────────────────────────
@@ -198,10 +199,12 @@ function NotePanel({
 const NumInput = ({
   value,
   onChange,
+  onBlur,
   className,
 }: {
   value: number | null
   onChange: (v: number | null) => void
+  onBlur?: () => void
   className?: string
 }) => (
   <input
@@ -209,6 +212,7 @@ const NumInput = ({
     step="any"
     value={value ?? ''}
     onChange={e => onChange(e.target.value === '' ? null : parseFloat(e.target.value))}
+    onBlur={onBlur}
     className={cn('input text-xs py-1 px-1.5 w-full text-right tabular-nums', className)}
   />
 )
@@ -233,11 +237,19 @@ export default function PurchasePlanEditor() {
   const [refreshing, setRefreshing] = useState(false)
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout>>()
   const autoRefreshDone = useRef(false)
 
   useEffect(() => {
     rowsRef.current = rows
   }, [rows])
+
+  // Unmount cleanup — cancel any pending auto-save
+  useEffect(() => {
+    return () => {
+      clearTimeout(autoSaveTimer.current)
+    }
+  }, [])
 
   // Auto-refresh prices once after plan loads so % change is visible immediately
   useEffect(() => {
@@ -410,6 +422,16 @@ export default function PurchasePlanEditor() {
       saveTimer.current = setTimeout(() => setSaveMsg(null), 3000)
     }
   }
+
+  // ── Auto-save on blur ─────────────────────────────────────────────────────
+
+  const handleBlur = useCallback(() => {
+    if (saving) return
+    clearTimeout(autoSaveTimer.current)
+    autoSaveTimer.current = setTimeout(() => {
+      save()
+    }, AUTO_SAVE_DEBOUNCE_MS)
+  }, [saving, save])
 
   // ── Export / Restore ──────────────────────────────────────────────────────
 
@@ -644,21 +666,21 @@ export default function PurchasePlanEditor() {
                     </td>
                     {/* SIZE */}
                     <td className="px-2.5 py-1.5 w-[80px]">
-                      <NumInput value={row.size} onChange={v => updateRow(row._key, { size: v != null ? Math.round(v) : null })} />
+                      <NumInput value={row.size} onChange={v => updateRow(row._key, { size: v != null ? Math.round(v) : null })} onBlur={handleBlur} />
                     </td>
                     {/* BUY */}
                     <td className="px-2.5 py-1.5 w-[80px]">
-                      <NumInput value={row.buy_price} onChange={v => updateRow(row._key, { buy_price: v })} />
+                      <NumInput value={row.buy_price} onChange={v => updateRow(row._key, { buy_price: v })} onBlur={handleBlur} />
                     </td>
                     {/* TP */}
                     <td className="border-l border-border/30 px-2.5 py-1.5 w-[80px]">
-                      <NumInput value={row.tp} onChange={v => updateRow(row._key, { tp: v })} />
+                      <NumInput value={row.tp} onChange={v => updateRow(row._key, { tp: v })} onBlur={handleBlur} />
                     </td>
                     {/* TP P&L */}
                     <PnlCell pnl={tpPnl} pct={tpPct} positive={tpPnl != null && tpPnl >= 0} />
                     {/* SL */}
                     <td className="border-l border-border/30 px-2.5 py-1.5 w-[80px]">
-                      <NumInput value={row.sl} onChange={v => updateRow(row._key, { sl: v })} />
+                      <NumInput value={row.sl} onChange={v => updateRow(row._key, { sl: v })} onBlur={handleBlur} />
                     </td>
                     {/* SL P&L */}
                     <PnlCell pnl={slPnl} pct={slPct} positive={false} />

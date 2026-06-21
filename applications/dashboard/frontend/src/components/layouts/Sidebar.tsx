@@ -9,7 +9,7 @@ import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings, SlidersHorizontal,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
   ShoppingCart, Briefcase, ArrowUpRight, FlaskConical, HardDriveDownload, GitBranch, ScanLine, Search,
-  RefreshCw, Star,
+  RefreshCw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
@@ -226,7 +226,7 @@ function PurchasePlanWidget() {
 
   if (!latest) return null
 
-  const items = (plan?.purchase_items ?? []).slice(0, 5)
+  const items = plan?.purchase_items ?? []
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -287,10 +287,7 @@ function PurchasePlanWidget() {
         <div className="flex-1 min-w-0">
           <span className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider">Purchase</span>
           <div className="flex items-center gap-0.5 mt-0.5">
-            <Star className="w-2 h-2 text-yellow-300 fill-yellow-300 shrink-0" />
-            <span className="text-[8px] text-ink-disabled">Target /</span>
-            <span className="text-[8px] text-white/60 shrink-0">●</span>
-            <span className="text-[8px] text-ink-disabled">Current</span>
+            <span className="text-[8px] text-ink-disabled">Entry / Current</span>
           </div>
         </div>
         <button
@@ -335,17 +332,6 @@ function PurchasePlanWidget() {
             const hasTP  = item.tp != null
             const hasBuy = item.buy_price != null
             const hasCur = item.current_price != null
-            const currentIsWin = hasBuy && hasCur
-              ? item.current_price! >= item.buy_price!
-              : null
-            const range = hasSL && hasTP ? item.tp! - item.sl! : 0
-            const buyPct = range > 0 && hasBuy
-              ? Math.max(0, Math.min(100, ((item.buy_price! - item.sl!) / range) * 100))
-              : null
-            const curPct = range > 0 && hasCur
-              ? Math.max(0, Math.min(100, ((item.current_price! - item.sl!) / range) * 100))
-              : null
-            const showBar = hasSL && hasTP && (buyPct !== null || curPct !== null)
 
             return (
               <div key={i} className="text-[10px]">
@@ -362,64 +348,88 @@ function PurchasePlanWidget() {
                   >
                     {item.stock}{item.triggered ? '✓' : ''}
                   </button>
-                  <span className="text-[8px] text-ink-disabled shrink-0">TARGET:</span>
-                  <span className="text-yellow-300 font-bold shrink-0">
+                  <span className="text-[8px] text-ink-disabled shrink-0">Entry </span>
+                  <span className="text-white font-bold shrink-0">
                     {hasBuy ? item.buy_price!.toFixed(1) : '—'}
                   </span>
                   <span className="text-ink-disabled shrink-0">/</span>
-                  <span className="text-[8px] text-ink-disabled shrink-0">CURR:</span>
+                  <span className="text-[8px] text-ink-disabled shrink-0">Current </span>
                   <span className="text-white font-bold shrink-0">
                     {hasCur ? item.current_price!.toFixed(1) : '—'}
                   </span>
                   {item.strategy && (
-                    <span className="text-[8px] text-ink-disabled shrink-0 ml-auto">{STRATEGY_ABBR[item.strategy] ?? item.strategy}</span>
+                    <span className="text-[8px] text-white shrink-0 ml-auto">{STRATEGY_ABBR[item.strategy] ?? item.strategy}</span>
                   )}
                 </div>
-                {/* Line 2: position bar */}
-                {showBar && (
-                  <div className="flex items-center gap-0.5 mt-0.5">
-                    <span className="text-[9px] text-loss tabular-nums shrink-0">{item.sl!.toFixed(1)}</span>
-                    <span className="text-[9px] text-ink-disabled shrink-0">←</span>
-                    <div className="flex-1 relative h-1.5 bg-surface-overlay rounded-full mx-0.5">
-                      {/* White line from current price to buy price */}
-                      {buyPct !== null && curPct !== null && (
-                        <div
-                          className="absolute top-1/2 -translate-y-1/2 h-0.5 bg-white/50"
-                          style={{
-                            left: `${Math.min(buyPct, curPct)}%`,
-                            width: `${Math.abs(buyPct - curPct)}%`,
-                          }}
-                        />
+                {/* Line 2: SL ← [★ ——▶ current] → TP */}
+                {(hasTP || hasSL) && hasCur && (() => {
+                  const range = hasTP && hasSL ? item.tp! - item.sl! : 0
+                  const hasRange = range > 0
+                  const curPct = hasRange
+                    ? Math.max(0, Math.min(100, ((item.current_price! - item.sl!) / range) * 100))
+                    : null
+                  const buyPct = hasRange && hasBuy
+                    ? Math.max(0, Math.min(100, ((item.buy_price! - item.sl!) / range) * 100))
+                    : null
+                  const isAboveBuy = hasBuy ? item.current_price! >= item.buy_price! : null
+                  const arrowColor = isAboveBuy === null ? '#6b7280' : isAboveBuy ? '#10b981' : '#ef4444'
+                  return (
+                    <div className="flex items-center gap-0.5 mt-0.5">
+                      {hasSL && (
+                        <span className="text-[9px] text-loss tabular-nums shrink-0">{item.sl!.toFixed(1)}</span>
                       )}
-                      {/* Current price — white dot */}
-                      {curPct !== null && (
-                        <div
-                          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-white"
-                          style={{ left: `${curPct}%` }}
-                        />
-                      )}
-                      {/* Buy price — light yellow star */}
-                      {buyPct !== null && (
-                        <div
-                          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
-                          style={{ left: `${buyPct}%` }}
-                        >
-                          <Star className="w-3 h-3 text-yellow-300 fill-yellow-300" />
+                      <span className="text-[9px] text-ink-disabled shrink-0 px-0.5">←</span>
+                      {curPct !== null && buyPct !== null ? (
+                        <div className="flex-1 relative mx-0.5" style={{ height: '18px' }}>
+                          {/* Background highlight bar — same as portfolio */}
+                          <div className="absolute left-0 right-0 h-1.5 bg-surface-overlay rounded-full top-1/2 -translate-y-1/2" />
+                          {/* Arrow line from star to current */}
+                          <div
+                            className="absolute top-1/2 -translate-y-1/2"
+                            style={{
+                              left: `${Math.min(buyPct, curPct)}%`,
+                              right: `${100 - Math.max(buyPct, curPct)}%`,
+                              height: '1px',
+                              backgroundColor: arrowColor,
+                            }}
+                          />
+                          {Math.abs(curPct - buyPct) > 0.5 && (
+                            <span
+                              className="absolute top-1/2 -translate-y-1/2 text-[7px] leading-none font-bold"
+                              style={{
+                                left: `${curPct}%`,
+                                transform: curPct >= buyPct
+                                  ? 'translateY(-50%) translateX(-100%)'
+                                  : 'translateY(-50%)',
+                                color: arrowColor,
+                              }}
+                            >
+                              {curPct >= buyPct ? '▶' : '◀'}
+                            </span>
+                          )}
+                          {/* ★ star at entry price — larger */}
+                          <span
+                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[12px] leading-none text-yellow-400"
+                            style={{ left: `${buyPct}%` }}
+                          >
+                            ★
+                          </span>
                         </div>
+                      ) : (
+                        <span className="text-[9px] text-ink-disabled flex-1 text-center">
+                          {item.current_price != null ? item.current_price.toFixed(1) : '—'}
+                        </span>
+                      )}
+                      <span className="text-[9px] text-ink-disabled shrink-0 px-0.5">→</span>
+                      {hasTP && (
+                        <span className="text-[9px] text-gain tabular-nums shrink-0">{item.tp!.toFixed(1)}</span>
                       )}
                     </div>
-                    <span className="text-[9px] text-ink-disabled shrink-0">→</span>
-                    <span className="text-[9px] text-gain tabular-nums shrink-0">{item.tp!.toFixed(1)}</span>
-                  </div>
-                )}
+                  )
+                })()}
               </div>
             )
           })}
-          {(plan?.purchase_items?.length ?? 0) > 5 && (
-            <p className="text-[10px] text-ink-disabled pl-1">
-              +{(plan!.purchase_items.length - 5)} more
-            </p>
-          )}
         </div>
       )}
 
@@ -490,7 +500,6 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
     ? (dbPositions ?? [])
         .filter(p => !p.parentId)
         .sort((a, b) => Math.abs(b.pnlPct) - Math.abs(a.pnlPct))
-        .slice(0, 5)
         .map(p => ({
           key: p.id,
           symbol: p.symbol,
@@ -502,7 +511,6 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
           link: '/settings/portfolio-db',
         }))
     : (planDetail?.portfolio_items ?? [])
-        .slice(0, 5)
         .map((it, i) => {
           const pnl = it.entry_price && it.current_price
             ? ((it.current_price - it.entry_price) / it.entry_price) * 100
@@ -651,13 +659,13 @@ function PortfolioWidget({ isDbMode }: { isDbMode: boolean }) {
                   </span>
                 )}
                 {row.entryPrice !== null && row.currentPrice !== null ? (
-                  <span className="text-[9px] text-ink-disabled tabular-nums flex-1 truncate">
-                    {row.entryPrice.toFixed(2)}
-                    <span className="mx-0.5">/</span>
+                  <span className="text-[9px] tabular-nums flex-1 truncate">
+                    <span className="text-white">{row.entryPrice.toFixed(2)}</span>
+                    <span className="text-ink-disabled mx-0.5">/</span>
                     <span className={isProfit ? 'text-gain' : 'text-loss'}>{row.currentPrice.toFixed(2)}</span>
                   </span>
                 ) : row.entryPrice !== null ? (
-                  <span className="text-[9px] text-ink-disabled tabular-nums flex-1">@{row.entryPrice.toFixed(2)}</span>
+                  <span className="text-[9px] text-ink-disabled tabular-nums flex-1">@<span className="text-white">{row.entryPrice.toFixed(2)}</span></span>
                 ) : null}
               </div>
 

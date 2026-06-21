@@ -122,9 +122,15 @@ for ticker_sym in [f"{sym}.BK", sym]:          # Thai SET first
 frontend/src/services/actionPlan.ts                              ← API service
 frontend/src/app/(dashboard)/action-plan/page.tsx                ← List page
 frontend/src/app/(dashboard)/action-plan/purchase/[id]/page.tsx  ← Purchase editor
+  # Added (2026-06-21): AUTO_SAVE_DEBOUNCE_MS, autoSaveTimer ref, handleBlur, onBlur on NumInput
 frontend/src/app/(dashboard)/action-plan/portfolio/[id]/page.tsx ← Portfolio editor
-  # Added: calcRR(), fmtRR(), AUTO_SAVE_DEBOUNCE_MS, handleBlur, autoSaveTimer ref
+  # Added (2026-06-21): calcRR(), fmtRR(), AUTO_SAVE_DEBOUNCE_MS, handleBlur, autoSaveTimer ref
 frontend/src/components/layouts/Sidebar.tsx                      ← + Action Plan nav item
+  # Modified (2026-06-21): PurchasePlanWidget and PortfolioWidget — removed .slice(0, 5) item cap
+frontend/src/components/action-plan/WeeklyPlanTable.tsx          ← Mon–Fri grid (purchase + portfolio)
+  # Modified (2026-06-21): added WeeklyPlanViewMode type, viewMode prop, by-date render branch
+frontend/src/components/action-plan/WeeklyPlanDashboard.tsx      ← Weekly Plan Dashboard orchestrator
+  # Modified (2026-06-21): added viewMode state, By Stock / By Date toggle control
 ```
 
 ### Service (`actionPlan.ts`)
@@ -236,7 +242,7 @@ Color thresholds applied to the `cn()` class selector:
 - `rr >= 1.0` → `text-warning`
 - `rr < 1.0` or `rr == null` → `text-ink-disabled`
 
-**Auto-save on Blur:**
+**Auto-save on Blur (Portfolio editor):**
 
 ```typescript
 const AUTO_SAVE_DEBOUNCE_MS = 300   // module-level constant
@@ -259,7 +265,57 @@ const handleBlur = useCallback(() => {
 
 The `autoSaveTimer` ref is separate from the existing `saveTimer` ref (used to auto-clear save status messages) to prevent timer collision.
 
+**Auto-save on Blur (Purchase editor):**
+
+The identical `AUTO_SAVE_DEBOUNCE_MS`, `autoSaveTimer`, unmount cleanup, and `handleBlur` pattern is applied to the Purchase editor (`purchase/[id]/page.tsx`). The four `NumInput` fields that receive `onBlur={handleBlur}` are: SIZE, BUY, TP, SL. The STOCK field retains its existing `fetchPrice` onBlur handler unchanged.
+
 **Save:** `actionPlanService.update(id, { portfolio_items: mergedRows })`.
+
+### Sidebar Widgets — Unlimited Item Display
+
+Prior to 2026-06-21, both `PurchasePlanWidget` and `PortfolioWidget` in `Sidebar.tsx` applied a `.slice(0, 5)` cap on the rendered items list and showed a "+N more" count when items exceeded the cap.
+
+Both slices have been removed. The widgets now render all items from the latest plan/position list. The sidebar's own `overflow-y: auto` scroll container absorbs any additional height without layout side-effects.
+
+Affected lines removed:
+- `PurchasePlanWidget` line: `const items = (plan?.purchase_items ?? []).slice(0, 5)`
+- `PurchasePlanWidget` "+N more" trailing paragraph
+- `PortfolioWidget` DB mode: `.slice(0, 5)` after `.sort()`
+- `PortfolioWidget` plan detail mode: `.slice(0, 5)` before `.map()`
+
+### Weekly Plan Dashboard — View Mode Toggle
+
+The `WeeklyPlanTable` component now accepts an optional `viewMode: 'by-stock' | 'by-date'` prop (default: `'by-stock'`). The type is exported as `WeeklyPlanViewMode`.
+
+**By-Stock branch** (unchanged from original behaviour): thead has a "Stock" column then one `<th>` per weekday; tbody has one `<tr>` per stock.
+
+**By-Date branch** (new): thead has a "Date" column then one `<th>` per stock symbol; tbody has one `<tr>` per weekday; each cell renders the same `PlanCellDisplay` / `PortfolioCellDisplay` component. Stock columns are capped at `MAX_BY_DATE_COLUMNS = 5`. `activePurchaseItems` and `activePortfolioItems` are derived from the full item arrays via `.slice(0, MAX_BY_DATE_COLUMNS)` and used in both the thead and tbody loops. The `symbols` array (used for the `minWidth` calculation) is also derived from the sliced arrays so the table width never exceeds `120 + 5 × 165 = 945px`.
+
+Shared helpers extracted to avoid code duplication between the two branches:
+
+```typescript
+function getDayPrice(symbol: string, currentPrice: number | null, day: WeekDay): number | null {
+  const isFuture = day.date > todayMidnight
+  if (isFuture) return null
+  if (day.isToday && isCurrentWeek) return currentPrice
+  return priceMap.get(symbol)?.get(day.isoDate) ?? null
+}
+
+function getPrevDayPrice(symbol: string, dayIdx: number): number | null {
+  if (dayIdx === 0) return null
+  return priceMap.get(symbol)?.get(weekDays[dayIdx - 1].isoDate) ?? null
+}
+```
+
+Guard states (loading, error, no plan, empty items) are resolved before the view-mode branch, eliminating duplication.
+
+`WeeklyPlanDashboard.tsx` manages a `viewMode` state (`useState<WeeklyPlanViewMode>('by-stock')`). A two-button pill toggle in the header row switches between modes. Both `WeeklyPlanTable` instances receive the same `viewMode` prop.
+
+Symbol click security: column headers in by-date mode call `onSymbolClick(symbol)` which routes through the same `handleSymbolClick` validator (`/^[A-Z0-9\-\.]{1,12}$/i`) as the existing by-stock row headers.
+
+**Responsive behaviour:** both view modes wrap their `<table>` in an `overflow-x-auto` div. A computed inline `style={{ minWidth }}` prevents column collapse:
+- By-Stock: `160 + (numDays * 165)` px
+- By-Date: `120 + (numStocks * 165)` px
 
 ---
 
@@ -344,3 +400,55 @@ Browser (onBlur stock field)
 **Rationale:** The guard fires synchronously in response to a DOM blur event, not inside a timer callback. Closure-captured state is current at this call point. A parallel ref would require keeping it synchronised with `setSaving()` calls, creating a maintenance hazard.
 
 **Consequence:** No stale closure risk at the point the guard executes.
+
+---
+
+## 7. Architecture Decision Records (2026-06-21 additions — Three Enhancement Delivery)
+
+### ADR-AS-3: Auto-Save Pattern Applied to Purchase Editor Identically
+
+**Decision:** The auto-save-on-blur pattern from the Portfolio editor is applied verbatim to the Purchase editor without abstraction into a shared hook.
+
+**Rationale:** Two call sites do not justify extracting a custom hook in a personal project. Identical copy keeps each page self-contained and independently readable. If a third editor is introduced, extraction becomes justified.
+
+**Consequence:** The pattern exists in two files. Any future change (e.g., timer duration) must be applied in both places. Registered as Technical Debt TD-11.
+
+---
+
+### ADR-SW-1: Sidebar Item Cap Removed — No Virtualisation Added
+
+**Decision:** The `.slice(0, 5)` cap in both sidebar widgets is removed. No virtual scrolling is introduced.
+
+**Rationale:** The sidebar is already inside a scrollable container. For a personal portfolio (typically 5–30 positions) the performance impact of rendering all rows is negligible. Virtual scrolling would add implementation complexity disproportionate to the gain.
+
+**Consequence:** On unusually large watchlists (>50 items) the sidebar may become long. Accepted for personal use context.
+
+---
+
+### ADR-VM-1: View Mode State Local to WeeklyPlanDashboard, Not Persisted
+
+**Decision:** `viewMode` is local `useState` in `WeeklyPlanDashboard`. It resets to `'by-stock'` on page navigation.
+
+**Rationale:** View preference is an interaction convenience, not business data. Persisting it to `localStorage` or the server adds complexity with low value for a single-user tool.
+
+**Consequence:** Users who prefer By Date must re-select it each session. Acceptable.
+
+---
+
+### ADR-VM-2: Guard States Resolved Before View-Mode Branch
+
+**Decision:** All guard states (loading, error, no plan, empty list) are resolved as early returns before the `if (viewMode === 'by-stock')` branch.
+
+**Rationale:** Prevents guard logic from being duplicated inside both the by-stock and by-date branches. Each guard renders its own title + state message, maintaining consistent heading display regardless of load state.
+
+**Consequence:** Slightly more lines of JSX at the top of the function but eliminates all branching duplication inside the table renders.
+
+---
+
+### ADR-DC-1: By-Date View Stock Column Cap via Slice
+
+**Decision:** The by-date view caps stock columns to 5 via `.slice(0, MAX_BY_DATE_COLUMNS)` applied to the active item arrays before rendering.
+
+**Rationale:** In by-date view, stock count is unbounded — it grows with the user's plan size. The by-stock view is inherently bounded at 5 (Mon–Fri). Capping at 5 produces a symmetric 5×5 grid and prevents horizontal overflow. A slice is the lowest-risk approach: no new props, no new state, no API changes. Stocks beyond position 5 are hidden silently; no pagination control was added.
+
+**Consequence:** Users with more than 5 stocks in a plan will not see stocks 6+ in the by-date view. The by-stock view (which renders all stocks as rows) remains the complete view for large plans.
