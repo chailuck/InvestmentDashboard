@@ -368,5 +368,148 @@ async def login(request: Request, body: LoginRequest, ...):
     UserScanConfig, UserSymbolList, WeeklyScan, WeeklyScanItem
 )</code></pre>
 <div class="callout warn">Forgetting to import a model here will result in the corresponding table not being created by <code>create_all()</code>, and Alembic migrations will also fail to detect the table. Always add new model classes to this import block.</div>
+
+<h2>13. Previous-evaluation endpoint</h2>
+<p>This endpoint powers the read-only <strong>Prev</strong> column in the scan detail table. It returns the colour mark and strategy recorded for each symbol in the scan that immediately precedes the requested scan (by creation timestamp, same user).</p>
+
+<h3>Endpoint</h3>
+<pre><code>GET /api/v1/weekly-scan/scans/{scan_id}/previous-eval
+Authorization: Bearer &lt;token&gt;
+</code></pre>
+
+<h4>Path parameter</h4>
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>scan_id</code></td><td>UUID</td><td>The current scan whose predecessor should be located</td></tr>
+  </tbody>
+</table>
+
+<h4>Response — 200 OK</h4>
+<pre><code>{
+  "previous_scan_id":   "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "previous_scan_name": "WEEKLY_SCAN_22_06_2025",
+  "items": [
+    { "symbol": "PTT",  "color_mark": "GREEN", "strategy": "BUY ON DIP" },
+    { "symbol": "AOT",  "color_mark": null,    "strategy": null }
+  ]
+}
+</code></pre>
+
+<h4>Response — 404 Not Found</h4>
+<p>Returned in two cases:</p>
+<ul>
+  <li>The requested <code>scan_id</code> does not exist or does not belong to the authenticated user.</li>
+  <li>The current scan is the oldest scan for this user — no predecessor exists.</li>
+</ul>
+
+<h3>Pydantic schemas</h3>
+<pre><code># backend/app/api/v1/endpoints/weekly_scan.py
+
+class PreviousEvalItem(BaseModel):
+    symbol:     str
+    color_mark: str | None
+    strategy:   str | None
+
+class PreviousEvalResponse(BaseModel):
+    previous_scan_id:   str
+    previous_scan_name: str
+    items:              list[PreviousEvalItem]
+</code></pre>
+<p>Financial fields (<code>buy_price</code>, <code>tp</code>, <code>sl</code>, <code>size</code>, <code>remark</code>) are deliberately excluded from the response. The Prev column exists only to show evaluation intent (colour + strategy); exposing numeric parameters would clutter the projection and is not needed by the frontend.</p>
+
+<h3>Query strategy</h3>
+<pre><code># Locate the predecessor scan
+prev_scan = await db.scalar(
+    select(WeeklyScan)
+    .where(
+        WeeklyScan.user_id == current_user_id,
+        WeeklyScan.created_at &lt; current_scan.created_at,
+    )
+    .order_by(WeeklyScan.created_at.desc(), WeeklyScan.id.desc())
+    .limit(1)
+)
+</code></pre>
+<p>The compound <code>ORDER BY created_at DESC, id DESC</code> acts as a tiebreaker: if two scans were created within the same timestamp (e.g. during automated testing), the one with the higher UUID sort value is treated as more recent. <code>LIMIT 1</code> ensures a single row is returned even when the user has many scans.</p>
+
+<h3>Frontend integration</h3>
+<p><strong>File:</strong> <code>frontend/src/app/(dashboard)/weekly-scan/[id]/page.tsx</code></p>
+
+<h4>Service layer</h4>
+<pre><code>// frontend/src/services/weeklyScan.ts
+
+export interface PreviousEvalItem {
+  symbol:     string
+  color_mark: string | null
+  strategy:   string | null
+}
+
+export interface PreviousEvalResponse {
+  previous_scan_id:   string
+  previous_scan_name: string
+  items:              PreviousEvalItem[]
+}
+
+// Service method
+getPreviousEval(scanId: string): Promise&lt;PreviousEvalResponse&gt;
+</code></pre>
+
+<h4>Data fetching</h4>
+<pre><code>const { data: prevEval } = useQuery({
+  queryKey: ['weekly-scan-prev-eval', id],
+  queryFn:  () =&gt; weeklyScanService.getPreviousEval(id),
+  staleTime: 10 * 60_000,   // 10 minutes — previous scan data does not change during a session
+  retry:     false,          // 404 is an expected state (oldest scan); do not retry
+})
+</code></pre>
+<p><code>retry: false</code> is intentional. A 404 response means this is the first scan — the absence of previous data is a valid and permanent state, not a transient error.</p>
+
+<h4>O(1) per-row lookup map</h4>
+<pre><code>const prevEvalMap: Record&lt;string, PreviousEvalItem&gt; = useMemo(() =&gt;
+  prevEval
+    ? Object.fromEntries(prevEval.items.map(item =&gt; [item.symbol, item]))
+    : {},
+  [prevEval]
+)
+</code></pre>
+<p>Converting the array to a keyed object at mount time avoids an O(n) linear scan per table row on every render. With 50–100 symbols in a typical scan, the per-row lookup is O(1).</p>
+
+<h4>Column rendering logic</h4>
+<pre><code>// Inside the table row renderer
+const prev = prevEvalMap[item.symbol]   // undefined if symbol not in previous scan
+
+if (!prev) {
+  // Symbol absent from previous scan
+  return &lt;td&gt;—&lt;/td&gt;
+}
+if (!prev.color_mark &amp;&amp; !prev.strategy) {
+  // Present but unevaluated
+  return &lt;td&gt;&lt;HollowDot /&gt; —&lt;/td&gt;
+}
+const short = prev.strategy
+  ? (STRATEGY_ICONS[prev.strategy]?.short ?? prev.strategy.slice(0, 6))
+  : '—'
+return (
+  &lt;td title={prev.strategy ?? ''}&gt;
+    &lt;ColorDot color={prev.color_mark} /&gt; {short}
+  &lt;/td&gt;
+)
+</code></pre>
+<p>The column header renders the previous scan date extracted from <code>prevEval.previous_scan_name</code> by stripping the <code>WEEKLY_SCAN_</code> prefix:</p>
+<pre><code>const prevDate = prevEval?.previous_scan_name.replace('WEEKLY_SCAN_', '') ?? ''
+// e.g. "22_06_2025"
+</code></pre>
+
+<h3>Design decisions</h3>
+<table>
+  <thead><tr><th>Decision</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td>Separate endpoint rather than embedding in <code>GET /scans/{id}</code></td><td>Keeps the main scan payload lightweight. Previous data is optional context; not all consumers of the scan endpoint need it.</td></tr>
+    <tr><td>Financial fields excluded from response</td><td>Buy price, TP, SL, and size from last week are not actionable in the Prev column. Omitting them reduces payload size and prevents confusion with current-week parameters.</td></tr>
+    <tr><td><code>staleTime: 10 min</code></td><td>Previous scan data is immutable once a new scan has been created. A 10-minute cache avoids redundant round trips during a typical evaluation session without requiring manual invalidation.</td></tr>
+    <tr><td><code>retry: false</code></td><td>404 is an expected business state (oldest scan). React Query's default retry behaviour would issue three unnecessary retry requests before settling.</td></tr>
+    <tr><td><code>Object.fromEntries</code> map at query level</td><td>Transforms the array once at data-load time instead of performing a <code>.find()</code> inside the render function, which would degrade to O(n²) over the full symbol list.</td></tr>
+  </tbody>
+</table>
 </body>
 </html>

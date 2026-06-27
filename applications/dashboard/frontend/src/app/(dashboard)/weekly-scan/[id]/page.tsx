@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 import {
   weeklyScanService, COLOR_MARKS, SCAN_STRATEGIES,
   colorMarkMeta, type WeeklyScanItem, type ColorMark, type WeekPriceEntry,
+  type PreviousEvalItem,
 } from '@/services/weeklyScan'
 import { actionPlanService, type PlanSummary, type PurchaseItem } from '@/services/actionPlan'
 import { portfolioDbService } from '@/services/portfolioDb'
@@ -493,6 +494,19 @@ export default function WeeklyScanPage() {
     enabled: !!scan,
   })
 
+  const { data: previousEval } = useQuery({
+    queryKey: ['weekly-scan-prev-eval', id],
+    queryFn: () => weeklyScanService.getPreviousEval(id),
+    staleTime: 10 * 60_000,
+    enabled: !!scan,
+    retry: false,
+  })
+
+  // O(1) lookup map: symbol → PreviousEvalItem
+  const prevEvalMap: Record<string, PreviousEvalItem> = previousEval
+    ? Object.fromEntries(previousEval.items.map(i => [i.symbol, i]))
+    : {}
+
   const { data: symbolLists = [] } = useQuery({
     queryKey: ['symbol-lists'],
     queryFn: () => weeklyScanService.getSymbolLists(),
@@ -845,6 +859,16 @@ export default function WeeklyScanPage() {
                 <th className="px-3 py-2.5 text-left font-medium w-[84px]">Symbol</th>
                 <th className="px-3 py-2.5 text-left font-medium">Color</th>
                 <th className="px-3 py-2.5 text-left font-medium min-w-[220px]">Strategy</th>
+                <th className="px-3 py-2.5 text-left font-medium w-[110px]">
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-ink-muted">Prev</span>
+                    <span className="text-[10px] font-normal text-ink-disabled truncate max-w-[100px]">
+                      {previousEval?.previous_scan_name
+                        ? previousEval.previous_scan_name.replace('WEEKLY_SCAN_', '')
+                        : '—'}
+                    </span>
+                  </div>
+                </th>
                 <th className="px-3 py-2.5 text-right font-medium min-w-[80px]">Current</th>
                 <th className="px-3 py-2.5 text-right font-medium min-w-[72px]">Chg</th>
                 <th className="px-3 py-2.5 text-right font-medium min-w-[90px]">
@@ -906,6 +930,8 @@ export default function WeeklyScanPage() {
                     placeholder="Filter…"
                     className="w-full bg-surface-elevated border border-border/50 rounded px-2 py-0.5 text-[11px] text-ink-secondary placeholder:text-ink-disabled focus:outline-none focus:border-brand-500/50" />
                 </td>
+                {/* Prev — no filter */}
+                <td className="px-3 py-1.5" />
                 <td className="px-3 py-1.5 text-right text-[10px] text-ink-disabled">{pricesLoading ? '…' : ''}</td>
                 <td className="px-3 py-1.5"></td>
                 <td className="px-3 py-1.5"></td>
@@ -941,7 +967,7 @@ export default function WeeklyScanPage() {
             <tbody>
               {sortedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="px-4 py-10 text-center text-ink-muted">
+                  <td colSpan={15} className="px-4 py-10 text-center text-ink-muted">
                     No symbols yet. Add symbols or click <strong>Refresh config</strong>.
                   </td>
                 </tr>
@@ -980,6 +1006,32 @@ export default function WeeklyScanPage() {
                       <StrategyCell value={item.strategy}
                         onChange={v => updateField(item.symbol, { strategy: v })} />
                     </td>
+                    {/* Previous scan: color + strategy combined */}
+                    {(() => {
+                      const prev = prevEvalMap[item.symbol]
+                      if (!prev) {
+                        return (
+                          <td className="px-3 py-2">
+                            <span className="text-ink-disabled text-xs">—</span>
+                          </td>
+                        )
+                      }
+                      const prevMeta = prev.color_mark ? colorMarkMeta(prev.color_mark) : null
+                      const stratMeta = prev.strategy ? STRATEGY_ICONS[prev.strategy] : null
+                      const stratLabel = prev.strategy ? (stratMeta?.short ?? prev.strategy.slice(0, 6)) : null
+                      return (
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1">
+                            {prevMeta
+                              ? <span className={cn('w-2 h-2 rounded-full shrink-0', prevMeta.dot)} title={prevMeta.label} />
+                              : <span className="w-2 h-2 rounded-full shrink-0 border border-border/50" />}
+                            {stratLabel
+                              ? <span className="text-[10px] text-ink-secondary" title={prev.strategy ?? ''}>{stratLabel}</span>
+                              : <span className="text-[10px] text-ink-disabled">—</span>}
+                          </div>
+                        </td>
+                      )
+                    })()}
                     {(() => {
                       const priceEntry = weekPrices?.prices[item.symbol]
                       const isDrSymbol = priceEntry?.parent_symbol != null  // item IS a DR ticker

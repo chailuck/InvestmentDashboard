@@ -130,6 +130,16 @@ class PeScanResultItem(BaseModel):
 class PeScanResultsBulk(BaseModel):
     results: list[PeScanResultItem]
 
+class PreviousEvalItem(BaseModel):
+    symbol: str
+    color_mark: str | None
+    strategy: str | None
+
+class PreviousEvalResponse(BaseModel):
+    previous_scan_id: str
+    previous_scan_name: str
+    items: list[PreviousEvalItem]
+
 # ── Week-price helpers ────────────────────────────────────────────────────────
 
 def _parse_week_dates(scan_name: str) -> tuple[date | None, date | None]:
@@ -476,6 +486,55 @@ async def get_scan(scan_id: str, user_id: UserId, db: DB) -> dict[str, Any]:
         "items": [_item_dict(it) for it in scan.items],
         "color_counts": _color_counts(scan.items),
     }
+
+
+@router.get("/scans/{scan_id}/previous-eval", response_model=PreviousEvalResponse)
+async def get_previous_eval(scan_id: str, user_id: UserId, db: DB) -> PreviousEvalResponse:
+    """Return color_mark and strategy from the scan immediately preceding scan_id."""
+    uid = uuid.UUID(user_id)
+    current_scan_uuid = uuid.UUID(scan_id)
+
+    # Verify current scan exists and belongs to this user
+    current_ts = await db.scalar(
+        select(WeeklyScan.created_at).where(
+            WeeklyScan.id == current_scan_uuid,
+            WeeklyScan.user_id == uid,
+        )
+    )
+    if current_ts is None:
+        raise HTTPException(404, "Scan not found")
+
+    # Find the most recent scan created before the current one (same user)
+    prev_scan = await db.scalar(
+        select(WeeklyScan)
+        .where(
+            WeeklyScan.user_id == uid,
+            WeeklyScan.created_at < current_ts,
+        )
+        .order_by(WeeklyScan.created_at.desc(), WeeklyScan.id.desc())
+        .limit(1)
+    )
+    if prev_scan is None:
+        raise HTTPException(404, "No previous scan found for this scan")
+
+    # Fetch only symbol, color_mark, strategy — lightweight projection
+    rows = await db.execute(
+        select(
+            WeeklyScanItem.symbol,
+            WeeklyScanItem.color_mark,
+            WeeklyScanItem.strategy,
+        ).where(WeeklyScanItem.scan_id == prev_scan.id)
+    )
+    items = [
+        PreviousEvalItem(symbol=row.symbol, color_mark=row.color_mark, strategy=row.strategy)
+        for row in rows.all()
+    ]
+
+    return PreviousEvalResponse(
+        previous_scan_id=str(prev_scan.id),
+        previous_scan_name=prev_scan.name,
+        items=items,
+    )
 
 
 @router.delete("/scans/{scan_id}")

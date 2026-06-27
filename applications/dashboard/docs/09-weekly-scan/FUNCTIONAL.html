@@ -120,11 +120,28 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
     <tr><td>Week %</td><td>(Fri − Mon) / Mon × 100; green if positive, red if negative</td></tr>
     <tr><td>Color</td><td>Five coloured dot buttons; click to assign/clear colour mark</td></tr>
     <tr><td>Strategy</td><td>Icon button grid for preset strategies; OTHERS reveals free-text input</td></tr>
+    <tr><td>Prev</td><td>Read-only. Previous scan's colour dot + strategy short code for this symbol. See section 3.3.1.</td></tr>
     <tr><td>Buy / Size / TP / SL</td><td>Inline numeric inputs; click to edit, blur or Enter to save</td></tr>
     <tr><td>Remark</td><td>Inline free-text input</td></tr>
     <tr><td>Actions</td><td>Add to purchase plan (cart icon) · Delete from scan (trash icon)</td></tr>
   </tbody>
 </table>
+<h3>3.3.1 Previous Scan column</h3>
+<p>The scan detail table includes a read-only <strong>Prev</strong> column that shows how each symbol was evaluated in the immediately preceding scan — the scan created most recently before the current one, by timestamp, belonging to the same user.</p>
+<p>The column header displays "Prev" with a sub-label showing the date portion of the previous scan's name (the <code>WEEKLY_SCAN_</code> prefix is stripped, e.g. <code>22_06_2025</code>). When no predecessor scan exists the column header sub-label is blank and all cells show <code>—</code>.</p>
+<p><strong>Cell display logic:</strong></p>
+<table>
+  <thead><tr><th>Condition</th><th>Cell content</th></tr></thead>
+  <tbody>
+    <tr><td>Symbol is not present in the previous scan</td><td><code>—</code></td></tr>
+    <tr><td>Symbol is present but unevaluated (no colour, no strategy)</td><td>Hollow dot + <code>—</code></td></tr>
+    <tr><td>Colour mark set, strategy is null</td><td>Filled dot in the previous colour + <code>—</code></td></tr>
+    <tr><td>Both colour mark and strategy are set</td><td>Filled dot in the previous colour + strategy short code (e.g. BOD, BO, ททกต)</td></tr>
+  </tbody>
+</table>
+<p>The strategy abbreviation is the same short code shown in the Strategy column (see section 2.4). For custom (OTHERS) strategies, the first 6 characters are shown with the full text available in a tooltip on hover.</p>
+<div class="callout">This column is <strong>read-only</strong>. It cannot be edited from the scan table or the Evaluate view. It reflects the saved state of the previous scan at the time the page loads and does not update as the current scan is being evaluated.</div>
+
 <p><strong>Filter controls above the table:</strong></p>
 <ul>
   <li><strong>List tabs</strong> — one tab per symbol list; "All" shows every symbol</li>

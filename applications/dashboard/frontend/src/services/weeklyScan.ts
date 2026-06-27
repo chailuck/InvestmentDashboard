@@ -112,6 +112,18 @@ export interface SymbolNote {
   updated_at: string | null
 }
 
+export interface PreviousEvalItem {
+  symbol: string
+  color_mark: ColorMark | null
+  strategy: string | null
+}
+
+export interface PreviousEvalResponse {
+  previous_scan_id: string
+  previous_scan_name: string
+  items: PreviousEvalItem[]
+}
+
 export interface PeScanResultItem {
   symbol: string
   indicator: string | null
@@ -163,6 +175,11 @@ export const weeklyScanService = {
 
   async getScan(id: string): Promise<WeeklyScan> {
     const { data } = await apiClient.get(`/weekly-scan/scans/${id}`)
+    return data
+  },
+
+  async getPreviousEval(scanId: string): Promise<PreviousEvalResponse> {
+    const { data } = await apiClient.get(`/weekly-scan/scans/${scanId}/previous-eval`)
     return data
   },
 
