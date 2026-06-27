@@ -74,4 +74,76 @@ export const usersService = {
   async resetPassword(token: string, newPassword: string): Promise<void> {
     await apiClient.post('/auth/reset-password', { token, new_password: newPassword })
   },
+
+  // ── Clone feature ──────────────────────────────────────────────────────────
+
+  async clonePreflight(sourceUserId: string, targetUserId: string): Promise<ClonePreflightResponse> {
+    const { data } = await apiClient.post(`/users/${sourceUserId}/clone-preflight`, {
+      target_user_id: targetUserId,
+    })
+    return data
+  },
+
+  async cloneExecute(
+    sourceUserId: string,
+    targetUserId: string,
+    portfolioModeOverride: 'excel' | 'db' | null,
+  ): Promise<CloneExecuteResponse> {
+    const body: {
+      target_user_id: string
+      confirmed: boolean
+      portfolio_mode_override?: 'excel' | 'db'
+    } = {
+      target_user_id: targetUserId,
+      confirmed: true,
+    }
+    if (portfolioModeOverride !== null) {
+      body.portfolio_mode_override = portfolioModeOverride
+    }
+    const { data } = await apiClient.post(`/users/${sourceUserId}/clone`, body)
+    return data
+  },
+}
+
+// ── Clone feature types ────────────────────────────────────────────────────
+
+export interface TableCounts {
+  portfolios: number
+  holdings: number
+  investment_transactions: number
+  portfolio_positions_db: number
+  action_plans: number
+  purchase_plan_items: number
+  portfolio_plan_items: number
+  user_scan_configs: number
+  user_symbol_lists: number
+  weekly_scans: number
+  weekly_scan_items: number
+  pe_scan_results: number
+  symbol_notes: number
+  weekly_reviews: number
+  weekly_review_items: number
+}
+
+export interface ClonePreflightResponse {
+  source_user_id: string
+  source_user_name: string
+  target_user_id: string
+  target_user_name: string
+  source_counts: TableCounts
+  target_existing_counts: TableCounts
+  target_has_data: boolean
+}
+
+export interface CloneExecuteResponse {
+  cloned_by_admin_id: string
+  cloned_by_admin_name: string
+  source_user_id: string
+  source_user_name: string
+  target_user_id: string
+  target_user_name: string
+  portfolio_mode_applied: string
+  cloned_at: string
+  rows_cloned: TableCounts
+  total_rows_cloned: number
 }

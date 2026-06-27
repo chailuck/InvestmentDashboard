@@ -7,6 +7,7 @@ from .endpoints.analytics import router as analytics_router
 from .endpoints.portfolio_db import router as portfolio_db_router
 from .endpoints.backup import router as backup_router
 from .endpoints.dr_mapping import router as dr_mapping_router
+from .endpoints.objective import router as objective_router
 from .endpoints.review_list import router as review_list_router
 from .endpoints.testing import router as testing_router
 from .endpoints.weekly_scan import router as weekly_scan_router
@@ -38,4 +39,5 @@ v1_router.include_router(weekly_scan_router)
 v1_router.include_router(testing_router)
 v1_router.include_router(backup_router)
 v1_router.include_router(dr_mapping_router)
+v1_router.include_router(objective_router)
 v1_router.include_router(review_list_router)

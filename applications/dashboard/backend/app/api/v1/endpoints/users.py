@@ -1,4 +1,4 @@
-﻿"""User management endpoints (admin CRUD + self-service)."""
+"""User management endpoints (admin CRUD + self-service)."""
 
 
 import uuid
@@ -10,16 +10,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user, require_admin
 from app.auth.jwt import hash_password, verify_password
+from app.core.logging import get_logger
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.users import (
     AdminResetPasswordRequest,
     ChangePasswordRequest,
+    CloneExecuteRequest,
+    CloneExecuteResponse,
+    ClonePreflightRequest,
+    ClonePreflightResponse,
     UserCreate,
     UserDetail,
     UserListResponse,
     UserUpdate,
 )
+from app.services.clone_service import run_clone, run_clone_preflight
+
+_log = get_logger("api.users")
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -182,3 +190,94 @@ async def change_own_password(body: ChangePasswordRequest, current_user: Current
     current_user.hashed_password = hash_password(body.new_password)
     await db.commit()
     return {"message": "Password changed successfully"}
+
+
+# ── Clone: preflight ──────────────────────────────────────────────────────────
+@router.post("/{user_id}/clone-preflight", response_model=ClonePreflightResponse)
+async def clone_preflight(
+    user_id: str,
+    body: ClonePreflightRequest,
+    admin: AdminUser,
+    db: DB,
+) -> ClonePreflightResponse:
+    """Return row counts for source and target without writing any data."""
+    if user_id == body.target_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Source and target user must be different",
+        )
+
+    try:
+        source_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid source user_id")
+
+    source = (await db.execute(select(User).where(User.id == source_uuid))).scalar_one_or_none()
+    if source is None or not source.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source user not found or inactive")
+
+    try:
+        target_uuid = uuid.UUID(body.target_user_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid target_user_id")
+
+    target = (
+        await db.execute(select(User).where(User.id == target_uuid))
+    ).scalar_one_or_none()
+    if target is None or not target.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target user not found or inactive")
+
+    _log.info(
+        "clone_preflight.requested",
+        admin_id=str(admin.id),
+        source_id=str(source.id),
+        target_id=str(target.id),
+    )
+
+    return await run_clone_preflight(db=db, source=source, target=target)
+
+
+# ── Clone: execute ────────────────────────────────────────────────────────────
+@router.post("/{user_id}/clone", response_model=CloneExecuteResponse, status_code=status.HTTP_200_OK)
+async def clone_user(
+    user_id: str,
+    body: CloneExecuteRequest,
+    admin: AdminUser,
+    db: DB,
+) -> CloneExecuteResponse:
+    """Copy all data from source user (user_id) to target user atomically."""
+    if user_id == body.target_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Source and target user must be different",
+        )
+
+    try:
+        source_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid source user_id")
+
+    source = (await db.execute(select(User).where(User.id == source_uuid))).scalar_one_or_none()
+    if source is None or not source.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source user not found or inactive")
+
+    try:
+        target_uuid = uuid.UUID(body.target_user_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid target_user_id")
+
+    target = (
+        await db.execute(select(User).where(User.id == target_uuid))
+    ).scalar_one_or_none()
+    if target is None or not target.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target user not found or inactive")
+
+    portfolio_mode = body.portfolio_mode_override if body.portfolio_mode_override else source.portfolio_mode
+
+    return await run_clone(
+        db=db,
+        admin=admin,
+        source=source,
+        target=target,
+        portfolio_mode=portfolio_mode,
+    )

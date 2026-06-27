@@ -351,6 +351,29 @@ async def sync_excel_positions_to_db(
     has_remark = "Remark" in df.columns
     has_remark_sell = "Remark sell" in df.columns
 
+    # Capture existing reason/feel annotations before deleting, keyed by natural key:
+    # (symbol, entry_date, position_size) — used to restore after re-insert.
+    existing_q = select(PortfolioDbPosition).where(PortfolioDbPosition.user_id == uid)
+    if pid:
+        existing_q = existing_q.where(PortfolioDbPosition.portfolio_id == pid)
+    existing_result = await db.execute(existing_q)
+    existing_rows = existing_result.scalars().all()
+
+    # Build annotation map: (symbol, entry_date, position_size) → (reason, feel)
+    # Only preserve entries that have at least one non-null annotation.
+    #
+    # KNOWN LIMITATION: The natural key (symbol, entry_date, position_size) is
+    # not guaranteed unique. Two positions for the same stock entered on the same
+    # date with the same size will collide — the last one iterated wins and the
+    # other's annotations are silently discarded after sync. This is an accepted
+    # trade-off given the full-replace sync model. The long-term fix is to embed
+    # a stable surrogate ID in the Excel source file. (ADR-OBJ-SYNC-1)
+    annotation_map: dict[tuple, tuple] = {}
+    for er in existing_rows:
+        if er.reason is not None or er.feel is not None:
+            key = (er.symbol, er.entry_date, er.position_size)
+            annotation_map[key] = (er.reason, er.feel)
+
     # Full replace — delete existing rows for this user (and portfolio if specified)
     del_q = sa_delete(PortfolioDbPosition).where(PortfolioDbPosition.user_id == uid)
     if pid:
@@ -381,6 +404,10 @@ async def sync_excel_positions_to_db(
             parts.append(str(row["Remark sell"]).strip())
         remarks = " | ".join(p for p in parts if p) or None
 
+        # Restore any previously saved annotations for this natural key
+        nat_key = (symbol, entry_date, position_size)
+        saved_reason, saved_feel = annotation_map.get(nat_key, (None, None))
+
         db.add(PortfolioDbPosition(
             user_id=uid,
             portfolio_id=pid,
@@ -395,6 +422,8 @@ async def sync_excel_positions_to_db(
             exit_date=exit_date,
             exit_price=exit_price,
             remarks=remarks,
+            reason=saved_reason,
+            feel=saved_feel,
         ))
         count += 1
 

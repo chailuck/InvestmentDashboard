@@ -5,12 +5,11 @@ import { apiClient } from './api'
 export const FEELINGS = [
   { value: 5, label: 'Very Good', iconKey: 'ChevronsUp',   color: 'text-emerald-400', bg: 'bg-emerald-400/15 border-emerald-400/30' },
   { value: 4, label: 'Good',      iconKey: 'ChevronUp',    color: 'text-green-400',   bg: 'bg-green-400/15 border-green-400/30' },
-  { value: 3, label: 'Moderate',  iconKey: 'Minus',        color: 'text-amber-400',   bg: 'bg-amber-400/15 border-amber-400/30' },
   { value: 2, label: 'Bad',       iconKey: 'ChevronDown',  color: 'text-orange-400',  bg: 'bg-orange-400/15 border-orange-400/30' },
   { value: 1, label: 'Very Bad',  iconKey: 'ChevronsDown', color: 'text-red-400',     bg: 'bg-red-400/15 border-red-400/30' },
 ] as const
 
-export type FeelingValue = 1 | 2 | 3 | 4 | 5
+export type FeelingValue = 1 | 2 | 4 | 5
 export type ItemType = 'TRADE' | 'HOLD'
 
 // ── Types ─────────────────────────────────────────────────────────────────────

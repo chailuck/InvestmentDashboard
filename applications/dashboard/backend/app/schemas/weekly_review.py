@@ -38,8 +38,8 @@ class ReviewItemIn(BaseModel):
     @field_validator("buy_feeling", "sell_feeling")
     @classmethod
     def validate_feeling(cls, v: Optional[int]) -> Optional[int]:
-        if v is not None and v not in range(1, 6):
-            raise ValueError("feeling must be 1–5")
+        if v is not None and v not in (1, 2, 4, 5):
+            raise ValueError("feeling must be 1, 2, 4, or 5")
         return v
 
 
@@ -53,8 +53,8 @@ class ReviewItemPatch(BaseModel):
     @field_validator("buy_feeling", "sell_feeling")
     @classmethod
     def validate_feeling(cls, v: Optional[int]) -> Optional[int]:
-        if v is not None and v not in range(1, 6):
-            raise ValueError("feeling must be 1–5")
+        if v is not None and v not in (1, 2, 4, 5):
+            raise ValueError("feeling must be 1, 2, 4, or 5")
         return v
 
 

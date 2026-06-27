@@ -409,7 +409,7 @@ function PurchasePlanWidget() {
                           )}
                           {/* ★ star at entry price — larger */}
                           <span
-                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[12px] leading-none text-yellow-400"
+                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[15px] leading-none text-yellow-400"
                             style={{ left: `${buyPct}%` }}
                           >
                             ★

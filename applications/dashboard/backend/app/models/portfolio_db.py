@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, SmallInteger, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +28,10 @@ class PortfolioDbPosition(Base):
     exit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     exit_price: Mapped[float | None] = mapped_column(Numeric(14, 4), nullable=True)
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    feel: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    sell_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sell_feel: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     portfolio_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("portfolios.id", ondelete="SET NULL"), nullable=True, index=True
     )

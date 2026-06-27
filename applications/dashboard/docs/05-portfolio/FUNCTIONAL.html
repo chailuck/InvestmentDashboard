@@ -33,8 +33,20 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <h1>Portfolio Tracker — Functional Specification</h1>
 
 <h2>1. Overview</h2>
-<p>The portfolio page (<code>/portfolio</code>) is the primary tracking interface. It reads all trade data from the <code>Investment tracking.xlsx</code> Excel file and enriches open positions with live prices fetched from Yahoo Finance. The page provides comprehensive performance analytics with drill-down capability to individual transactions.</p>
-<p>The Excel file is the <strong>single source of truth</strong> for all portfolio data. The application never writes to it. When new trades are recorded in the Excel file, the user clicks Refresh to copy the file into the application's working storage and reload the data.</p>
+<p>The portfolio page (<code>/portfolio</code>) is the primary tracking interface. It is organised into four tabs. The default tab (Portfolio Overview) reads trade data from the <code>Investment tracking.xlsx</code> Excel file or from PostgreSQL (when in DB mode) and enriches open positions with live prices from Yahoo Finance. It provides comprehensive performance analytics with drill-down capability to individual transactions.</p>
+<p>The Excel file is the <strong>single source of truth</strong> for all portfolio data in Excel mode. The application never writes to it. When new trades are recorded in the Excel file, the user clicks Refresh to copy the file into the application's working storage and reload the data.</p>
+
+<h2>1a. Tab navigation</h2>
+<p>A tab strip runs below the page header. The selected tab persists only for the duration of the browser session (no localStorage persistence). Tabs:</p>
+<table>
+  <thead><tr><th>#</th><th>Label</th><th>Key</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Portfolio Overview</td><td><code>overview</code></td><td>Default view. Positions table, performance charts, metric cards. Refresh / Raw-data toolbar buttons are only available on this tab.</td></tr>
+    <tr><td>2</td><td>Objective</td><td><code>objective</code></td><td>Decision journal — annotate each position with a written rationale and a 1–5 sentiment rating. See section 10.</td></tr>
+    <tr><td>3</td><td>Investment</td><td><code>investment</code></td><td>Cash-in / cash-out / adjustment transaction log. Used to calculate net invested capital for the Investment Balance chart.</td></tr>
+    <tr><td>4</td><td>DB Manager</td><td><code>db-manager</code></td><td>Full CRUD manager for positions stored in the database. Tab is always visible; content is mode-gated (see section 11).</td></tr>
+  </tbody>
+</table>
 
 <h2>2. Excel file structure</h2>
 <p>The source file is an Excel workbook with a single sheet named <code>Sheet1</code>. Each row represents one trade entry (either open or closed). Column names must match exactly (including capitalisation).</p>
@@ -140,8 +152,103 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 </ol>
 <p>The source path and working path are configured in Settings → App Configuration. If the source file is not found, the refresh modal shows a 503 error with the configured path displayed for troubleshooting.</p>
 
-<h2>10. Raw data viewer</h2>
-<p>The <strong>Raw Data</strong> button (table icon, top-right) opens a full-screen modal showing every row from the Excel file exactly as it was read by pandas. This is useful for debugging data issues — for example, if a position shows an unexpected status or P&amp;L, the raw data view shows the exact values in each column before any processing.</p>
+<h2>10. Objective tab</h2>
+<p>The <strong>Objective</strong> tab appears between <em>Portfolio Overview</em> and <em>Investment</em> in the tab bar. It surfaces all <code>portfolio_positions_db</code> rows in a review-list layout and lets the user annotate each position with a decision rationale and a sentiment rating — capturing the <em>why</em> and <em>how it felt</em> behind every trade entry and exit.</p>
+
+<h3>10.1 Filters</h3>
+<table>
+  <thead><tr><th>Filter</th><th>Key</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><strong>All</strong></td><td><code>all</code></td><td>Shows all positions regardless of entry date</td></tr>
+    <tr><td><strong>1 Month</strong></td><td><code>month1</code></td><td>Positions where <code>entry_date &ge; today &minus; 1 month</code></td></tr>
+    <tr><td><strong>3 Months</strong> (default)</td><td><code>month3</code></td><td>Positions where <code>entry_date &ge; today &minus; 3 months</code></td></tr>
+    <tr><td><strong>6 Months</strong></td><td><code>month6</code></td><td>Positions where <code>entry_date &ge; today &minus; 6 months</code></td></tr>
+    <tr><td><strong>Last Weekday</strong></td><td><code>lastWeekday</code></td><td>Positions where <code>entry_date</code> equals the most recent trading weekday</td></tr>
+    <tr><td><strong>Last 2 Weeks</strong></td><td><code>week2</code></td><td>Positions where <code>entry_date</code> falls from Monday 14 days before the current Monday through today (i.e., the current and previous full trading weeks)</td></tr>
+    <tr><td><strong>No Reason Only</strong></td><td><code>noReason</code></td><td>Overrides the date filter. Shows all positions where <code>reason</code> is null or empty — useful for finding un-annotated trades</td></tr>
+  </tbody>
+</table>
+<p>Filter state is ephemeral (resets to 3 Months on page refresh).</p>
+
+<h3>10.2 Table columns</h3>
+<p>The table has 10 columns in three visual groups separated by subtle vertical border lines. Column header text is white. Delete capability is not available on the Objective tab.</p>
+<table>
+  <thead><tr><th>Group</th><th>#</th><th>Column</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="1"><em>Symbol</em></td><td>1</td><td><strong>Symbol</strong></td><td>Stock ticker. Shows an "Open" badge for active positions. Right border separates it from the BUY group.</td></tr>
+    <tr><td rowspan="4"><strong>BUY</strong></td><td>2</td><td>Date</td><td>Entry date (<code>entry_date</code>)</td></tr>
+    <tr><td>3</td><td>P/Size</td><td>Entry price and position size (<code>entry_price</code>, <code>position_size</code>). Price text is white.</td></tr>
+    <tr><td>4</td><td>Reason</td><td>Inline-editable textarea for <code>reason</code> field</td></tr>
+    <tr><td>5</td><td>Feel</td><td>Five-icon sentiment picker for <code>feel</code> field. Right border separates BUY from SELL group.</td></tr>
+    <tr><td rowspan="5"><strong>SELL</strong></td><td>6</td><td>Date</td><td>Exit date (<code>exit_date</code>). Shows "—" for open positions.</td></tr>
+    <tr><td>7</td><td>P/Size</td><td>Exit price and quantity. Price text is green for profitable exits, red for loss exits, muted when no P&amp;L data is available. Shows "—" for open positions.</td></tr>
+    <tr><td>8</td><td>P&amp;L + %</td><td>Stacked two-line cell. Top line: net P&amp;L in THB with +/− prefix. Bottom line: P&amp;L% with +/− prefix and % suffix. Both lines are color-coded (text-gain for profit, text-loss for loss). Shows "—" for open positions.</td></tr>
+    <tr><td>9</td><td>Reason</td><td>Always shows "—" (reason is a single per-position annotation stored in the BUY side)</td></tr>
+    <tr><td>10</td><td>Feel</td><td>Always shows "—" (feel is a single per-position annotation stored in the BUY side)</td></tr>
+  </tbody>
+</table>
+<p>The former standalone "Current Price" column and the separate "P&amp;L (THB)" and "P&amp;L%" columns have been removed. P&amp;L information is now presented in the single stacked P&amp;L + % column (column 8). The Delete action column has been removed from this tab entirely.</p>
+
+<h3>10.3 Sort order</h3>
+<p>Positions are sorted by <code>entry_date DESC</code> (most recent first). Within the same entry date, open positions (null <code>exit_date</code>) appear before closed ones.</p>
+
+<h3>10.4 Inline editing — Reason</h3>
+<p>Each row has an editable textarea for the <code>reason</code> field. Typing and then clicking away (blur event) triggers an auto-save to the backend (<code>PATCH /api/v1/objective/{id}</code>). The field accepts plain text up to 5,000 characters. Clearing the field and blurring saves <code>null</code>.</p>
+
+<h3>10.5 Inline editing — Feel</h3>
+<p>Each row has a five-button picker using the same icon set as the Weekly Review List:</p>
+<table>
+  <thead><tr><th>Value</th><th>Label</th><th>Icon</th><th>Colour</th></tr></thead>
+  <tbody>
+    <tr><td>5</td><td>Very Good</td><td>ChevronsUp</td><td>Emerald</td></tr>
+    <tr><td>4</td><td>Good</td><td>ChevronUp</td><td>Green</td></tr>
+    <tr><td>3</td><td>Moderate</td><td>Minus</td><td>Amber</td></tr>
+    <tr><td>2</td><td>Bad</td><td>ChevronDown</td><td>Orange</td></tr>
+    <tr><td>1</td><td>Very Bad</td><td>ChevronsDown</td><td>Red</td></tr>
+  </tbody>
+</table>
+<p>Clicking an icon saves immediately. Clicking the already-selected icon clears it (saves <code>null</code>).</p>
+
+<div class="callout warn"><strong>Excel sync note:</strong> When the portfolio is in Excel mode and the user clicks Refresh, the sync process restores <code>reason</code> and <code>feel</code> values using a natural key <code>(symbol, entry_date, position_size)</code>. If two positions share the same natural key (same stock, same date, same size), only one set of annotations will survive the sync. This is a known limitation.</div>
+
+<h2>11. Raw data viewer</h2>
+<p>The <strong>Raw Data</strong> button (table icon, top-right of the Portfolio Overview tab) opens a full-screen modal showing every row from the working-copy Excel file exactly as it was read by pandas. This is useful for debugging data issues — for example, if a position shows an unexpected status or P&amp;L, the raw data view shows the exact values in each column before any processing.</p>
 <p>The raw data table preserves the original Excel column names and includes all rows (including closed positions outside the current filter range).</p>
+<p>A second button (Database icon) opens a <strong>Raw Source Data</strong> modal that reads the Excel file directly from the mounted source path (not the working copy). This is useful for checking whether the source volume is up to date when the working copy and source appear to differ.</p>
+<div class="callout">Both Raw Data and Raw Source Data buttons are only shown when the active tab is Portfolio Overview.</div>
+
+<h2>12. DB Manager tab</h2>
+
+<p>The <strong>DB Manager</strong> tab provides access to the Portfolio DB CRUD manager directly from the portfolio page, without navigating to Settings. This is the primary CRUD interface when working in DB mode.</p>
+
+<h3>12.1 Mode gate</h3>
+<p>When the DB Manager tab is first activated, the app fetches the current portfolio mode. The displayed content depends on the mode:</p>
+<ul>
+  <li><strong>Mode = db:</strong> The full position manager is shown (add, edit, sell, undo-sell, delete). This is identical to the interface in Settings → Portfolio DB.</li>
+  <li><strong>Mode = excel:</strong> A placeholder is shown with a Database icon and the message "Portfolio is in Excel mode — switch to DB mode in Settings → Configuration to use the Portfolio Manager." No CRUD controls are shown.</li>
+</ul>
+
+<h3>12.2 Switching mode</h3>
+<p>The mode toggle (Excel ↔ DB) is not available on this tab. To switch mode, the user must navigate to <strong>Settings → Portfolio DB</strong>. After switching, returning to the DB Manager tab and refreshing shows the full CRUD manager.</p>
+
+<h3>12.3 CRUD operations</h3>
+<p>When in DB mode, the DB Manager tab exposes the full position lifecycle. For the complete functional description of each operation, refer to the <a href="PORTFOLIO-DB.html">Portfolio DB Mode spec</a>, sections 3.3 – 3.8.</p>
+
+<table>
+  <thead><tr><th>Operation</th><th>Trigger</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Add position</td><td>"Add Position" button</td><td>Modal form; only Symbol is mandatory. Entry Date defaults to today.</td></tr>
+    <tr><td>Edit position</td><td>Pencil icon on a row</td><td>Same form as Add, pre-filled. Child (partial-sell) rows cannot be edited.</td></tr>
+    <tr><td>Sell (full or partial)</td><td>TrendingDown icon on active parent rows</td><td>Dedicated Sell modal with quantity slider, exit price, and P&amp;L preview.</td></tr>
+    <tr><td>Undo last sell</td><td>Undo icon on parent rows that have children</td><td>Reverts only the most recent partial sell.</td></tr>
+    <tr><td>Delete</td><td>Trash icon on any row</td><td>Confirmation dialog shown. Cascades to child rows.</td></tr>
+  </tbody>
+</table>
+
+<h3>12.4 Status filter</h3>
+<p>A three-button filter bar at the top of the manager limits which positions are shown: Active, Closed, or All. The filter applies to the list fetch only — it does not affect total P&amp;L shown in the summary line.</p>
+
+<h3>12.5 Partial-sell row layout</h3>
+<p>When a position has been partially sold, the sold portion appears as a child row immediately below its parent in the table. Child rows are visually indented with a corner-arrow indicator and labelled "sold". When the status filter hides the parent (e.g., parent is closed, filter is set to Active), the child row is still shown at the bottom of the table as an orphaned row.</p>
 </body>
 </html>

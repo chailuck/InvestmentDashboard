@@ -35,6 +35,7 @@
             { "id": "api-review-list",       "label": "Weekly Review",     "file": "02-infrastructure/API-REVIEW-LIST.html"       },
             { "id": "api-analytics",         "label": "Analytics",         "file": "02-infrastructure/API-ANALYTICS.html"         },
             { "id": "api-portfolio-db",      "label": "Portfolio DB",      "file": "02-infrastructure/API-PORTFOLIO-DB.html"      },
+            { "id": "api-objective",         "label": "Objective Tab",     "file": "02-infrastructure/API-OBJECTIVE.html"         },
             { "id": "api-dr-mappings",       "label": "DR Mappings",       "file": "02-infrastructure/API-DR-MAPPINGS.html"       }
           ]
         }

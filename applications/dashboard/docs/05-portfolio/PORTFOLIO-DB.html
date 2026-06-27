@@ -40,7 +40,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <table>
   <tr><th>Aspect</th><th>Excel mode (default)</th><th>DB mode</th></tr>
   <tr><td>Data source</td><td><code>Investment tracking.xlsx</code></td><td><code>portfolio_db_positions</code> table in PostgreSQL</td></tr>
-  <tr><td>Edit positions</td><td>Edit the Excel file directly</td><td>CRUD UI in Settings → Portfolio DB</td></tr>
+  <tr><td>Edit positions</td><td>Edit the Excel file directly</td><td>CRUD UI — accessible from two locations: <em>Portfolio → DB Manager tab</em> or <em>Settings → Portfolio DB</em></td></tr>
   <tr><td>Live prices</td><td>Yahoo Finance (.BK suffix)</td><td>Yahoo Finance (.BK suffix)</td></tr>
   <tr><td>Partial sells</td><td>Separate rows in Excel</td><td>Parent/child record model</td></tr>
   <tr><td>Switching mode</td><td colspan="2">Settings → Portfolio DB → toggle "Excel mode / DB mode"</td></tr>
@@ -51,14 +51,65 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 
 <hr>
 
-<h2>2. Settings → Portfolio DB Page</h2>
+<h2>2. Access Points — where the CRUD UI lives</h2>
+
+<p>The position CRUD manager is implemented as a shared component (<code>PortfolioDbManager</code>) rendered in two separate locations. Both surfaces expose identical functionality.</p>
+
+<table>
+  <tr><th>Location</th><th>Route</th><th>Notes</th></tr>
+  <tr>
+    <td><strong>Portfolio → DB Manager tab</strong></td>
+    <td><code>/portfolio</code> → "DB Manager" tab (4th tab, Database icon)</td>
+    <td>Added in the delivery described by this document. The tab is always visible regardless of mode; the panel content is mode-gated (see section 2.2).</td>
+  </tr>
+  <tr>
+    <td><strong>Settings → Portfolio DB</strong></td>
+    <td><code>/settings/portfolio-db</code></td>
+    <td>Original location. Now a thin shell: page heading + <code>&lt;PortfolioDbManager /&gt;</code>. Also contains the mode toggle (Excel / DB).</td>
+  </tr>
+</table>
+
+<div class="callout">The mode toggle (Excel ↔ DB) is only available in Settings → Portfolio DB (<code>/settings/portfolio-db</code>). The Portfolio tab does not surface the toggle — it only displays the CRUD manager or the Excel-mode placeholder.</div>
+
+<h3>2.1 DB Manager tab on the Portfolio page</h3>
+
+<p>The tab strip on <code>/portfolio</code> has four tabs:</p>
+
+<table>
+  <tr><th>Position</th><th>Key</th><th>Label</th><th>Icon</th></tr>
+  <tr><td>1</td><td><code>overview</code></td><td>Portfolio Overview</td><td>TrendingUp</td></tr>
+  <tr><td>2</td><td><code>objective</code></td><td>Objective</td><td>Target</td></tr>
+  <tr><td>3</td><td><code>investment</code></td><td>Investment</td><td>Wallet</td></tr>
+  <tr><td>4</td><td><code>db-manager</code></td><td>DB Manager</td><td>Database</td></tr>
+</table>
+
+<p>When the user clicks the "DB Manager" tab, a local component <code>DbManagerPanel</code> is rendered. This component fetches the current mode via <code>portfolioDbService.getMode()</code> (React Query key <code>['portfolio-db-mode']</code>, staleTime 5 minutes — lazy, fetched only on first tab activation).</p>
+
+<h4>Mode-gating behaviour inside DbManagerPanel</h4>
+<table>
+  <tr><th>Condition</th><th>Displayed content</th></tr>
+  <tr><td>Loading (mode fetch in flight)</td><td>Spinner: "Loading…"</td></tr>
+  <tr><td>Error (API unreachable)</td><td>Error callout: "Could not determine portfolio mode. Please try again."</td></tr>
+  <tr><td>Mode = <code>excel</code></td><td>Informational placeholder with Database icon: "Portfolio is in Excel mode — switch to DB mode in Settings → Configuration to use the Portfolio Manager."</td></tr>
+  <tr><td>Mode = <code>db</code></td><td><code>&lt;PortfolioDbManager /&gt;</code> — full CRUD UI</td></tr>
+</table>
+
+<div class="callout warn">The DB Manager tab is always present in the tab strip regardless of the current mode. Switching the mode in Settings makes the CRUD UI appear or disappear inside the tab without changing the tab's visibility.</div>
+
+<h3>2.2 Header toolbar behaviour</h3>
+
+<p>The three action buttons in the page header (Raw Source, Raw Data, Refresh) are only rendered when the active tab is <code>overview</code>. They are hidden when any other tab — including DB Manager — is active. This prevents accidental Excel refresh while operating in the DB manager.</p>
+
+<hr>
+
+<h2>3. Settings → Portfolio DB Page</h2>
 
 <p>Route: <code>/settings/portfolio-db</code></p>
 
-<h3>2.1 Mode toggle</h3>
+<h3>3.1 Mode toggle</h3>
 <p>A banner at the top of the page shows the current mode (<strong>Excel</strong> or <strong>Database</strong>) and a toggle button to switch. The toggle calls <code>PUT /portfolio-db/mode?mode=db</code> or <code>?mode=excel</code>. The portfolio tracker page immediately uses the new mode on the next data fetch.</p>
 
-<h3>2.2 Position list</h3>
+<h3>3.2 Position list</h3>
 <p>A filterable table of all positions for the current user. Columns:</p>
 <table>
   <tr><th>Column</th><th>Notes</th></tr>
@@ -74,29 +125,32 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
   <tr><td>Actions</td><td>Edit, Sell, Undo-sell (if has children), Delete buttons</td></tr>
 </table>
 
-<h3>2.3 Add position</h3>
+<h3>3.3 Add position</h3>
 <p>A modal form with fields: Symbol, Direction (LONG/SHORT), Status (active/closed), Entry Date (defaults to today), Entry Price, Position Size, SL, TP, Exit Date, Exit Price, Remarks. All numeric fields are optional — a position can be created with only a symbol.</p>
 
-<h3>2.4 Edit position</h3>
+<h3>3.4 Edit position</h3>
 <p>Same modal as Add, pre-filled with the current values. Submits a <code>PUT</code> request to replace all fields.</p>
 
-<h3>2.5 Sell a position (full or partial)</h3>
-<p>A "Sell" button opens a dedicated Sell modal with fields: Quantity (shares to sell), Exit Price, Exit Date (defaults to today), Remarks.</p>
+<h3>3.5 Sell a position (full or partial)</h3>
+<p>A "Sell" button opens a dedicated Sell modal with fields: Quantity (shares to sell), Exit Price, Exit Date (defaults to today), Remarks. The Sell modal shows a real-time P&amp;L preview as the exit price is entered (price diff, percentage, and total net THB).</p>
 
 <ul>
   <li><strong>Full sell</strong> (quantity = position size): the position's <code>status</code> is set to <code>closed</code> and <code>exit_price</code> / <code>exit_date</code> are recorded in-place.</li>
   <li><strong>Partial sell</strong> (quantity &lt; position size): a new <em>child</em> position record is created (status=closed, with exit fields), and the parent's <code>position_size</code> is reduced by the sold quantity. The parent remains active.</li>
 </ul>
 
-<h3>2.6 Undo the last partial sell</h3>
+<h3>3.6 Undo the last partial sell</h3>
 <p>When a position has child records (i.e., has been partially sold), an "Undo" button appears. It deletes the most recently created child record and restores the parent's position size. Only the <strong>last</strong> partial sell can be undone.</p>
 
-<h3>2.7 Delete position</h3>
-<p>Hard-deletes the position. If the position has children, the children are also deleted (cascade). A confirmation dialog is shown.</p>
+<h3>3.7 Delete position</h3>
+<p>Hard-deletes the position. If the position has children, the children are also deleted (cascade). A confirmation dialog is shown before deletion.</p>
+
+<h3>3.8 Error surfacing</h3>
+<p>All four mutation operations (create, update, delete, undo-sell) surface failures via <code>toast.error()</code>. The toast message is taken from <code>e.response.data.detail</code> when the server returns a structured error, falling back to a generic message (e.g., "Failed to add position"). Successful operations show a <code>toast.success()</code> confirmation. Silent failures and browser <code>alert()</code> calls are not used.</p>
 
 <hr>
 
-<h2>3. Database Schema</h2>
+<h2>4. Database Schema</h2>
 
 <p>Table: <code>portfolio_db_positions</code></p>
 <table>
@@ -114,6 +168,8 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
   <tr><td><code>exit_date</code></td><td>DATE</td><td>Yes</td><td>—</td><td>Null = still open</td></tr>
   <tr><td><code>exit_price</code></td><td>NUMERIC(12,4)</td><td>Yes</td><td>—</td><td>Null = still open</td></tr>
   <tr><td><code>remarks</code></td><td>TEXT</td><td>Yes</td><td>—</td><td></td></tr>
+  <tr><td><code>reason</code></td><td>TEXT</td><td>Yes</td><td>—</td><td>Decision rationale for this position (buy/sell reason). Max 5,000 characters. Edited inline on the Objective tab. Preserved across Excel sync.</td></tr>
+  <tr><td><code>feel</code></td><td>SMALLINT</td><td>Yes</td><td>—</td><td>Sentiment rating 1–5 (1=Very Bad, 5=Very Good) at time of decision. Edited inline on the Objective tab. Added by migration <code>e5f6a7b8c9d0</code> (2026-06-26).</td></tr>
   <tr><td><code>parent_id</code></td><td>UUID</td><td>Yes</td><td>—</td><td>FK → <code>portfolio_db_positions.id</code>; set on partial-sell children</td></tr>
   <tr><td><code>created_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td><code>now()</code></td><td></td></tr>
   <tr><td><code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td><code>now()</code></td><td>Auto-updates on write</td></tr>
@@ -121,7 +177,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 
 <hr>
 
-<h2>4. P&amp;L Calculation (DB mode)</h2>
+<h2>5. P&amp;L Calculation (DB mode)</h2>
 
 <pre><code># Active position:   current_price fetched from Yahoo Finance (.BK)
 # Closed position:   exit_price used as current_price
@@ -136,22 +192,22 @@ pnl_pct  = round((diff / entry_price) * 100, 2)   # 0 if entry_price is 0</code>
 
 <hr>
 
-<h2>5. API Endpoints — Portfolio DB</h2>
+<h2>6. API Endpoints — Portfolio DB</h2>
 
 <p>All endpoints require <code>Authorization: Bearer &lt;token&gt;</code>. Base path: <code>/api/v1/portfolio-db/</code></p>
 
-<h3>5.1 GET /portfolio-db/mode</h3>
+<h3>6.1 GET /portfolio-db/mode</h3>
 <pre><code>// Response
 { "mode": "excel" }    // or "db"</code></pre>
 
-<h3>5.2 PUT /portfolio-db/mode</h3>
+<h3>6.2 PUT /portfolio-db/mode</h3>
 <pre><code>// Query param: ?mode=db   OR   ?mode=excel
 PUT /api/v1/portfolio-db/mode?mode=db
 
 // Response
 { "mode": "db" }</code></pre>
 
-<h3>5.3 GET /portfolio-db/positions</h3>
+<h3>6.3 GET /portfolio-db/positions</h3>
 <p>Query params: <code>status</code> (<code>active</code> | <code>closed</code> | <code>all</code>, default <code>active</code>), <code>from_date</code>, <code>to_date</code> (ISO 8601 dates, filter on <code>entry_date</code>).</p>
 <pre><code>// Response
 {
@@ -182,7 +238,7 @@ PUT /api/v1/portfolio-db/mode?mode=db
   "totalNetPnl": 3250.0
 }</code></pre>
 
-<h3>5.4 POST /portfolio-db/positions</h3>
+<h3>6.4 POST /portfolio-db/positions</h3>
 <p>Returns HTTP 201 with the created position.</p>
 <pre><code>// Request body — all fields except symbol are optional
 {
@@ -201,13 +257,13 @@ PUT /api/v1/portfolio-db/mode?mode=db
 
 // Response — same shape as a position object above</code></pre>
 
-<h3>5.5 PUT /portfolio-db/positions/{pos_id}</h3>
+<h3>6.5 PUT /portfolio-db/positions/{pos_id}</h3>
 <p>Full replace (same body as POST). Returns the updated position object.</p>
 
-<h3>5.6 DELETE /portfolio-db/positions/{pos_id}</h3>
+<h3>6.6 DELETE /portfolio-db/positions/{pos_id}</h3>
 <p>Returns HTTP 204 No Content. Raises 404 if not found or not owned by the current user.</p>
 
-<h3>5.7 POST /portfolio-db/positions/{pos_id}/sell</h3>
+<h3>6.7 POST /portfolio-db/positions/{pos_id}/sell</h3>
 <p>Sell all or part of an active position. Returns HTTP 201.</p>
 <pre><code>// Request body
 {
@@ -237,7 +293,7 @@ PUT /api/v1/portfolio-db/mode?mode=db
   <li><code>400</code> if <code>quantity > position_size</code></li>
 </ul>
 
-<h3>5.8 POST /portfolio-db/positions/{pos_id}/undo-sell</h3>
+<h3>6.8 POST /portfolio-db/positions/{pos_id}/undo-sell</h3>
 <p>Reverts the most recent partial sell linked to this position.</p>
 <pre><code>// Request: no body needed
 
@@ -252,7 +308,7 @@ PUT /api/v1/portfolio-db/mode?mode=db
 
 <hr>
 
-<h2>6. Performance Endpoints (DB mode)</h2>
+<h2>7. Performance Endpoints (DB mode)</h2>
 
 <p>These are the same endpoints as the portfolio tracker — the backend routes requests to either Excel helpers or DB helpers based on the user's <code>portfolio_mode</code>. Response shapes are identical in both modes.</p>
 
@@ -268,7 +324,7 @@ PUT /api/v1/portfolio-db/mode?mode=db
 
 <hr>
 
-<h2>7. Mode-Routing Logic</h2>
+<h2>8. Mode-Routing Logic</h2>
 
 <p>Every portfolio tracker endpoint reads the user's <code>portfolio_mode</code> from the database before deciding which data source to query:</p>
 
@@ -290,6 +346,113 @@ async def get_user_portfolio_mode(user_id: str, db: AsyncSession) -> str:
 # else: Excel path
 from app.services.portfolio_excel import get_positions
 positions = get_positions(from_date=from_date, to_date=to_date, status=status)</code></pre>
+
+<hr>
+
+<h2>9. Frontend Component Architecture</h2>
+
+<h3>9.1 PortfolioDbManager — shared component</h3>
+
+<p>File: <code>frontend/src/components/portfolio-db/PortfolioDbManager.tsx</code></p>
+
+<p>The CRUD manager is a self-contained named export with no props. It owns all state (status filter, modal visibility, mutation loading flags) and fetches data directly via React Query. This makes it embeddable in any page without lifting state.</p>
+
+<pre><code>export function PortfolioDbManager() {
+  // All state is internal — no props required
+  const [statusFilter, setStatusFilter] = useState&lt;'active' | 'closed' | 'all'&gt;('active')
+  const [editTarget, setEditTarget]     = useState&lt;DbPosition | null&gt;(null)
+  const [createOpen, setCreateOpen]     = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState&lt;DbPosition | null&gt;(null)
+  const [sellTarget, setSellTarget]     = useState&lt;DbPosition | null&gt;(null)
+  const [mutating, setMutating]         = useState(false)
+  const [undoing, setUndoing]           = useState&lt;string | null&gt;(null)
+
+  const { data: positions = [], isLoading, refetch } = useQuery({
+    queryKey: ['portfolio-db-positions', statusFilter],
+    queryFn: () => portfolioDbService.getPositions(statusFilter),
+  })
+  // ...
+}</code></pre>
+
+<p>Sub-components local to <code>PortfolioDbManager.tsx</code>:</p>
+
+<table>
+  <tr><th>Component</th><th>Purpose</th></tr>
+  <tr><td><code>PositionModal</code></td><td>Shared Add/Edit form modal. Controlled via <code>initial: PositionInput</code> prop. Handles both create and update flows by the caller passing a different <code>onSave</code> callback.</td></tr>
+  <tr><td><code>SellModal</code></td><td>Sell flow for one active position. Contains a range slider + numeric input for quantity. Shows real-time P&amp;L preview as exit price is typed.</td></tr>
+  <tr><td><code>DeleteModal</code></td><td>Confirmation dialog before hard-delete. Receives the position for display; calls <code>onConfirm</code> on confirmation.</td></tr>
+</table>
+
+<h3>9.2 DbManagerPanel — portfolio page wrapper</h3>
+
+<p>File: <code>frontend/src/app/(dashboard)/portfolio/page.tsx</code> (local component, not exported)</p>
+
+<p><code>DbManagerPanel</code> is a thin wrapper that handles mode-gating before rendering <code>PortfolioDbManager</code>. It is responsible only for the mode check; all CRUD logic is inside <code>PortfolioDbManager</code>.</p>
+
+<pre><code>function DbManagerPanel() {
+  const { data: mode, isLoading, isError } = useQuery({
+    queryKey: ['portfolio-db-mode'],
+    queryFn: () => portfolioDbService.getMode(),
+    staleTime: 5 * 60_000,   // 5 minutes — lazy, fetched on first tab activation
+  })
+
+  if (isLoading) return &lt;Loader2 /&gt;
+  if (isError)   return &lt;ErrorCallout /&gt;
+  if (mode === 'excel') return &lt;ExcelModePlaceholder /&gt;
+  return &lt;PortfolioDbManager /&gt;
+}</code></pre>
+
+<h3>9.3 Settings page shell</h3>
+
+<p>File: <code>frontend/src/app/(dashboard)/settings/portfolio-db/page.tsx</code></p>
+
+<p>After the extraction, this page is a thin shell: it renders a page heading and delegates everything else to <code>&lt;PortfolioDbManager /&gt;</code>. The mode toggle remains in this page's UI (rendered by the settings page layout, not by <code>PortfolioDbManager</code> itself).</p>
+
+<pre><code>export default function PortfolioDbPage() {
+  return (
+    &lt;div className="space-y-5"&gt;
+      &lt;div&gt;
+        &lt;h1 className="text-lg font-bold text-ink-primary"&gt;Portfolio Manager&lt;/h1&gt;
+        &lt;p className="text-xs text-ink-muted mt-0.5"&gt;Add, edit, and sell positions directly in the database.&lt;/p&gt;
+      &lt;/div&gt;
+      &lt;PortfolioDbManager /&gt;
+    &lt;/div&gt;
+  )
+}</code></pre>
+
+<h3>9.4 Row ordering logic — orphan-children fix</h3>
+
+<p>The position table groups rows as: parent rows first, then each parent's child rows (partial-sell records) interleaved immediately below their parent. When the status filter hides some parents (e.g., "Active" filter hides a closed parent), the child rows whose parent is outside the filter set become "orphan children" and are appended at the end of the table.</p>
+
+<p>A bug existed in the orphan detection predicate. It compared against a single character of the parent ID instead of the full ID, causing orphaned child rows to be silently omitted rather than appended:</p>
+
+<pre><code>// Buggy (old):
+const orphanChildren = positions.filter(p => p.parentId &amp;&amp; !childMap[p.parentId.split('')[0]])
+
+// Fixed:
+const orphanChildren = positions.filter(p => p.parentId &amp;&amp; !childMap[p.parentId])</code></pre>
+
+<p>Effect of the fix: partial-sell child rows whose parent is hidden by the current status filter now appear correctly at the bottom of the table, labelled with the "sold" indicator, instead of being dropped from the view.</p>
+
+<hr>
+
+<h2>10. React Query Keys Reference</h2>
+
+<table>
+  <tr><th>Key</th><th>Location</th><th>StaleTime</th><th>Description</th></tr>
+  <tr>
+    <td><code>['portfolio-db-positions', statusFilter]</code></td>
+    <td><code>PortfolioDbManager</code></td>
+    <td>Default (0)</td>
+    <td>Position list, split by status filter. Invalidated after every mutation.</td>
+  </tr>
+  <tr>
+    <td><code>['portfolio-db-mode']</code></td>
+    <td><code>DbManagerPanel</code> (portfolio page)</td>
+    <td>5 minutes</td>
+    <td>Current user portfolio mode (<code>"excel"</code> or <code>"db"</code>). Fetched lazily — only when the DB Manager tab is first activated.</td>
+  </tr>
+</table>
 
 </body>
 </html>

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Objective Tab — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.get { background: #1a3a2a; color: #3fb950 }
+.patch { background: #3a2e0a; color: #d29922 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>API Reference — Objective Tab</h1>
+
+<p>The Objective API provides read and annotation access to <code>portfolio_positions_db</code> rows for the Objective tab on the Portfolio page. It is the data source for the decision-journaling feature: users can view positions filtered by time window and record a free-text <code>reason</code> and a sentiment <code>feel</code> (1–5) against each trade.</p>
+
+<p>Base path: <code>/api/v1/objective</code><br>
+Authentication: Bearer JWT required on all endpoints.<br>
+Implementation: <code>backend/app/api/v1/endpoints/objective.py</code></p>
+
+<hr>
+
+<h2>1. GET /api/v1/objective</h2>
+
+<p><span class="badge get">GET</span> List portfolio positions for the Objective tab.</p>
+
+<h3>Query parameters</h3>
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>portfolio_id</code></td><td>UUID string</td><td><em>null</em></td><td>Scope to a specific portfolio. If omitted, returns positions across all portfolios for the authenticated user.</td></tr>
+    <tr><td><code>months</code></td><td>integer (1–24)</td><td><em>null</em></td><td>Rolling window: only positions where <code>entry_date &ge; today &minus; N months</code>. Omit for ALL positions. Ignored when <code>no_reason_only=true</code>.</td></tr>
+    <tr><td><code>no_reason_only</code></td><td>boolean</td><td><code>false</code></td><td>When <code>true</code>, returns only positions where <code>reason IS NULL OR reason = ''</code>. Overrides <code>months</code>.</td></tr>
+  </tbody>
+</table>
+
+<h3>Sort order</h3>
+<p>Results are always sorted by <code>entry_date DESC NULLS LAST</code>, then by <code>exit_date DESC NULLS FIRST</code> — open positions (null <code>exit_date</code>) appear before closed positions that share the same entry date.</p>
+
+<h3>Response — 200 OK</h3>
+<pre><code>{
+  "items": [
+    {
+      "id":             "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "symbol":         "PTT",
+      "direction":      "LONG",
+      "entry_date":     "2026-05-10",
+      "entry_price":    31.50,
+      "position_size":  1000,
+      "sl":             29.00,
+      "tp":             36.00,
+      "status":         "active",
+      "exit_date":      null,
+      "exit_price":     null,
+      "remarks":        null,
+      "reason":         "Breakout above weekly resistance with volume",
+      "feel":           4,
+      "portfolio_id":   "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    }
+  ],
+  "total": 1
+}</code></pre>
+
+<h4>ObjectivePositionResponse fields</h4>
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>string (UUID)</td><td>Position primary key</td></tr>
+    <tr><td><code>symbol</code></td><td>string</td><td>Thai SET ticker, uppercase</td></tr>
+    <tr><td><code>direction</code></td><td>string</td><td><code>LONG</code> or <code>SHORT</code></td></tr>
+    <tr><td><code>entry_date</code></td><td>ISO date or null</td><td>Trade entry date</td></tr>
+    <tr><td><code>entry_price</code></td><td>float or null</td><td>Price per share at entry (THB)</td></tr>
+    <tr><td><code>position_size</code></td><td>integer or null</td><td>Number of shares</td></tr>
+    <tr><td><code>sl</code></td><td>float or null</td><td>Stop-loss price</td></tr>
+    <tr><td><code>tp</code></td><td>float or null</td><td>Take-profit price</td></tr>
+    <tr><td><code>status</code></td><td>string</td><td><code>active</code> or <code>closed</code></td></tr>
+    <tr><td><code>exit_date</code></td><td>ISO date or null</td><td>Exit date; null for open positions</td></tr>
+    <tr><td><code>exit_price</code></td><td>float or null</td><td>Exit price; null for open positions</td></tr>
+    <tr><td><code>remarks</code></td><td>string or null</td><td>Freeform remarks from Excel / CRUD UI</td></tr>
+    <tr><td><code>reason</code></td><td>string or null</td><td>Decision rationale (annotated on Objective tab)</td></tr>
+    <tr><td><code>feel</code></td><td>integer 1–5 or null</td><td>Sentiment rating at time of decision</td></tr>
+    <tr><td><code>portfolio_id</code></td><td>string (UUID) or null</td><td>Parent portfolio</td></tr>
+  </tbody>
+</table>
+
+<h3>Error responses</h3>
+<table>
+  <thead><tr><th>Status</th><th>Cause</th></tr></thead>
+  <tbody>
+    <tr><td>401</td><td>Missing or invalid Bearer token</td></tr>
+    <tr><td>422</td><td><code>months</code> outside 1–24, or non-UUID <code>portfolio_id</code></td></tr>
+    <tr><td>500</td><td>Database error</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>2. PATCH /api/v1/objective/{position_id}</h2>
+
+<p><span class="badge patch">PATCH</span> Partial update of <code>reason</code> and/or <code>feel</code> on a single position. Called by the auto-save handler when the user edits the Objective tab inline.</p>
+
+<h3>Path parameter</h3>
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>position_id</code></td><td>UUID string</td><td>ID of the position to update</td></tr>
+  </tbody>
+</table>
+
+<h3>Request body</h3>
+<pre><code>// Update only reason
+{ "reason": "Breakout above weekly resistance" }
+
+// Update only feel
+{ "feel": 4 }
+
+// Update both
+{ "reason": "Strong earnings beat", "feel": 5 }
+
+// Clear reason (explicit null)
+{ "reason": null }
+
+// Clear feel
+{ "feel": null }</code></pre>
+
+<div class="callout">Only the fields present in the request body are written. Omitting a field leaves it unchanged. Sending <code>null</code> explicitly clears the field to NULL in the database.</div>
+
+<h3>Field validation</h3>
+<table>
+  <thead><tr><th>Field</th><th>Constraint</th><th>Error</th></tr></thead>
+  <tbody>
+    <tr><td><code>reason</code></td><td>Max 5,000 characters or null</td><td>422 if exceeds limit</td></tr>
+    <tr><td><code>feel</code></td><td>Integer in {1, 2, 3, 4, 5} or null</td><td>422 if outside range (including 0, 6, etc.)</td></tr>
+  </tbody>
+</table>
+
+<h3>Response — 200 OK</h3>
+<p>Returns the full <code>ObjectivePositionResponse</code> object for the updated position (same shape as the items in the GET response).</p>
+
+<h3>Error responses</h3>
+<table>
+  <thead><tr><th>Status</th><th>Cause</th></tr></thead>
+  <tbody>
+    <tr><td>401</td><td>Missing or invalid Bearer token</td></tr>
+    <tr><td>404</td><td>Position not found, or position belongs to a different user</td></tr>
+    <tr><td>422</td><td><code>feel</code> outside 1–5, <code>reason</code> exceeds 5,000 chars, or non-UUID path parameter</td></tr>
+    <tr><td>500</td><td>Database error</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>3. Architecture notes</h2>
+
+<h3>Data ownership</h3>
+<p>Both endpoints enforce user ownership. <code>GET /objective</code> always applies <code>WHERE user_id = &lt;jwt_sub&gt;</code>. <code>PATCH /objective/{id}</code> uses a compound <code>WHERE id = $1 AND user_id = $2</code> — returning 404 if either condition fails, preventing IDOR enumeration.</p>
+
+<h3>New DB columns (migration e5f6a7b8c9d0)</h3>
+<p>Migration <code>20260626_1000_e5f6a7b8c9d0</code> adds <code>reason TEXT</code> and <code>feel SMALLINT</code> to <code>portfolio_positions_db</code>. Both are nullable; existing rows receive NULL. No index is added (single-user, full-scan cost acceptable).</p>
+
+<h3>Excel sync preservation</h3>
+<p>The <code>sync_excel_positions_to_db</code> function captures existing <code>(reason, feel)</code> values keyed on <code>(symbol, entry_date, position_size)</code> before the delete-and-reinsert cycle, then restores them on the new rows. Positions with identical natural keys may lose one set of annotations (known limitation documented in code).</p>
+
+<h3>Frontend integration</h3>
+<p>The frontend service is at <code>frontend/src/services/objective.ts</code>. The ObjectiveTab component manages a single TanStack Query cache key <code>['objective-positions', portfolioId, filter]</code>. Individual row patches update the cache entry in-place via <code>queryClient.setQueryData</code> without triggering a full refetch.</p>
+
+</body>
+</html>

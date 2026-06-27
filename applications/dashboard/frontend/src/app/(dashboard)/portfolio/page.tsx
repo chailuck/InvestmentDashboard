@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 import { format, subMonths } from 'date-fns'
-import { RefreshCw, AlertCircle, ChevronDown, ChevronRight, X, Loader2, CheckCircle2, XCircle, FileText, Copy, Trash2, RotateCcw, Table2, Database, ArrowUpDown, ArrowUp, ArrowDown, Wallet, Plus, Pencil, TrendingUp } from 'lucide-react'
+import { RefreshCw, AlertCircle, ChevronDown, ChevronRight, X, Loader2, CheckCircle2, XCircle, FileText, Copy, Trash2, RotateCcw, Table2, Database, ArrowUpDown, ArrowUp, ArrowDown, Wallet, Plus, Pencil, TrendingUp, Target } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -23,6 +23,9 @@ import {
   type InvestmentAction,
   INVESTMENT_ACTIONS,
 } from '@/services/investmentTransaction'
+import { ObjectiveTab } from '@/components/objective/ObjectiveTab'
+import { PortfolioDbManager } from '@/components/portfolio-db/PortfolioDbManager'
+import { portfolioDbService } from '@/services/portfolioDb'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -1349,6 +1352,37 @@ function PortfolioDropdown({
   )
 }
 
+// ── DB Manager panel ───────────────────────────────────────────────────────────
+
+function DbManagerPanel() {
+  const { data: mode, isLoading, isError } = useQuery({
+    queryKey: ['portfolio-db-mode'],
+    queryFn: () => portfolioDbService.getMode(),
+    staleTime: 5 * 60_000,
+  })
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-16 gap-2 text-ink-muted text-sm">
+      <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+    </div>
+  )
+  if (isError) return (
+    <div className="flex items-center gap-2 p-3 rounded-lg bg-loss/10 border border-loss/20 text-loss text-sm">
+      <AlertCircle className="w-4 h-4 shrink-0" />
+      Could not determine portfolio mode. Please try again.
+    </div>
+  )
+  if (mode === 'excel') return (
+    <div className="card p-6 text-center space-y-2">
+      <Database className="w-8 h-8 text-ink-disabled mx-auto" />
+      <p className="text-sm font-medium text-ink-secondary">Portfolio is in Excel mode</p>
+      <p className="text-xs text-ink-muted">Switch to DB mode in Settings → Configuration to use the Portfolio Manager.</p>
+    </div>
+  )
+
+  return <PortfolioDbManager />
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function PortfolioPage() {
@@ -1364,7 +1398,15 @@ export default function PortfolioPage() {
   const [showRawSourceData, setShowRawSourceData] = useState(false)
   const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'overview' | 'investment'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'db-manager' | 'objective' | 'investment'>('overview')
+
+  // Portfolio mode — drives whether Portfolio Manager tab is visible
+  const { data: portfolioMode } = useQuery({
+    queryKey: ['portfolio-mode'],
+    queryFn: portfolioDbService.getMode,
+    staleTime: 60_000,
+  })
+  const isDbMode = portfolioMode === 'db'
 
   // Load portfolios
   const { data: portfolios = [] } = useQuery({
@@ -1508,11 +1550,13 @@ export default function PortfolioPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border/50">
-        {[
-          { key: 'overview',   label: 'Portfolio Overview', icon: TrendingUp },
-          { key: 'investment', label: 'Investment',          icon: Wallet },
-        ].map(({ key, label, icon: Icon }) => (
-          <button key={key} onClick={() => setActiveTab(key as 'overview' | 'investment')}
+        {([
+          { key: 'overview',    label: 'Portfolio Overview', icon: TrendingUp, show: true      },
+          { key: 'db-manager',  label: 'Portfolio Manager',  icon: Database,   show: isDbMode  },
+          { key: 'objective',   label: 'Action Review',      icon: Target,     show: true      },
+          { key: 'investment',  label: 'Investment',         icon: Wallet,     show: true      },
+        ] as const).filter(t => t.show).map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => setActiveTab(key as 'overview' | 'db-manager' | 'objective' | 'investment')}
             className={cn(
               'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors',
               activeTab === key
@@ -1525,10 +1569,18 @@ export default function PortfolioPage() {
         ))}
       </div>
 
+      {/* Objective tab */}
+      {activeTab === 'objective' && portfolioId && (
+        <ObjectiveTab portfolioId={portfolioId} />
+      )}
+
       {/* Investment tab */}
       {activeTab === 'investment' && portfolioId && (
         <InvestmentTab portfolioId={portfolioId} />
       )}
+
+      {/* DB Manager tab */}
+      {activeTab === 'db-manager' && <DbManagerPanel />}
 
       {/* Overview tab content */}
       {activeTab === 'overview' && <>

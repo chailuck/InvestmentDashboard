@@ -7,7 +7,7 @@ import { format, parseISO } from 'date-fns'
 import {
   ArrowLeft, RefreshCw, Loader2, AlertCircle, Plus, Trash2,
   TrendingUp, TrendingDown, Briefcase, X, ChevronDown, BarChart2,
-  ChevronsUp, ChevronUp, Minus, ChevronsDown,
+  ChevronsUp, ChevronUp, ChevronsDown,
   type LucideProps,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -38,7 +38,7 @@ function PctBadge({ pct }: { pct: number | null }) {
 
 type IconComponent = React.FC<LucideProps>
 const FEELING_ICONS: Record<string, IconComponent> = {
-  ChevronsUp, ChevronUp, Minus, ChevronDown, ChevronsDown,
+  ChevronsUp, ChevronUp, ChevronDown, ChevronsDown,
 }
 
 // ── Feeling Picker ────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ function FeelingPicker({
   onChange: (v: FeelingValue | null) => void
 }) {
   return (
-    <div className="grid grid-cols-3 gap-0.5">
+    <div className="grid grid-cols-4 gap-0.1">
       {FEELINGS.map(f => {
         const Icon = FEELING_ICONS[f.iconKey]
         const active = value === f.value

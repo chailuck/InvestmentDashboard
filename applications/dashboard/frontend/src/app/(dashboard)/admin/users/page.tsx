@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Users, Plus, Search, Shield, Eye, Edit2, Ban, CheckCircle,
-  Key, X, ChevronLeft, ChevronRight, AlertCircle, Loader2,
+  Key, X, ChevronLeft, ChevronRight, AlertCircle, Loader2, Copy,
 } from 'lucide-react'
 import { usersService, type CreateUserPayload, type UpdateUserPayload } from '@/services/users'
+import { CloneUserModal } from '@/components/admin/CloneUserModal'
 import type { UserDetail } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { cn } from '@/lib/utils'
@@ -203,6 +204,7 @@ export default function AdminUsersPage() {
 
   const [modalUser, setModalUser] = useState<UserDetail | null | undefined>(undefined) // undefined = closed
   const [resetUser, setResetUser] = useState<UserDetail | null>(null)
+  const [cloneSourceUser, setCloneSourceUser] = useState<UserDetail | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -343,6 +345,15 @@ export default function AdminUsersPage() {
                           <Key className="w-3.5 h-3.5" />
                         </button>
                         {user.id !== currentUser?.id && (
+                          <button
+                            onClick={() => setCloneSourceUser(user)}
+                            className="btn-icon"
+                            title="Clone user data"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {user.id !== currentUser?.id && (
                           <button onClick={() => toggleActive(user)}
                             className={cn('btn-icon', user.is_active ? 'text-loss hover:bg-loss/10' : 'text-gain hover:bg-gain/10')}
                             title={user.is_active ? 'Deactivate' : 'Activate'}>
@@ -381,6 +392,14 @@ export default function AdminUsersPage() {
         )}
         {resetUser && (
           <ResetPasswordModal user={resetUser} onClose={() => setResetUser(null)} />
+        )}
+        {cloneSourceUser && (
+          <CloneUserModal
+            sourceUser={cloneSourceUser}
+            allUsers={users}
+            onClose={() => setCloneSourceUser(null)}
+            onSuccess={load}
+          />
         )}
       </AnimatePresence>
     </RoleGuard>

@@ -33,10 +33,12 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <h1>Portfolio Tracker — Technical Design</h1>
 
 <h2>1. File structure</h2>
-<pre><code>backend/app/api/v1/endpoints/portfolio_tracker.py  — API route handlers
-backend/app/services/portfolio_excel.py             — all business logic
-frontend/src/services/portfolioTracker.ts           — frontend API service layer
-frontend/src/app/(dashboard)/portfolio/page.tsx     — page component (all logic)</code></pre>
+<pre><code>backend/app/api/v1/endpoints/portfolio_tracker.py      — API route handlers
+backend/app/services/portfolio_excel.py                — all business logic
+frontend/src/services/portfolioTracker.ts              — frontend API service layer
+frontend/src/app/(dashboard)/portfolio/page.tsx        — page component (tabs, filters, charts)
+frontend/src/components/portfolio-db/PortfolioDbManager.tsx  — shared CRUD manager for DB positions
+frontend/src/app/(dashboard)/settings/portfolio-db/page.tsx  — settings page shell (thin wrapper)</code></pre>
 
 <h2>2. Excel service (<code>portfolio_excel.py</code>)</h2>
 
@@ -174,7 +176,22 @@ def _cached(key: str, ttl: float, fn: Callable) -> Any:
 </table>
 
 <h2>4. Frontend page components</h2>
-<p>All UI logic lives in the single page file <code>portfolio/page.tsx</code> as pure functional components. This keeps related logic co-located without requiring a complex component tree.</p>
+<p>The portfolio page uses a tab-based layout. Components local to <code>portfolio/page.tsx</code> handle the Overview tab content. The Objective and DB Manager tabs delegate to imported components from other files.</p>
+
+<h3>4.1 Tab structure</h3>
+<table>
+  <thead><tr><th>Tab key</th><th>Label</th><th>Icon</th><th>Content</th></tr></thead>
+  <tbody>
+    <tr><td><code>overview</code></td><td>Portfolio Overview</td><td>TrendingUp</td><td>All local components listed in section 4.2 below. Refresh/Raw-data toolbar buttons only visible on this tab.</td></tr>
+    <tr><td><code>objective</code></td><td>Objective</td><td>Target</td><td><code>&lt;ObjectiveTab portfolioId={...} /&gt;</code> (imported from <code>components/objective/ObjectiveTab</code>)</td></tr>
+    <tr><td><code>investment</code></td><td>Investment</td><td>Wallet</td><td>Local <code>InvestmentTab</code> component</td></tr>
+    <tr><td><code>db-manager</code></td><td>DB Manager</td><td>Database</td><td>Local <code>DbManagerPanel</code> wrapper (mode-gated; renders <code>PortfolioDbManager</code> when in DB mode)</td></tr>
+  </tbody>
+</table>
+
+<p>The <code>activeTab</code> state is typed as <code>'overview' | 'objective' | 'investment' | 'db-manager'</code>. The header toolbar buttons (Raw Source, Raw Data, Refresh) are conditionally rendered only when <code>activeTab === 'overview'</code>.</p>
+
+<h3>4.2 Local components in portfolio/page.tsx</h3>
 <table>
   <thead><tr><th>Component</th><th>Purpose</th></tr></thead>
   <tbody>
@@ -184,10 +201,23 @@ def _cached(key: str, ttl: float, fn: Callable) -> Any:
     <tr><td><code>PerformanceChart</code></td><td>ECharts dual-axis chart (cumulative line + period bars)</td></tr>
     <tr><td><code>PerformanceByDateTable</code></td><td>Collapsible table with clickable rows for drill-down</td></tr>
     <tr><td><code>TransactionModal</code></td><td>Full-screen overlay with individual trade rows</td></tr>
-    <tr><td><code>PerformanceByStockChart</code></td><td>Horizontal bar chart per stock symbol</td></tr>
     <tr><td><code>PerformanceByStockTable</code></td><td>Collapsible table with investment/value/wins per symbol</td></tr>
     <tr><td><code>RefreshModal</code></td><td>Self-contained; runs refresh logic in its own <code>useEffect</code> on mount</td></tr>
-    <tr><td><code>RawDataModal</code></td><td>Full-screen Excel data viewer modal</td></tr>
+    <tr><td><code>RawDataModal</code></td><td>Full-screen working-copy Excel data viewer modal</td></tr>
+    <tr><td><code>RawSourceDataModal</code></td><td>Full-screen source-path Excel data viewer modal (reads directly from the mounted source volume)</td></tr>
+    <tr><td><code>InvestmentTab</code></td><td>Cash-in/out transaction log with summary cards; uses <code>investmentTransactionService</code></td></tr>
+    <tr><td><code>DbManagerPanel</code></td><td>Mode-gating wrapper for the DB Manager tab. Fetches mode via <code>portfolioDbService.getMode()</code>, renders <code>PortfolioDbManager</code> when mode is <code>"db"</code>, and an informational placeholder when mode is <code>"excel"</code>.</td></tr>
+    <tr><td><code>PortfolioDropdown</code></td><td>Header dropdown for selecting the active portfolio when multiple portfolios exist</td></tr>
+  </tbody>
+</table>
+
+<h3>4.3 Imported components used by the portfolio page</h3>
+<table>
+  <thead><tr><th>Import</th><th>File</th><th>Used on tab</th></tr></thead>
+  <tbody>
+    <tr><td><code>ObjectiveTab</code></td><td><code>components/objective/ObjectiveTab</code></td><td>Objective</td></tr>
+    <tr><td><code>PortfolioDbManager</code></td><td><code>components/portfolio-db/PortfolioDbManager</code></td><td>DB Manager (via <code>DbManagerPanel</code>)</td></tr>
+    <tr><td><code>AnalyticsModal</code></td><td><code>components/analytics/AnalyticsModal</code></td><td>All (symbol click from any table)</td></tr>
   </tbody>
 </table>
 
@@ -219,7 +249,9 @@ useEffect(() =&gt; {
   return () =&gt; { cancelled = true }   // cleanup on unmount
 }, [])</code></pre>
 
-<h2>5. Frontend service</h2>
+<h2>5. Frontend services</h2>
+
+<h3>5.1 portfolioTracker service</h3>
 <p><strong>File:</strong> <code>frontend/src/services/portfolioTracker.ts</code></p>
 <p>All API calls go through this service which wraps <code>apiClient</code> (Axios with the <code>/api/proxy</code> base URL and JWT interceptor).</p>
 <pre><code>portfolioTrackerService.refresh()
@@ -229,7 +261,20 @@ portfolioTrackerService.getPerformanceByDate({ from_date, to_date, period })
 portfolioTrackerService.getPerformanceByStock({ from_date, to_date })
 portfolioTrackerService.getTransactions({ period_key, period, from_date, to_date })
 portfolioTrackerService.getRawData()
+portfolioTrackerService.getRawSourceData()
 portfolioTrackerService.getSetIndices()
 portfolioTrackerService.getGlobalIndices()</code></pre>
+
+<h3>5.2 portfolioDb service</h3>
+<p><strong>File:</strong> <code>frontend/src/services/portfolioDb.ts</code></p>
+<p>Service for the Portfolio DB CRUD API. Used by <code>PortfolioDbManager</code> and <code>DbManagerPanel</code>.</p>
+<pre><code>portfolioDbService.getMode()                          // GET /portfolio-db/mode → "excel" | "db"
+portfolioDbService.setMode(mode)                      // PUT /portfolio-db/mode?mode=...
+portfolioDbService.getPositions(status)               // GET /portfolio-db/positions?status=...
+portfolioDbService.create(input)                      // POST /portfolio-db/positions
+portfolioDbService.update(id, input)                  // PUT /portfolio-db/positions/{id}
+portfolioDbService.delete(id)                         // DELETE /portfolio-db/positions/{id}
+portfolioDbService.sell(id, qty, exitPrice, exitDate, remarks?) // POST /portfolio-db/positions/{id}/sell
+portfolioDbService.undoSell(id)                       // POST /portfolio-db/positions/{id}/undo-sell</code></pre>
 </body>
 </html>
