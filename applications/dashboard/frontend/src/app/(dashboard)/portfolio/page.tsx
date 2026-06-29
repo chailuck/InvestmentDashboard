@@ -1434,42 +1434,59 @@ export default function PortfolioPage() {
     queryKey: ['portfolio-positions', fromDate, toDate, statusFilter, portfolioId],
     queryFn: () => portfolioTrackerService.getPositions({ ...params, status: statusFilter }),
     refetchInterval: 60_000,
-    enabled: !!portfolioId,
+    enabled: !!portfolioId && portfolioMode === 'excel',
   })
 
   const perfQuery = useQuery({
     queryKey: ['portfolio-performance', fromDate, toDate, period, portfolioId],
     queryFn: () => portfolioTrackerService.getPerformance({ ...params, period }),
     refetchInterval: 60_000,
-    enabled: !!portfolioId,
+    enabled: !!portfolioId && portfolioMode === 'excel',
   })
 
   const byDateQuery = useQuery({
     queryKey: ['portfolio-by-date', fromDate, toDate, period, portfolioId],
     queryFn: () => portfolioTrackerService.getPerformanceByDate({ ...params, period }),
     refetchInterval: 60_000,
-    enabled: !!portfolioId,
+    enabled: !!portfolioId && portfolioMode === 'excel',
   })
 
   const byStockQuery = useQuery({
     queryKey: ['portfolio-by-stock', fromDate, toDate, portfolioId],
     queryFn: () => portfolioTrackerService.getPerformanceByStock(params),
     refetchInterval: 60_000,
-    enabled: !!portfolioId,
+    enabled: !!portfolioId && portfolioMode === 'excel',
   })
 
   const summaryQuery = useQuery({
     queryKey: ['portfolio-summary', fromDate, toDate, portfolioId],
     queryFn: () => portfolioTrackerService.getSummary(params),
     refetchInterval: 60_000,
-    enabled: !!portfolioId,
+    enabled: !!portfolioId && portfolioMode === 'excel',
   })
 
   const allTxQuery = useQuery({
     queryKey: ['investment-transactions-balance', portfolioId],
     queryFn: () => investmentTransactionService.list({ portfolio_id: portfolioId }),
     staleTime: 120_000,
-    enabled: !!portfolioId,
+    enabled: !!portfolioId && portfolioMode === 'excel',
+  })
+
+  // DB-mode: fetch investment transactions to show net investment total
+  const dbTxQuery = useQuery({
+    queryKey: ['investment-transactions-db', portfolioId],
+    queryFn: () => investmentTransactionService.list({ portfolio_id: portfolioId }),
+    staleTime: 120_000,
+    enabled: isDbMode && !!portfolioId,
+  })
+  const netInvestment = isDbMode ? (dbTxQuery.data?.summary?.net_investment ?? 0) : 0
+
+  // DB-mode positions query (scoped to authenticated user via JWT)
+  const dbPosQuery = useQuery({
+    queryKey: ['portfolio-db-positions-overview', statusFilter],
+    queryFn: () => portfolioDbService.getPositions(statusFilter),
+    refetchInterval: 60_000,
+    enabled: isDbMode,
   })
 
   const balanceData = useMemo(() => {
@@ -1494,14 +1511,48 @@ export default function PortfolioPage() {
     })
   }, [perfQuery.data, allTxQuery.data])
 
-  const positions = posQuery.data?.positions ?? []
-  const totalPnl = posQuery.data?.totalNetPnl ?? 0
-  const totalPositions = posQuery.data?.total ?? 0
+  // Adapt DbPosition[] to the Position shape used by PositionsTable
+  const dbPositionsMapped = useMemo<Position[]>(() =>
+    (dbPosQuery.data ?? []).map((p, idx) => ({
+      id: idx,
+      symbol: p.symbol,
+      direction: p.direction,
+      entryDate: p.entryDate,
+      exitDate: p.exitDate,
+      entryPrice: p.entryPrice ?? 0,
+      currentPrice: p.currentPrice ?? p.exitPrice ?? p.entryPrice ?? 0,
+      exitPrice: p.exitPrice,
+      positionSize: p.positionSize ?? 0,
+      netPnl: p.netPnl,
+      pnlPct: p.pnlPct,
+      sl: p.sl,
+      tp: p.tp,
+      status: p.status,
+    })),
+    [dbPosQuery.data],
+  )
+
+  const positions = isDbMode ? dbPositionsMapped : (posQuery.data?.positions ?? [])
+  const totalPnl = isDbMode
+    ? dbPositionsMapped.reduce((sum, p) => sum + p.netPnl, 0)
+    : (posQuery.data?.totalNetPnl ?? 0)
+  const totalPositions = positions.length
   const winCount = positions.filter(p => p.netPnl > 0).length
   const lossCount = positions.filter(p => p.netPnl <= 0).length
   const winRate = positions.length > 0 ? Math.round((winCount / positions.length) * 100) : 0
-  const isLoading = posQuery.isLoading
-  const hasError = posQuery.isError || perfQuery.isError
+  const isLoading = isDbMode ? dbPosQuery.isLoading : posQuery.isLoading
+  const hasError = isDbMode ? dbPosQuery.isError : (posQuery.isError || perfQuery.isError)
+
+  // Summary stats computed from DB positions when in DB mode
+  const dbSummary = isDbMode && positions.length > 0 ? {
+    accumulated_pnl: totalPnl,
+    win_rate: winRate,
+    avg_pnl: Math.round(totalPnl / positions.length),
+    avg_pnl_pct: positions.reduce((sum, p) => sum + p.pnlPct, 0) / positions.length,
+    total_trades: positions.length,
+    wins: winCount,
+    losses: lossCount,
+  } : undefined
 
   return (
     <div className="space-y-5">
@@ -1519,7 +1570,7 @@ export default function PortfolioPage() {
               onChange={setSelectedPortfolioId}
             />
           )}
-          {activeTab === 'overview' && (
+          {activeTab === 'overview' && !isDbMode && (
           <div className="flex items-center gap-1">
           <button
             onClick={() => setShowRawSourceData(true)}
@@ -1630,12 +1681,17 @@ export default function PortfolioPage() {
       {hasError && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-loss/10 border border-loss/20 text-loss text-sm">
           <AlertCircle className="w-4 h-4 shrink-0" />
-          Failed to load portfolio data. Check the Excel source path in Settings → App Configuration.
+          {isDbMode
+            ? 'Failed to load portfolio data from database. Check that the backend is running and the database is accessible.'
+            : 'Failed to load portfolio data. Check the Excel source path in Settings → App Configuration.'}
         </div>
       )}
 
       {/* Metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className={`grid gap-4 ${isDbMode ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}>
+        {isDbMode && (
+          <MetricCard label="Net Investment" value={`${fmt(netInvestment, 0)} THB`} />
+        )}
         <MetricCard label="Total P&L" value={`${fmtPnl(totalPnl)} THB`} positive={totalPnl >= 0} />
         <MetricCard label="Positions" value={String(totalPositions)} sub={`${positions.filter(p => p.status === 'active').length} open`} />
         <MetricCard label="Win Rate" value={`${winRate}%`} sub={`${winCount}W / ${lossCount}L`} positive={winRate >= 50} />
@@ -1646,30 +1702,34 @@ export default function PortfolioPage() {
       <PositionsTable positions={positions} total={totalPositions} totalPnl={totalPnl} loading={isLoading} onSymbolClick={setAnalyticsSymbol} />
 
       {/* 2a. Summary stats */}
-      <PerformanceSummary data={summaryQuery.data} />
+      <PerformanceSummary data={isDbMode ? dbSummary : summaryQuery.data} />
 
-      {/* 2b. Investment Balance Chart */}
-      <InvestmentBalanceChart
-        data={balanceData}
-        loading={perfQuery.isLoading || allTxQuery.isLoading}
-        period={period}
-        onPeriodChange={setPeriod}
-      />
+      {!isDbMode && (
+        <>
+          {/* 2b. Investment Balance Chart */}
+          <InvestmentBalanceChart
+            data={balanceData}
+            loading={perfQuery.isLoading || allTxQuery.isLoading}
+            period={period}
+            onPeriodChange={setPeriod}
+          />
 
-      {/* 2c. Daily Performance Chart */}
-      <PerformanceChart data={perfQuery.data ?? []} period={period} onPeriodChange={setPeriod} loading={perfQuery.isLoading} />
+          {/* 2c. Daily Performance Chart */}
+          <PerformanceChart data={perfQuery.data ?? []} period={period} onPeriodChange={setPeriod} loading={perfQuery.isLoading} />
 
-      {/* 3. Performance by Date table */}
-      <PerformanceByDateTable
-        data={byDateQuery.data ?? []}
-        period={period}
-        onRowClick={(periodKey, label) =>
-          setDrillDown({ periodKey, label, period, fromDate, toDate })
-        }
-      />
+          {/* 3. Performance by Date table */}
+          <PerformanceByDateTable
+            data={byDateQuery.data ?? []}
+            period={period}
+            onRowClick={(periodKey, label) =>
+              setDrillDown({ periodKey, label, period, fromDate, toDate })
+            }
+          />
 
-      {/* 4. Performance by Stock table */}
-      <PerformanceByStockTable data={byStockQuery.data ?? []} />
+          {/* 4. Performance by Stock table */}
+          <PerformanceByStockTable data={byStockQuery.data ?? []} />
+        </>
+      )}
 
       {/* Drill-down modal */}
       {drillDown && (

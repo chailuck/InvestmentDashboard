@@ -136,6 +136,53 @@ BH,100,184,212,176.6,BUY ON DIP
 BTG,1000,20.7,24.5,19.4,แท่งเทียนกลับตัว
 CPALL,200,14.5,51.25,45,BREAK OUT</code></pre>
 
+<h3>2.3 Copy item to another plan</h3>
+
+<h4>Overview</h4>
+<p>Traders can copy any saved Purchase Plan item to a different purchase plan without leaving the current editor. This is useful when a stock being watched in one plan should also appear in another plan (for example, moving a stock from a weekly watchlist into a themed plan).</p>
+
+<h4>How to use it</h4>
+<ol>
+  <li>In the Purchase Plan editor, locate the row for the stock you want to copy.</li>
+  <li>Click the <strong>Copy</strong> icon button (double-document icon) on the left side of the row's action cell. The button appears to the left of the Delete button.</li>
+  <li>The <strong>Copy to Plan</strong> modal opens and loads the list of your other purchase plans.</li>
+  <li>Select the destination plan from the <strong>Destination Plan</strong> dropdown.</li>
+  <li>Click <strong>Copy</strong> to confirm. The item is appended to the selected plan and the modal closes.</li>
+  <li>A green confirmation message appears below the toolbar for 3 seconds: <code>"{STOCK}" copied to "{Plan Name}"</code>.</li>
+</ol>
+
+<h4>Copy button — enabled and disabled states</h4>
+<table>
+  <thead><tr><th>Row state</th><th>Button appearance</th><th>Behaviour on click</th></tr></thead>
+  <tbody>
+    <tr><td>Row has been saved (has a backend UUID)</td><td>Active — icon is fully visible</td><td>Opens CopyItemModal</td></tr>
+    <tr><td>Row is newly added but not yet saved</td><td>Greyed out (disabled)</td><td>No action. Tooltip reads: "Save the plan first to enable copy"</td></tr>
+  </tbody>
+</table>
+<div class="callout warn">You must save the plan at least once after adding a new row before you can copy that row. The Copy button is disabled until the row has a server-assigned ID.</div>
+
+<h4>Business rules for copy</h4>
+<ul>
+  <li><strong>Copy, not move:</strong> The source row remains in the original plan. Copying does not remove or alter the original.</li>
+  <li><strong>Triggered resets:</strong> If the source row has Triggered = Yes, the copy will have Triggered = No. All other fields (STOCK, CURRENT PRICE, SIZE, BUY, TP, SL, STRATEGY, REASON) are copied exactly.</li>
+  <li><strong>Sort order:</strong> The copied item is appended as the last row of the target plan (<code>sort_order = MAX + 1</code>).</li>
+  <li><strong>Purchase plans only:</strong> The destination must be a purchase-type plan. Portfolio plans do not appear in the picker.</li>
+  <li><strong>Different plan required:</strong> You cannot copy an item to the plan it already belongs to.</li>
+</ul>
+
+<h4>Modal states</h4>
+<table>
+  <thead><tr><th>State</th><th>What is shown</th></tr></thead>
+  <tbody>
+    <tr><td>Loading plan list</td><td>Spinner and "Loading plans…" text</td></tr>
+    <tr><td>No other purchase plans exist</td><td>"No other purchase plans available. Create another plan first."</td></tr>
+    <tr><td>Plan list loaded</td><td>Destination Plan dropdown with plan names; Copy button</td></tr>
+    <tr><td>Copy in progress</td><td>Copy button shows spinner; button is disabled</td></tr>
+    <tr><td>Copy error</td><td>Inline error message inside modal: "Copy failed. Please try again." Modal stays open.</td></tr>
+    <tr><td>Copy success</td><td>Modal closes; green inline message shown below toolbar for 3 seconds</td></tr>
+  </tbody>
+</table>
+
 <h2>3. Portfolio action plan</h2>
 
 <h3>3.1 Plan list</h3>
@@ -178,9 +225,11 @@ STA,20.0,18.4,500</code></pre>
   <li>Duplicating a plan creates an exact copy of all line items under a new name. Changes to the duplicate do not affect the original.</li>
   <li>The Portfolio Plan editor always loads <strong>live position data</strong> on every page open. The saved TP/SL/order_size values overlay the live data. Positions that have been closed since the plan was last saved will no longer appear in the live list.</li>
   <li>RR (risk/reward ratio) is <strong>display-only</strong> and is never stored in the database. It is recalculated client-side on every render from the current BUY, TP, and SL values.</li>
+  <li>Copying an item <strong>does not move it</strong> — the source row remains in the original plan unchanged.</li>
+  <li>A copied item's <strong>triggered flag is always reset to No</strong> (false), regardless of its value in the source plan. All other fields are copied as-is.</li>
+  <li>An item can only be copied to a <strong>purchase-type</strong> plan. Portfolio plans are not valid copy targets.</li>
+  <li>An item cannot be copied to the <strong>same plan</strong> it originates from.</li>
 </ol>
-
-<hr>
 
 <h2>5. Weekly Plan Dashboard</h2>
 

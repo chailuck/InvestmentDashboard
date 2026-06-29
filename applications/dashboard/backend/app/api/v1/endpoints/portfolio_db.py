@@ -267,20 +267,23 @@ async def get_performance_by_date_db(user_id: str, db: AsyncSession,
         buckets[key].append(r)
 
     result = []
+    cumulative = 0.0
     for key in sorted(buckets):
         positions = buckets[key]
         net = sum(_pos_net_pnl(p) for p in positions)
         wins = sum(1 for p in positions if _pos_net_pnl(p) > 0)
         losses = sum(1 for p in positions if _pos_net_pnl(p) <= 0)
         total = len(positions)
+        cumulative += net
         result.append({
             "period": key,
             "label": _period_label(key, period),
             "net": round(net, 0),
             "wins": wins,
             "losses": losses,
-            "total": total,                                # matches PerformanceByDate.total
-            "winRate": round(wins / total * 100, 1) if total else 0.0,  # matches PerformanceByDate.winRate
+            "total": total,
+            "winRate": round(wins / total * 100, 1) if total else 0.0,
+            "accumulatedPnl": round(cumulative, 0),
         })
     return result
 
@@ -480,8 +483,9 @@ async def get_positions(
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
     status: str = Query("active"),
+    portfolio_id: str | None = Query(None),
 ) -> dict[str, Any]:
-    return await list_positions_db(user_id, db, from_date, to_date, status)
+    return await list_positions_db(user_id, db, from_date, to_date, status, portfolio_id=portfolio_id)
 
 
 @router.post("/positions", status_code=201)

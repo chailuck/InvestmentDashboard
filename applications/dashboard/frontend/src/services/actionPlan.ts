@@ -157,4 +157,17 @@ export const actionPlanService = {
     )
     return data
   },
+
+  /** Copy a single purchase plan item to a different purchase plan. */
+  async copyItemTo(
+    sourcePlanId: string,
+    itemId: string,
+    targetPlanId: string,
+  ): Promise<{ id: string; sort_order: number }> {
+    const { data } = await apiClient.post(
+      `/action-plans/${sourcePlanId}/items/${itemId}/copy`,
+      { target_plan_id: targetPlanId },
+    )
+    return data as { id: string; sort_order: number }
+  },
 }

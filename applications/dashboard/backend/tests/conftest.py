@@ -217,6 +217,27 @@ async def auth_client(engine) -> AsyncIterator[AsyncClient]:
     fastapi_app.dependency_overrides.clear()
 
 
+# ── Second authenticated client (for cross-user tests) ───────────────────────
+
+@pytest_asyncio.fixture
+async def auth_client_b(engine) -> AsyncIterator[AsyncClient]:
+    """Client authenticated as a second distinct user (User B).
+    Used in cross-user authorization tests to verify ownership isolation."""
+    user = await _get_or_create_user(
+        engine, email="user_b@example.com", name="User B",
+        password="UserBPass123!", role="analyst",
+    )
+    token, _ = create_access_token(str(user.id), extra={"role": user.role, "email": user.email})
+    fastapi_app.dependency_overrides[get_db] = _make_db_override(engine)
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as c:
+        yield c
+    fastapi_app.dependency_overrides.clear()
+
+
 # ── Authenticated admin client ───────────────────────────────────────────────
 
 @pytest_asyncio.fixture

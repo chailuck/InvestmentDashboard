@@ -73,8 +73,9 @@ export function InvestmentBalanceWidget({ config: _config }: { config: WidgetCon
 
   const balanceData = useMemo(() => {
     const transactions = txData?.transactions ?? []
+    const totalInvested = txData?.summary?.net_investment ?? 0
     if (!perfData.length) return []
-    return perfData.map(p => {
+    const points = perfData.map(p => {
       const netInvested = transactions
         .filter(tx => tx.date <= p.date)
         .reduce((sum, tx) => {
@@ -90,19 +91,34 @@ export function InvestmentBalanceWidget({ config: _config }: { config: WidgetCon
         portfolioValue: netInvested + p.cumulativePnl,
       }
     })
+    // If transactions exist beyond the last perf-data cutoff date, add a synthetic
+    // "today" point so the chart reflects the full invested amount.
+    const last = points[points.length - 1]
+    if (last && totalInvested > last.netInvested) {
+      points.push({
+        label: format(new Date(), 'dd MMM'),
+        netInvested: totalInvested,
+        cumulativePnl: last.cumulativePnl,
+        portfolioValue: totalInvested + last.cumulativePnl,
+      })
+    }
+    return points
   }, [perfData, txData])
 
   const summary = useMemo(() => {
-    if (!balanceData.length) return { invested: 0, value: 0, pnl: 0, pnlPct: 0 }
+    // Use actual total net investment from transaction summary — not the last chart point,
+    // which can be stale when transactions fall after the performance data cutoff date.
+    const totalInvested = txData?.summary?.net_investment ?? 0
+    if (!balanceData.length) return { invested: totalInvested, value: 0, pnl: 0, pnlPct: 0 }
     const last = balanceData[balanceData.length - 1]
-    const pnl  = last.portfolioValue - last.netInvested
+    const pnl  = last.portfolioValue - totalInvested
     return {
-      invested: last.netInvested,
+      invested: totalInvested,
       value:    last.portfolioValue,
       pnl,
-      pnlPct: last.netInvested !== 0 ? (pnl / last.netInvested) * 100 : 0,
+      pnlPct: totalInvested !== 0 ? (pnl / totalInvested) * 100 : 0,
     }
-  }, [balanceData])
+  }, [balanceData, txData])
 
   const chartOption = useMemo(() => {
     if (!balanceData.length) return {}

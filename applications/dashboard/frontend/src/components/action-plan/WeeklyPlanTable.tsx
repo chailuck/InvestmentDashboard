@@ -18,6 +18,7 @@ interface WeeklyPlanTableProps {
   hasActivePlan: boolean
   onSymbolClick: (symbol: string) => void
   priceMap: Map<string, Map<string, number>>
+  livePriceMap?: Map<string, number>
   isCurrentWeek: boolean
   viewMode?: WeeklyPlanViewMode
 }
@@ -31,6 +32,7 @@ export function WeeklyPlanTable({
   hasActivePlan,
   onSymbolClick,
   priceMap,
+  livePriceMap,
   isCurrentWeek,
   viewMode = 'by-stock',
 }: WeeklyPlanTableProps) {
@@ -45,7 +47,10 @@ export function WeeklyPlanTable({
   function getDayPrice(symbol: string, currentPrice: number | null, day: WeekDay): number | null {
     const isFuture = day.date > todayMidnight
     if (isFuture) return null
-    if (day.isToday && isCurrentWeek) return currentPrice
+    if (day.isToday && isCurrentWeek) {
+      // Prefer live-fetched price over stale stored current_price
+      return livePriceMap?.get(symbol) ?? currentPrice
+    }
     return priceMap.get(symbol)?.get(day.isoDate) ?? null
   }
 

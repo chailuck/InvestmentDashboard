@@ -21,6 +21,7 @@ type StrategyOption = (typeof STRATEGIES)[number]
 
 interface Row {
   _key: string
+  id?: string        // backend UUID — undefined for unsaved rows
   stock: string
   current_price: number | null
   price_change_pct: number | null
@@ -123,6 +124,146 @@ function PnlCell({ pnl, pct, positive }: { pnl: number | null; pct: number | nul
         {fmtPct(pct)}
       </div>
     </td>
+  )
+}
+
+// ── Copy item modal ───────────────────────────────────────────────────────────
+
+function CopyItemModal({
+  stock,
+  sourcePlanId,
+  itemId,
+  onClose,
+  onSuccess,
+}: {
+  stock: string
+  sourcePlanId: string
+  itemId: string
+  onClose: () => void
+  onSuccess: (stock: string, targetPlanName: string) => void
+}) {
+  const [plans, setPlans] = useState<import('@/services/actionPlan').PlanSummary[]>([])
+  const [loadingPlans, setLoadingPlans] = useState(true)
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('')
+  const [copying, setCopying] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [copyError, setCopyError] = useState<string | null>(null)
+
+  useEffect(() => {
+    actionPlanService.list('purchase', null)
+      .then(all => {
+        const filtered = all.filter(p => p.id !== sourcePlanId)
+        setPlans(filtered)
+        if (filtered.length > 0) setSelectedPlanId(filtered[0].id)
+        setLoadingPlans(false)
+      })
+      .catch(() => {
+        setLoadError('Failed to load plans. Please try again.')
+        setLoadingPlans(false)
+      })
+  }, [sourcePlanId])
+
+  const handleCopy = async () => {
+    if (!selectedPlanId) return
+    setCopying(true)
+    setCopyError(null)
+    try {
+      await actionPlanService.copyItemTo(sourcePlanId, itemId, selectedPlanId)
+      const targetName = plans.find(p => p.id === selectedPlanId)?.name ?? selectedPlanId
+      onSuccess(stock, targetName)
+      onClose()
+    } catch {
+      setCopyError('Copy failed. Please try again.')
+      setCopying(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-surface-card border border-border/60 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/50">
+          <h2 className="text-sm font-semibold text-ink-primary">
+            Copy <span className="text-brand-400">{stock || 'Item'}</span> to Plan
+          </h2>
+          <button onClick={onClose} className="btn-icon">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4 space-y-4">
+          {loadingPlans ? (
+            <div className="flex items-center gap-2 text-xs text-ink-muted py-4 justify-center">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading plans…
+            </div>
+          ) : loadError ? (
+            <p className="text-xs text-loss flex items-center gap-1 py-4 justify-center">
+              <XCircle className="w-3.5 h-3.5" /> {loadError}
+            </p>
+          ) : plans.length === 0 ? (
+            <p className="text-xs text-ink-muted text-center py-4">
+              No other purchase plans available. Create another plan first.
+            </p>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-ink-secondary uppercase tracking-wider">
+                  Destination Plan
+                </label>
+                <select
+                  value={selectedPlanId}
+                  onChange={e => setSelectedPlanId(e.target.value)}
+                  className="input w-full text-xs py-1.5 px-2"
+                >
+                  {plans.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[11px] text-ink-muted">
+                A copy of <span className="font-medium text-ink-primary">{stock}</span> will be
+                appended to the selected plan. The original row is unchanged.
+                The triggered flag will be reset to No.
+              </p>
+            </>
+          )}
+
+          {copyError && (
+            <p className="text-xs text-loss flex items-center gap-1">
+              <XCircle className="w-3.5 h-3.5" /> {copyError}
+            </p>
+          )}
+        </div>
+
+        {/* Footer */}
+        {!loadingPlans && !loadError && plans.length > 0 && (
+          <div className="px-5 py-3 border-t border-border/50 flex items-center justify-end gap-2">
+            <button onClick={onClose} className="btn-ghost text-xs px-3 py-1.5">
+              Cancel
+            </button>
+            <button
+              onClick={handleCopy}
+              disabled={copying || !selectedPlanId}
+              className="btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {copying
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Copying…</>
+                : <><Copy className="w-3.5 h-3.5" /> Copy</>
+              }
+            </button>
+          </div>
+        )}
+      </motion.div>
+    </div>
   )
 }
 
@@ -239,15 +380,19 @@ export default function PurchasePlanEditor() {
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout>>()
   const autoRefreshDone = useRef(false)
+  const [copyModal, setCopyModal] = useState<{ open: boolean; rowKey: string; itemId: string; stock: string } | null>(null)
+  const [copyMsg, setCopyMsg] = useState<string | null>(null)
+  const copyMsgTimer = useRef<ReturnType<typeof setTimeout>>()
 
   useEffect(() => {
     rowsRef.current = rows
   }, [rows])
 
-  // Unmount cleanup — cancel any pending auto-save
+  // Unmount cleanup — cancel any pending timers
   useEffect(() => {
     return () => {
       clearTimeout(autoSaveTimer.current)
+      clearTimeout(copyMsgTimer.current)
     }
   }, [])
 
@@ -274,6 +419,7 @@ export default function PurchasePlanEditor() {
       if (plan.purchase_items.length > 0) {
         setRows(plan.purchase_items.map(item => ({
           _key: `r${++_rowId}`,
+          id: item.id,
           stock: item.stock,
           current_price: item.current_price,
           price_change_pct: null,
@@ -472,6 +618,14 @@ export default function PurchasePlanEditor() {
     setGenerateText(lines.join('\n'))
   }
 
+  // ── Copy item ─────────────────────────────────────────────────────────────
+
+  const handleCopySuccess = (stock: string, targetPlanName: string) => {
+    clearTimeout(copyMsgTimer.current)
+    setCopyMsg(`${stock} copied to "${targetPlanName}"`)
+    copyMsgTimer.current = setTimeout(() => setCopyMsg(null), 3000)
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -570,6 +724,11 @@ export default function PurchasePlanEditor() {
               </button>
             </span>
           )}
+          {copyMsg && (
+            <span className="text-xs text-gain flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" /> {copyMsg}
+            </span>
+          )}
         </div>
       </div>
 
@@ -603,7 +762,7 @@ export default function PurchasePlanEditor() {
                 <th className="px-2.5 py-2.5 text-center font-semibold text-ink-muted whitespace-nowrap border-l border-border/30">
                   TRIGGERED
                 </th>
-                <th className="px-2.5 py-2.5 pr-4 w-[36px]" />
+                <th className="px-2.5 py-2.5 pr-4 w-[60px]" />
               </tr>
             </thead>
             <tbody>
@@ -733,15 +892,33 @@ export default function PurchasePlanEditor() {
                         </span>
                       </label>
                     </td>
-                    {/* Delete */}
-                    <td className="px-2.5 py-1.5 pr-4 w-[36px]">
-                      <button
-                        onClick={() => deleteRow(row._key)}
-                        className="btn-icon text-ink-disabled hover:text-loss"
-                        title="Remove row"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                    {/* Actions: Copy + Delete */}
+                    <td className="px-2.5 py-1.5 pr-4 w-[60px]">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            if (!row.id) return
+                            setCopyModal({ open: true, rowKey: row._key, itemId: row.id, stock: row.stock })
+                          }}
+                          disabled={!row.id}
+                          className={cn(
+                            'btn-icon',
+                            row.id
+                              ? 'text-ink-disabled hover:text-brand-400'
+                              : 'text-ink-disabled/30 cursor-not-allowed',
+                          )}
+                          title={row.id ? 'Copy to another plan' : 'Save the plan first to enable copy'}
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => deleteRow(row._key)}
+                          className="btn-icon text-ink-disabled hover:text-loss"
+                          title="Remove row"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -789,6 +966,19 @@ export default function PurchasePlanEditor() {
       {/* Generate modal */}
       {generateText && (
         <GenerateModal text={generateText} onClose={() => setGenerateText(null)} />
+      )}
+
+      {/* Copy item modal */}
+      {copyModal?.open && (
+        <CopyItemModal
+          stock={copyModal.stock.toUpperCase()}
+          sourcePlanId={id}
+          itemId={copyModal.itemId}
+          onClose={() => setCopyModal(null)}
+          onSuccess={(stock, targetPlanName) => {
+            handleCopySuccess(stock, targetPlanName)
+          }}
+        />
       )}
 
       {/* Analytics modal */}

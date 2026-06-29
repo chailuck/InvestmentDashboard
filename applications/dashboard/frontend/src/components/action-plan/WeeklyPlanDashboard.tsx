@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CalendarDays, ChevronLeft, ChevronRight, Rows3, Columns3 } from 'lucide-react'
 import { AnimatePresence } from 'framer-motion'
 import dynamic from 'next/dynamic'
 import { cn } from '@/lib/utils'
 import { actionPlanService, type PurchaseItem, type PortfolioItem } from '@/services/actionPlan'
+import { portfolioDbService } from '@/services/portfolioDb'
 import { getWeekDays } from '@/lib/weekDates'
 import { WeeklyPlanTable, type WeeklyPlanViewMode } from './WeeklyPlanTable'
 
@@ -47,11 +48,20 @@ export function WeeklyPlanDashboard() {
     enabled: !!latestPurchaseId,
   })
 
-  // ── Portfolio plan queries (same cache keys as sidebar) ─────────────────────
+  // ── Portfolio mode — determines data source for Portfolio Positions ──────────
+  const { data: portfolioMode } = useQuery({
+    queryKey: ['portfolio-mode'],
+    queryFn: portfolioDbService.getMode,
+    staleTime: 5 * 60_000,
+  })
+  const isDbMode = portfolioMode === 'db'
+
+  // ── Portfolio plan queries (used in Excel mode only) ─────────────────────────
   const { data: portfolioPlans, isLoading: portfolioPlansLoading, isError: portfolioPlansError } = useQuery({
     queryKey: ['sidebar-portfolio-plans'],
     queryFn: () => actionPlanService.list('portfolio', null),
     staleTime: 2 * 60_000,
+    enabled: portfolioMode === 'excel',
   })
 
   const latestPortfolioId = portfolioPlans?.[0]?.id
@@ -60,16 +70,41 @@ export function WeeklyPlanDashboard() {
     queryKey: ['sidebar-portfolio-plan-detail', latestPortfolioId],
     queryFn: () => actionPlanService.get(latestPortfolioId!),
     staleTime: 2 * 60_000,
-    enabled: !!latestPortfolioId,
+    enabled: !!latestPortfolioId && portfolioMode === 'excel',
+  })
+
+  // ── DB portfolio positions (used in DB mode) ─────────────────────────────────
+  const { data: dbPositions, isLoading: dbPositionsLoading, isError: dbPositionsError } = useQuery({
+    queryKey: ['portfolio-db-positions-weekly', 'active'],
+    queryFn: () => portfolioDbService.getPositions('active'),
+    staleTime: 60_000,
+    enabled: isDbMode,
   })
 
   const purchaseItems: PurchaseItem[] = purchasePlan?.purchase_items ?? []
-  const portfolioItems: PortfolioItem[] = portfolioPlan?.portfolio_items ?? []
+
+  // In DB mode: map active DB positions to PortfolioItem shape
+  const portfolioItems: PortfolioItem[] = useMemo(() => {
+    if (isDbMode) {
+      return (dbPositions ?? []).map((p, idx) => ({
+        id: p.id,
+        sort_order: idx,
+        symbol: p.symbol,
+        current_price: p.currentPrice,
+        size: p.positionSize,
+        entry_price: p.entryPrice,
+        tp: p.tp,
+        sl: p.sl,
+        order_size: p.positionSize,
+      }))
+    }
+    return portfolioPlan?.portfolio_items ?? []
+  }, [isDbMode, dbPositions, portfolioPlan])
 
   const isPurchaseLoading = purchasePlansLoading || purchaseDetailLoading
   const isPurchaseError   = purchasePlansError || purchaseDetailError
-  const isPortfolioLoading = portfolioPlansLoading || portfolioDetailLoading
-  const isPortfolioError   = portfolioPlansError || portfolioDetailError
+  const isPortfolioLoading = isDbMode ? dbPositionsLoading : (portfolioPlansLoading || portfolioDetailLoading)
+  const isPortfolioError   = isDbMode ? dbPositionsError : (portfolioPlansError || portfolioDetailError)
 
   // ── Derive all unique symbols from plan data ────────────────────────────────
   const uniqueSymbols = useMemo(() => {
@@ -96,6 +131,31 @@ export function WeeklyPlanDashboard() {
     }
     return map
   }, [priceHistoryData])
+
+  // ── Live price fetch for today's column (avoids stale item.current_price) ──
+  const [livePriceMap, setLivePriceMap] = useState<Map<string, number>>(new Map())
+
+  const fetchLivePrices = useCallback(async () => {
+    if (uniqueSymbols.length === 0) return
+    const results = await Promise.allSettled(
+      uniqueSymbols.map(sym =>
+        actionPlanService.getStockPrice(sym).then(r => ({ sym, price: r.price })),
+      ),
+    )
+    const map = new Map<string, number>()
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.price != null) {
+        map.set(r.value.sym, r.value.price)
+      }
+    }
+    setLivePriceMap(map)
+  }, [uniqueSymbols])
+
+  const symbolKey = uniqueSymbols.slice().sort().join(',')
+  useEffect(() => {
+    fetchLivePrices()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbolKey])
 
   return (
     <div className="card overflow-hidden">
@@ -170,6 +230,7 @@ export function WeeklyPlanDashboard() {
           hasActivePlan={!!latestPurchaseId}
           onSymbolClick={handleSymbolClick}
           priceMap={priceMap}
+          livePriceMap={livePriceMap}
           isCurrentWeek={weekOffset === 0}
           viewMode={viewMode}
         />
@@ -180,9 +241,10 @@ export function WeeklyPlanDashboard() {
           weekDays={weekDays}
           isLoading={isPortfolioLoading || priceHistoryLoading}
           isError={isPortfolioError}
-          hasActivePlan={!!latestPortfolioId}
+          hasActivePlan={isDbMode ? true : !!latestPortfolioId}
           onSymbolClick={handleSymbolClick}
           priceMap={priceMap}
+          livePriceMap={livePriceMap}
           isCurrentWeek={weekOffset === 0}
           viewMode={viewMode}
         />

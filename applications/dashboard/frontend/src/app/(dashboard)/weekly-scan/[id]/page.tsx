@@ -976,7 +976,9 @@ export default function WeeklyScanPage() {
                 return (
                   <tr key={item.id}
                     className={cn('border-b border-border/20 transition-colors',
-                      meta ? `${meta.bg.replace('/20', '/5')} hover:${meta.bg.replace('/20', '/10')}` : 'hover:bg-surface-elevated/40')}>
+                      item.color_mark === 'CYAN'
+                        ? 'bg-teal-500/15 hover:bg-teal-500/25'
+                        : meta ? `${meta.bg.replace('/20', '/5')} hover:${meta.bg.replace('/20', '/10')}` : 'hover:bg-surface-elevated/40')}>
                     <td className="px-3 py-2 text-ink-disabled">{idx + 1}</td>
                     {(() => {
                       const isInDrList = item.list_name ? drListNames.has(item.list_name) : false

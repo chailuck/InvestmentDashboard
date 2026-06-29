@@ -21,7 +21,8 @@ from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from sqlalchemy import delete, select, text
+from pydantic import BaseModel
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -506,3 +507,87 @@ async def duplicate_plan(
 
     await db.commit()
     return {"id": str(new_plan.id), "name": new_plan.name, "plan_type": new_plan.plan_type}
+
+
+# ── Copy item to plan ─────────────────────────────────────────────────────────
+
+class CopyItemBody(BaseModel):
+    target_plan_id: uuid.UUID
+
+
+@router.post("/{plan_id}/items/{item_id}/copy", status_code=status.HTTP_201_CREATED)
+async def copy_item_to_plan(
+    plan_id: uuid.UUID,
+    item_id: uuid.UUID,
+    body: CopyItemBody,
+    user_id: UserId,
+    db: DB,
+) -> dict[str, Any]:
+    uid = uuid.UUID(user_id)
+
+    # BR-COPY-01: source and target plan must differ
+    if plan_id == body.target_plan_id:
+        raise HTTPException(status_code=400, detail="Cannot copy item to the same plan")
+
+    # Authorize and load source item (must belong to this user's plan)
+    src_result = await db.execute(
+        select(PurchasePlanItem)
+        .join(ActionPlan, ActionPlan.id == PurchasePlanItem.plan_id)
+        .where(
+            PurchasePlanItem.id == item_id,
+            PurchasePlanItem.plan_id == plan_id,
+            ActionPlan.created_by == uid,
+        )
+    )
+    src_item = src_result.scalar_one_or_none()
+    if not src_item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    # Authorize and load target plan
+    tgt_result = await db.execute(
+        select(ActionPlan).where(
+            ActionPlan.id == body.target_plan_id,
+            ActionPlan.created_by == uid,
+        )
+    )
+    tgt_plan = tgt_result.scalar_one_or_none()
+    if not tgt_plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if tgt_plan.plan_type != "purchase":
+        raise HTTPException(status_code=400, detail="Target plan is not a purchase plan")
+
+    # Compute next sort_order
+    next_sort_result = await db.execute(
+        select(func.coalesce(func.max(PurchasePlanItem.sort_order), -1) + 1).where(
+            PurchasePlanItem.plan_id == body.target_plan_id
+        )
+    )
+    next_sort = next_sort_result.scalar_one()
+
+    # Insert new item
+    new_item = PurchasePlanItem(
+        plan_id=body.target_plan_id,
+        sort_order=next_sort,
+        stock=src_item.stock,
+        current_price=src_item.current_price,
+        size=src_item.size,
+        buy_price=src_item.buy_price,
+        tp=src_item.tp,
+        sl=src_item.sl,
+        strategy=src_item.strategy,
+        reason=src_item.reason,
+        triggered=False,
+    )
+    db.add(new_item)
+    await db.commit()
+    await db.refresh(new_item)
+
+    _log.info(
+        "purchase_plan_item.copied",
+        source_item_id=str(item_id),
+        source_plan_id=str(plan_id),
+        target_plan_id=str(body.target_plan_id),
+        new_item_id=str(new_item.id),
+    )
+
+    return {"id": str(new_item.id), "sort_order": new_item.sort_order}
