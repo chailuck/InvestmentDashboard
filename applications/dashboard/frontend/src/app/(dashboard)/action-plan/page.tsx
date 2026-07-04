@@ -756,12 +756,12 @@ function ReviewListSection() {
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 const TABS: { id: ActiveTab; label: string; icon: React.ElementType }[] = [
-  { id: 'plans',            label: 'Plans',                icon: ClipboardList },
   { id: 'weekly-dashboard', label: 'Weekly Plan Dashboard', icon: CalendarDays },
+  { id: 'plans',            label: 'Plans',                icon: ClipboardList },
 ]
 
 export default function ActionPlanPage() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('plans')
+  const [activeTab, setActiveTab] = useState<ActiveTab>('weekly-dashboard')
 
   return (
     <div className="space-y-4">

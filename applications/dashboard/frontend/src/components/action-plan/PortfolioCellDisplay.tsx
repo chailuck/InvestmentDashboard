@@ -52,37 +52,40 @@ export function PortfolioCellDisplay({ item, dayPrice, prevDayPrice = null, comp
     <div className={cn('space-y-0.5', textSize)}>
       {/* Line 1: P&L%: +15.0% | Entry: 56.50 | Current: 65.00 | Change%: +1.4% */}
       <div className="flex items-center gap-1 tabular-nums flex-wrap">
+        {changePctLabel !== null && (
+          <>
+            <span className="text-ink-disabled shrink-0">|</span>
+            <span className="text-white shrink-0">CHNG%:</span>
+            <span className={cn('font-semibold shrink-0', changeColor)}>{changePctLabel}</span>
+          </>
+        )}
         {pnlPct !== null && (
           <>
-            <span className="text-[8px] text-white shrink-0">P&amp;L%:</span>
+            <span className="text-white shrink-0">P&amp;L%:</span>
             <span className={cn('font-semibold shrink-0', pnlPct >= 0 ? 'text-gain' : 'text-loss')}>
               {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%
             </span>
           </>
         )}
+      </div>
+      <div className="flex items-center gap-1 tabular-nums flex-wrap">
         {hasEntry && (
           <>
             {pnlPct !== null && <span className="text-ink-disabled shrink-0">|</span>}
-            <span className="text-[8px] text-white shrink-0">Entry:</span>
+            <span className="text-white shrink-0">ENTRY:</span>
             <span className="text-white font-bold shrink-0">{item.entry_price!.toFixed(2)}</span>
           </>
         )}
         {hasCur && (
           <>
             <span className="text-ink-disabled shrink-0">|</span>
-            <span className="text-[8px] text-white shrink-0">Current:</span>
+            <span className="text-white shrink-0">CURR:</span>
             <span className={cn('font-bold shrink-0', isProfit ? 'text-gain' : 'text-loss')}>
               {effectivePrice!.toFixed(2)}
             </span>
           </>
         )}
-        {changePctLabel !== null && (
-          <>
-            <span className="text-ink-disabled shrink-0">|</span>
-            <span className="text-[8px] text-white shrink-0">Change%:</span>
-            <span className={cn('font-semibold shrink-0', changeColor)}>{changePctLabel}</span>
-          </>
-        )}
+
       </div>
 
       {/* Line 2: SL ← [bar with entry marker + current marker] → TP */}

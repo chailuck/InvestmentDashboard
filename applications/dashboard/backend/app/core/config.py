@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AnyHttpUrl, Field, field_validator
+from pydantic import AnyHttpUrl, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -73,6 +73,18 @@ class Settings(BaseSettings):
 
     # Monitoring
     metrics_enabled: bool = True
+
+    # Email digest (daily scheduled send)
+    # DAILY_EMAIL_ENABLED=true  — activate the scheduler
+    # DAILY_EMAIL_RECIPIENT     — address to deliver to (must match a user row)
+    # DAILY_EMAIL_SCHEDULE      — 5-field UTC cron, default = Mon-Fri 17:30 BKK
+    # GMAIL_USER                — sender Gmail address
+    # GMAIL_APP_PASSWORD        — 16-char Gmail App Password (not the account pwd)
+    daily_email_enabled: bool = False
+    daily_email_recipient: str = ""
+    daily_email_schedule: str = "30 10 * * 1-5"  # UTC — Mon-Fri 17:30 Bangkok
+    gmail_user: str = ""
+    gmail_app_password: SecretStr = SecretStr("")
 
     @property
     def is_production(self) -> bool:

@@ -562,9 +562,60 @@ function TransactionModal({ drill, onClose, onSymbolClick }: { drill: DrillDown;
 
 // ── Section 1: Positions Table ─────────────────────────────────────────────────
 
-function PositionsTable({ positions, total, totalPnl, loading, onSymbolClick }: {
-  positions: Position[]; total: number; totalPnl: number; loading: boolean; onSymbolClick: (s: string) => void
+function posComputedPnl(pos: Position): { netPnl: number; pnlPct: number } {
+  const isShort  = pos.direction.toLowerCase().includes('short')
+  const isClosed = pos.status !== 'active' && pos.exitPrice != null
+  const price    = isClosed ? pos.exitPrice! : pos.currentPrice
+  const diff     = isShort ? pos.entryPrice - price : price - pos.entryPrice
+  const netPnl   = diff * pos.positionSize
+  const pnlPct   = pos.entryPrice > 0 ? (diff / pos.entryPrice) * 100 : 0
+  return { netPnl, pnlPct }
+}
+
+function PositionsTable({ positions, total, loading, onSymbolClick }: {
+  positions: Position[]; total: number; loading: boolean; onSymbolClick: (s: string) => void
 }) {
+  const [sortKey, setSortKey] = useState<string>('entryDate')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  const onSort = (col: string) => {
+    if (col === sortKey) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(col); setSortDir('desc') }
+  }
+
+  const sorted = useMemo(() => {
+    const d = positions.map(p => ({ ...p, ...posComputedPnl(p) }))
+    d.sort((a, b) => {
+      let av: any, bv: any
+      switch (sortKey) {
+        case 'symbol':      av = a.symbol;       bv = b.symbol;       break
+        case 'direction':   av = a.direction;    bv = b.direction;    break
+        case 'entryDate':   av = a.entryDate ?? ''; bv = b.entryDate ?? ''; break
+        case 'exitDate':    av = a.exitDate ?? ''; bv = b.exitDate ?? ''; break
+        case 'entryPrice':  av = a.entryPrice;   bv = b.entryPrice;   break
+        case 'exitPrice':   av = a.exitPrice ?? 0; bv = b.exitPrice ?? 0; break
+        case 'currentPrice':av = a.currentPrice; bv = b.currentPrice; break
+        case 'positionSize':av = a.positionSize; bv = b.positionSize; break
+        case 'netPnl':      av = a.netPnl;       bv = b.netPnl;       break
+        case 'pnlPct':      av = a.pnlPct;       bv = b.pnlPct;       break
+        case 'status':      av = a.status;       bv = b.status;       break
+        default:            av = 0;              bv = 0
+      }
+      if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
+      return sortDir === 'asc' ? av - bv : bv - av
+    })
+    return d
+  }, [positions, sortKey, sortDir])
+
+  const totalPnl = useMemo(() => sorted.reduce((s, p) => s + p.netPnl, 0), [sorted])
+
+  const Th = ({ col, label }: { col: string; label: string }) => (
+    <th onClick={() => onSort(col)}
+        className="px-3 py-2.5 text-left font-medium whitespace-nowrap cursor-pointer select-none hover:text-ink-primary transition-colors">
+      {label}<SortIcon col={col} sortKey={sortKey} dir={sortDir} />
+    </th>
+  )
+
   return (
     <div className="card overflow-hidden">
       <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between">
@@ -577,15 +628,25 @@ function PositionsTable({ positions, total, totalPnl, loading, onSymbolClick }: 
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border/50 text-ink-muted">
-              {['Symbol', 'Dir', 'Entry Date', 'Entry Price', 'Current', 'Size', 'Net P&L', 'SL', 'TP', 'Status'].map(h => (
-                <th key={h} className="px-3 py-2.5 text-left font-medium whitespace-nowrap">{h}</th>
-              ))}
+              <Th col="symbol"       label="Symbol"       />
+              <Th col="direction"    label="Dir"          />
+              <Th col="entryDate"    label="Entry Date"   />
+              <Th col="entryPrice"   label="Entry ฿"      />
+              <Th col="exitDate"     label="Exit Date"    />
+              <Th col="exitPrice"    label="Exit ฿"       />
+              <Th col="currentPrice" label="Current ฿"    />
+              <Th col="positionSize" label="Size"         />
+              <Th col="netPnl"       label="Net P&L"      />
+              <Th col="pnlPct"       label="P&L %"        />
+              <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">SL</th>
+              <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">TP</th>
+              <Th col="status"       label="Status"       />
             </tr>
           </thead>
           <tbody>
-            {positions.length === 0 && !loading ? (
-              <tr><td colSpan={10} className="px-3 py-8 text-center text-ink-muted">No positions found.</td></tr>
-            ) : positions.map(pos => (
+            {sorted.length === 0 && !loading ? (
+              <tr><td colSpan={13} className="px-3 py-8 text-center text-ink-muted">No positions found.</td></tr>
+            ) : sorted.map(pos => (
               <tr key={pos.id} className="border-b border-border/30 hover:bg-surface-elevated/50 transition-colors">
                 <td className="px-3 py-2.5">
                   <button
@@ -599,13 +660,22 @@ function PositionsTable({ positions, total, totalPnl, loading, onSymbolClick }: 
                     {pos.direction.toLowerCase().includes('short') ? '↓ S' : '↑ L'}
                   </span>
                 </td>
-                <td className="px-3 py-2.5 text-ink-secondary">{pos.entryDate ?? '—'}</td>
-                <td className="px-3 py-2.5 text-ink-secondary">{fmt(pos.entryPrice)}</td>
-                <td className="px-3 py-2.5 text-ink-primary font-medium">{fmt(pos.currentPrice)}</td>
-                <td className="px-3 py-2.5 text-ink-secondary">{pos.positionSize.toLocaleString()}</td>
-                <td className="px-3 py-2.5"><PnlCell value={pos.netPnl} pct={pos.pnlPct} /></td>
-                <td className="px-3 py-2.5 text-ink-muted">{pos.sl != null ? fmt(pos.sl) : '—'}</td>
-                <td className="px-3 py-2.5 text-ink-muted">{pos.tp != null ? fmt(pos.tp) : '—'}</td>
+                <td className="px-3 py-2.5 text-ink-secondary whitespace-nowrap">{pos.entryDate ?? '—'}</td>
+                <td className="px-3 py-2.5 text-ink-secondary tabular-nums">{fmt(pos.entryPrice)}</td>
+                <td className="px-3 py-2.5 text-ink-secondary whitespace-nowrap">{pos.exitDate ?? '—'}</td>
+                <td className="px-3 py-2.5 text-ink-secondary tabular-nums">{pos.exitPrice != null ? fmt(pos.exitPrice) : '—'}</td>
+                <td className="px-3 py-2.5 text-ink-primary font-medium tabular-nums">
+                  {pos.status === 'active' ? fmt(pos.currentPrice) : '—'}
+                </td>
+                <td className="px-3 py-2.5 text-ink-secondary tabular-nums">{pos.positionSize.toLocaleString()}</td>
+                <td className="px-3 py-2.5"><PnlCell value={pos.netPnl} /></td>
+                <td className="px-3 py-2.5">
+                  <span className={cn('font-semibold tabular-nums', pos.pnlPct >= 0 ? 'text-gain' : 'text-loss')}>
+                    {fmtPct(pos.pnlPct)}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-ink-muted tabular-nums">{pos.sl != null ? fmt(pos.sl) : '—'}</td>
+                <td className="px-3 py-2.5 text-ink-muted tabular-nums">{pos.tp != null ? fmt(pos.tp) : '—'}</td>
                 <td className="px-3 py-2.5">
                   <span className={cn('inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold',
                     pos.status === 'active' ? 'bg-gain/15 text-gain' : 'bg-ink-muted/20 text-ink-muted')}>
@@ -615,12 +685,12 @@ function PositionsTable({ positions, total, totalPnl, loading, onSymbolClick }: 
               </tr>
             ))}
           </tbody>
-          {positions.length > 0 && (
+          {sorted.length > 0 && (
             <tfoot>
               <tr className="border-t border-border/50 bg-surface-elevated/30">
-                <td colSpan={6} className="px-3 py-2.5 font-semibold text-ink-secondary text-right">Total</td>
+                <td colSpan={8} className="px-3 py-2.5 font-semibold text-ink-secondary text-right">Total</td>
                 <td className="px-3 py-2.5"><PnlCell value={totalPnl} /></td>
-                <td colSpan={3} />
+                <td colSpan={4} />
               </tr>
             </tfoot>
           )}
@@ -1699,7 +1769,7 @@ export default function PortfolioPage() {
       </div>
 
       {/* 1. Positions */}
-      <PositionsTable positions={positions} total={totalPositions} totalPnl={totalPnl} loading={isLoading} onSymbolClick={setAnalyticsSymbol} />
+      <PositionsTable positions={positions} total={totalPositions} loading={isLoading} onSymbolClick={setAnalyticsSymbol} />
 
       {/* 2a. Summary stats */}
       <PerformanceSummary data={isDbMode ? dbSummary : summaryQuery.data} />

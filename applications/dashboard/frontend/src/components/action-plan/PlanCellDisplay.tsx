@@ -54,24 +54,24 @@ export function PlanCellDisplay({ item, dayPrice, prevDayPrice = null, compact =
     <div className={cn('space-y-0.5', textSize)}>
       {/* Line 1: Buy: 22.3 | Current: 22.0 | Change: +2.3% */}
       <div className="flex items-center gap-1 tabular-nums flex-wrap">
-        <span className="text-[8px] text-white shrink-0">Buy:</span>
-        <span className="text-white font-bold shrink-0">
-          {hasBuy ? item.buy_price!.toFixed(1) : '—'}
-        </span>
-        <span className="text-ink-disabled shrink-0">|</span>
-        <span className="text-[8px] text-white shrink-0">Current:</span>
-        <span className="text-white font-bold shrink-0">
-          {hasCur ? effectivePrice!.toFixed(1) : '—'}
-        </span>
         {changePctLabel !== null && (
           <>
             <span className="text-ink-disabled shrink-0">|</span>
-            <span className="text-[8px] text-white shrink-0">Change:</span>
+            <span className="text-white shrink-0">CHNG:</span>
             <span className={cn('font-semibold shrink-0', changeColor)}>{changePctLabel}</span>
           </>
         )}
+        <span className="text-white shrink-0">BUY:</span>
+        <span className="text-yellow font-bold shrink-0">
+          {hasBuy ? item.buy_price!.toFixed(1) : '—'}
+        </span>
+        <span className="text-ink-disabled shrink-0">|</span>
+        <span className="text-white shrink-0">CURR</span>
+        <span className="text-white font-bold shrink-0">
+          {hasCur ? effectivePrice!.toFixed(1) : '—'}
+        </span>
         {item.strategy && (
-          <span className="text-[8px] text-white shrink-0 ml-auto">
+          <span className="text-white shrink-0 ml-auto">
             {STRATEGY_ABBR[item.strategy] ?? item.strategy}
           </span>
         )}

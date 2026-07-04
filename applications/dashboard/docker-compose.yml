@@ -74,6 +74,7 @@ services:
       - "${INVESTMENT_DATA_PATH:-./data/investmentPlan}:/app/investment_data:ro"
       - "${INVESTMENT_AGENT_PATH:-./data/investmentAgent}:/app/investment_agent:ro"
       - ./docs:/app/docs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "8000:8000"
     healthcheck:

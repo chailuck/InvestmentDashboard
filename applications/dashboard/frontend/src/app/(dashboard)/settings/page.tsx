@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { User, Lock, Shield, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink, ListChecks, Upload, Download, Plus, Trash2, ChevronDown, ChevronUp, GripVertical, RefreshCw, Wallet, Star } from 'lucide-react'
+import { User, Lock, Shield, Save, Loader2, AlertCircle, FolderOpen, Calendar, CheckCircle2, XCircle, FlaskConical, Database, FileSpreadsheet, ExternalLink, ListChecks, Upload, Download, Plus, Trash2, ChevronDown, ChevronUp, GripVertical, RefreshCw, Wallet, Star, Mail, Send } from 'lucide-react'
 import Link from 'next/link'
 import { useAuthStore } from '@/store/auth'
 import { apiClient } from '@/services/api'
@@ -12,6 +12,7 @@ import { appConfigService } from '@/services/appConfig'
 import { portfolioDbService } from '@/services/portfolioDb'
 import { weeklyScanService } from '@/services/weeklyScan'
 import { portfolioService, type UserPortfolio, type PortfolioCreate, type PortfolioUpdate } from '@/services/portfolio'
+import { emailDigestService, type EmailDigestSettings } from '@/services/emailDigest'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
@@ -379,6 +380,186 @@ function PortfolioPrefsSection() {
           Save Preference
         </button>
       </div>
+    </Section>
+  )
+}
+
+// ── Email Digest Section ──────────────────────────────────────────────────────
+
+function EmailDigestSection() {
+  const queryClient = useQueryClient()
+
+  const { data: settings, isLoading } = useQuery<EmailDigestSettings>({
+    queryKey: ['email-digest-settings'],
+    queryFn: emailDigestService.getSettings,
+  })
+
+  const [enabled,       setEnabled]       = useState(false)
+  const [recipient,     setRecipient]     = useState('')
+  const [scheduleTime,  setScheduleTime]  = useState('17:30')
+  const [saving,        setSaving]        = useState(false)
+  const [sending,       setSending]       = useState(false)
+  const [sendResult,    setSendResult]    = useState<string | null>(null)
+  const [sendSuccess,   setSendSuccess]   = useState(false)
+
+  // Sync local form state when query data arrives
+  useEffect(() => {
+    if (settings) {
+      setEnabled(settings.enabled)
+      setRecipient(settings.recipient)
+      setScheduleTime(settings.schedule_time)
+    }
+  }, [settings])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await emailDigestService.updateSettings({
+        enabled,
+        recipient: recipient.trim(),
+        schedule_time: scheduleTime,
+      })
+      await queryClient.invalidateQueries({ queryKey: ['email-digest-settings'] })
+      toast.success('Email digest settings saved')
+    } catch {
+      toast.error('Failed to save email digest settings')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSendNow = async () => {
+    setSending(true)
+    setSendResult(null)
+    try {
+      const result = await emailDigestService.sendNow()
+      if (result.success) {
+        const sentAt = result.sent_at ? new Date(result.sent_at).toLocaleTimeString() : ''
+        setSendResult(sentAt ? `Sent at ${sentAt}` : 'Sent successfully')
+        setSendSuccess(true)
+        toast.success('Email digest sent')
+      } else {
+        setSendResult(result.error ?? 'Send failed')
+        setSendSuccess(false)
+        toast.error(result.error ?? 'Failed to send email digest')
+      }
+    } catch {
+      setSendResult('Could not reach server')
+      setSendSuccess(false)
+      toast.error('Failed to send email digest')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <Section title="Email Digest" icon={Mail}>
+      <p className="text-xs text-ink-muted -mt-3">
+        Receive a daily summary of your portfolio performance and action plan directly by email.
+      </p>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-ink-muted text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading settings…
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {/* Enable / disable toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-ink-secondary">Enable daily digest</p>
+              <p className="text-xs text-ink-muted mt-0.5">Send an email summary every day at the configured time</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              aria-label="Enable daily digest"
+              onClick={() => setEnabled(v => !v)}
+              className={cn(
+                'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500',
+                enabled ? 'bg-brand-500' : 'bg-surface-elevated',
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ease-in-out',
+                  enabled ? 'translate-x-5' : 'translate-x-0.5',
+                )}
+              />
+            </button>
+          </div>
+
+          {/* Recipient email */}
+          <div>
+            <label className="block text-xs font-medium text-ink-secondary mb-1.5" htmlFor="digest-recipient">
+              Recipient email
+            </label>
+            <input
+              id="digest-recipient"
+              type="email"
+              className="input"
+              value={recipient}
+              onChange={e => setRecipient(e.target.value)}
+              placeholder="you@example.com"
+            />
+            <p className="text-xs text-ink-disabled mt-1">The digest will be delivered to this address.</p>
+          </div>
+
+          {/* Send time */}
+          <div>
+            <label className="block text-xs font-medium text-ink-secondary mb-1.5" htmlFor="digest-time">
+              Daily send time (Bangkok time)
+            </label>
+            <input
+              id="digest-time"
+              type="time"
+              className="input w-36"
+              value={scheduleTime}
+              onChange={e => setScheduleTime(e.target.value)}
+            />
+            <p className="text-xs text-ink-muted mt-1">Email is sent once per day at this time (Asia/Bangkok, UTC+7).</p>
+          </div>
+
+          {/* Send result feedback */}
+          {sendResult && (
+            <div className={cn(
+              'flex items-center gap-2 px-3 py-2 rounded-lg border text-xs',
+              sendSuccess
+                ? 'bg-gain/5 border-gain/20 text-gain'
+                : 'bg-loss/5 border-loss/20 text-loss',
+            )}>
+              {sendSuccess
+                ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
+              {sendResult}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="btn-primary flex items-center gap-2 px-4 py-2 text-sm"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Save Settings
+            </button>
+            <button
+              type="button"
+              onClick={handleSendNow}
+              disabled={sending}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg border border-border text-ink-secondary hover:text-ink-primary hover:border-brand-500/40 transition-colors disabled:opacity-40"
+            >
+              {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              Send Now
+            </button>
+          </div>
+        </div>
+      )}
     </Section>
   )
 }
@@ -775,6 +956,9 @@ export default function SettingsPage() {
 
       {/* Multi-portfolio management (data source + Excel paths per portfolio) */}
       <PortfolioManagementSection />
+
+      {/* Email Digest */}
+      <EmailDigestSection />
 
       {/* Scan list config */}
       <ScanListSection />

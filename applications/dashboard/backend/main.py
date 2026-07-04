@@ -58,6 +58,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await conn.execute(text("ALTER TABLE user_symbol_lists ADD COLUMN IF NOT EXISTS is_dr BOOLEAN NOT NULL DEFAULT false"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS excel_source_path VARCHAR(1024)"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS excel_working_path VARCHAR(1024)"))
+        # Email digest preferences — stored per-user so each user can opt-in/out independently
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_digest_enabled BOOLEAN NOT NULL DEFAULT false"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_digest_time VARCHAR(5) NOT NULL DEFAULT '17:30'"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_digest_recipient VARCHAR(255) NOT NULL DEFAULT ''"))
         # Portfolio columns added to existing portfolios table
         await conn.execute(text("ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false"))
         await conn.execute(text("ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS portfolio_mode VARCHAR(10) NOT NULL DEFAULT 'excel'"))
@@ -141,9 +145,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             log.info("Admin seed applied", email=settings.admin_email)
 
+    # Start daily email scheduler (only when explicitly enabled)
+    if settings.daily_email_enabled:
+        from app.scheduler import start_scheduler
+        start_scheduler(settings.daily_email_schedule)
+        log.info(
+            "Daily email scheduler started",
+            schedule=settings.daily_email_schedule,
+            recipient=settings.daily_email_recipient,
+        )
+
     yield
 
     # Shutdown
+    if settings.daily_email_enabled:
+        from app.scheduler import stop_scheduler
+        stop_scheduler()
+
     await engine.dispose()
     await close_redis()
     log.info("Investment Dashboard API shutdown complete")
