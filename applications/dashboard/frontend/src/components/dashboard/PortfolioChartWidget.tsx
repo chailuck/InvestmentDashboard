@@ -11,8 +11,15 @@ import type { WidgetConfig } from '@/types'
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false })
 
 type Period = '1W' | '1M' | '3M' | '6M' | '1Y' | 'YTD'
+type Granularity = 'daily' | 'weekly' | 'monthly'
 
 const PERIODS: Period[] = ['1W', '1M', '3M', '6M', '1Y', 'YTD']
+
+const GRANULARITY_OPTIONS: { value: Granularity; label: string }[] = [
+  { value: 'daily', label: 'D' },
+  { value: 'weekly', label: 'W' },
+  { value: 'monthly', label: 'M' },
+]
 
 function periodToParams(p: Period): { from_date: string; period: 'daily' | 'weekly' | 'monthly' } {
   const today = new Date()
@@ -28,25 +35,45 @@ function periodToParams(p: Period): { from_date: string; period: 'daily' | 'week
 }
 
 const PERIOD_KEY = 'perf-widget-period'
+const GRANULARITY_KEY = 'perf-widget-granularity'
 
 export function PortfolioChartWidget({ config }: { config: WidgetConfig }) {
   const [period, setPeriod] = useState<Period>('3M')
+  const [granularity, setGranularity] = useState<Granularity>(periodToParams('3M').period)
 
   useEffect(() => {
-    const saved = localStorage.getItem(PERIOD_KEY) as Period | null
-    if (saved && PERIODS.includes(saved)) setPeriod(saved)
+    const savedPeriod = localStorage.getItem(PERIOD_KEY) as Period | null
+    const effectivePeriod = savedPeriod && PERIODS.includes(savedPeriod) ? savedPeriod : period
+    if (savedPeriod && PERIODS.includes(savedPeriod)) setPeriod(savedPeriod)
+
+    const savedGranularity = localStorage.getItem(GRANULARITY_KEY) as Granularity | null
+    const validGranularities: Granularity[] = ['daily', 'weekly', 'monthly']
+    if (savedGranularity && validGranularities.includes(savedGranularity)) {
+      setGranularity(savedGranularity)
+    } else {
+      setGranularity(periodToParams(effectivePeriod).period)
+    }
   }, [])
 
   const handlePeriod = (p: Period) => {
+    const derived = periodToParams(p).period
     setPeriod(p)
+    setGranularity(derived)
     localStorage.setItem(PERIOD_KEY, p)
+    localStorage.setItem(GRANULARITY_KEY, derived)
   }
-  const { from_date, period: apiPeriod } = periodToParams(period)
+
+  const handleGranularity = (g: Granularity) => {
+    setGranularity(g)
+    localStorage.setItem(GRANULARITY_KEY, g)
+  }
+
+  const { from_date } = periodToParams(period)
   const toDate = format(new Date(), 'yyyy-MM-dd')
 
   const { data = [], isLoading } = useQuery({
-    queryKey: ['dashboard-performance', from_date, apiPeriod],
-    queryFn: () => portfolioTrackerService.getPerformance({ from_date, to_date: toDate, period: apiPeriod }),
+    queryKey: ['dashboard-performance', from_date, granularity],
+    queryFn: () => portfolioTrackerService.getPerformance({ from_date, to_date: toDate, period: granularity }),
     refetchInterval: 5 * 60_000,
     staleTime: 60_000,
   })
@@ -126,9 +153,10 @@ export function PortfolioChartWidget({ config }: { config: WidgetConfig }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-1 px-4 pt-2 pb-1">
+      <div className="flex items-center gap-1 px-4 pt-2 pb-1 flex-wrap">
         {PERIODS.map(p => (
           <button key={p} onClick={() => handlePeriod(p)}
+            aria-pressed={period === p}
             className={cn(
               'px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150',
               period === p
@@ -136,6 +164,19 @@ export function PortfolioChartWidget({ config }: { config: WidgetConfig }) {
                 : 'text-ink-muted hover:text-ink-secondary'
             )}>
             {p}
+          </button>
+        ))}
+        <div className="w-px h-4 bg-border/40 mx-1" />
+        {GRANULARITY_OPTIONS.map(g => (
+          <button key={g.value} onClick={() => handleGranularity(g.value)}
+            aria-pressed={granularity === g.value}
+            className={cn(
+              'px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150',
+              granularity === g.value
+                ? 'bg-brand-500/15 text-brand-400 border border-brand-500/20'
+                : 'text-ink-muted hover:text-ink-secondary'
+            )}>
+            {g.label}
           </button>
         ))}
       </div>

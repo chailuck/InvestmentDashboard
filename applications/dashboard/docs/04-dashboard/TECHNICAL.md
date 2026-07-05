@@ -122,7 +122,89 @@ Each metric card uses `motion.div` with `initial={{ opacity: 0, y: 8 }}` entry a
 
 ---
 
-## 6. Dashboard Layout
+## 6. PortfolioChartWidget — Range + Granularity Controls
+
+**File:** `frontend/src/components/dashboard/PortfolioChartWidget.tsx`
+
+> ℹ️ Frontend-only change. No backend, database, or API contract change — `GET /portfolio-tracker/performance`'s `period` query param already accepted `daily` / `weekly` / `monthly` before this feature; see `backend/app/api/v1/endpoints/portfolio_tracker.py` (`get_performance`, mapped to `get_daily_performance` in `portfolio_excel.py`, or to the DB-mode equivalent in `portfolio_db.py`).
+
+### 6.1 State
+
+Two independent pieces of state, typed as string unions:
+
+```typescript
+type Period      = '1W' | '1M' | '3M' | '6M' | '1Y' | 'YTD'
+type Granularity = 'daily' | 'weekly' | 'monthly'
+
+const [period, setPeriod]           = useState<Period>('3M')
+const [granularity, setGranularity] = useState<Granularity>(periodToParams('3M').period)
+```
+
+`periodToParams(period)` is the single source of truth mapping a range preset to both its `from_date` window and its implied `period` (granularity) value — the same function used for the initial default, the mount-time fallback, and the range-change reset, so the "implied granularity per range" rule only exists in one place.
+
+### 6.2 Persistence — two localStorage keys
+
+```typescript
+const PERIOD_KEY      = 'perf-widget-period'       // pre-existing
+const GRANULARITY_KEY = 'perf-widget-granularity'  // new
+```
+
+On mount, a `useEffect` reads both keys independently:
+- `PERIOD_KEY` — if present and a valid `Period`, overrides the `period` state.
+- `GRANULARITY_KEY` — if present and a valid `Granularity`, overrides the `granularity` state. If absent or invalid (e.g. cleared/corrupted localStorage, or a value from a future app version not in the current union), it falls back to `periodToParams(effectivePeriod).period` — the granularity implied by the *effective* (possibly just-restored) period, not the component's initial default. This keeps a restored range and a missing/bad granularity value internally consistent instead of pairing a restored "1Y" range with a stale "daily" default.
+
+### 6.3 Query key and data fetching
+
+```typescript
+const { from_date } = periodToParams(period)
+const toDate = format(new Date(), 'yyyy-MM-dd')
+
+const { data = [], isLoading } = useQuery({
+  queryKey: ['dashboard-performance', from_date, granularity],
+  queryFn: () => portfolioTrackerService.getPerformance({ from_date, to_date: toDate, period: granularity }),
+  refetchInterval: 5 * 60_000,
+  staleTime: 60_000,
+})
+```
+
+`granularity` — not `period` (the range enum) — is passed as the `period` query param to the backend, and both `from_date` and `granularity` are part of the TanStack Query cache key. This matters for the rapid-click race condition covered by QA: each distinct `(from_date, granularity)` pair gets its own cache entry, so an in-flight request for a previously-selected combination cannot resolve after the fact and overwrite the chart with stale data for the combination the user is now viewing — TanStack Query keeps them in separate cache slots rather than one shared "latest response" slot.
+
+### 6.4 Why the range-reset lives in the click handler, not a `useEffect` keyed on `period`
+
+`handlePeriod` performs the reset synchronously and inline:
+
+```typescript
+const handlePeriod = (p: Period) => {
+  const derived = periodToParams(p).period
+  setPeriod(p)
+  setGranularity(derived)
+  localStorage.setItem(PERIOD_KEY, p)
+  localStorage.setItem(GRANULARITY_KEY, derived)
+}
+```
+
+An alternative design would keep `handlePeriod` setting only `period`, and add a separate `useEffect(() => setGranularity(periodToParams(period).period), [period])` to enforce the reset. That was deliberately avoided: React 18 batches the two `setState` calls inside one event handler into a single re-render, so the query key (`['dashboard-performance', from_date, granularity]`) only ever changes once per click, producing exactly one network request. A `useEffect` keyed on `period` would still batch with the handler's own `setPeriod` in practice under React 18's automatic batching, but it splits one conceptual state transition ("user picked a new range, which resets granularity") across two separate update sites (the handler and the effect), which is harder to reason about and is more fragile if either update path is ever changed to something async (e.g. wrapped in a `startTransition`, a timeout, or a non-React event source) where the two updates could then land in separate render passes and briefly fetch with a mismatched (old granularity, new range) combination before the effect catches up — an extra, avoidable fetch. Keeping both `setState` calls colocated in the same handler makes the "one user action → one state transition → one fetch" invariant explicit and independent of batching internals.
+
+`handleGranularity`, by contrast, only ever touches `granularity` — it has no reset behavior to coordinate, so it is a plain single-state setter:
+
+```typescript
+const handleGranularity = (g: Granularity) => {
+  setGranularity(g)
+  localStorage.setItem(GRANULARITY_KEY, g)
+}
+```
+
+### 6.5 Empty state
+
+Unchanged: `data.length === 0` renders the existing generic message ("No realized P&L data for this period."). No new UI states were added for this feature.
+
+### 6.6 Testing
+
+Covered by `frontend/src/components/dashboard/__tests__/PortfolioChartWidget.test.tsx` (11 Vitest/RTL tests): default-granularity-from-range, range-change reset, independent manual override, persistence of both localStorage keys, corrupted/invalid localStorage value fallback, sparse-data/empty-state rendering, and a rapid-click test asserting the per-key query cache prevents a stale response from clobbering the active selection.
+
+---
+
+## 7. Dashboard Layout
 
 **File:** `frontend/src/app/(dashboard)/layout.tsx`
 

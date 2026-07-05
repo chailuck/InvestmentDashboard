@@ -29,7 +29,26 @@ Four metric cards:
 
 ### 2.3 Performance Chart (mini)
 
-A compact ECharts line chart showing cumulative P&L over the last 3 months (daily grouping). Reuses the same API as the portfolio page performance chart.
+A compact ECharts line chart showing cumulative P&L (line) and per-period P&L (bars), reusing the same `GET /api/v1/portfolio-tracker/performance` endpoint as the portfolio page performance chart.
+
+**Range selector.** Six range presets are shown as buttons in the widget header: `1W`, `1M`, `3M`, `6M`, `1Y`, `YTD`. Selecting a range sets the query's date window (`from_date`) and, by default, also sets an implied aggregation granularity for that range:
+
+| Range | Implied granularity |
+|---|---|
+| 1W, 1M | Daily |
+| 3M, 6M | Weekly |
+| 1Y, YTD | Monthly |
+
+**Granularity toggle (D/W/M).** A separate Daily / Weekly / Monthly toggle sits next to the range buttons. It lets the user view a different level of detail than the range's default — for example, "3M" range with "Daily" granularity to see day-by-day P&L over the last three months. Rules:
+
+1. **Default follows range.** When the widget first loads (or a saved value isn't present), granularity is whatever the current range implies (see table above).
+2. **Independent override.** The user can pick any granularity regardless of the selected range. The choice takes effect immediately and re-fetches the chart.
+3. **Changing the range resets granularity.** Selecting a new range button resets granularity back to that range's implied default, discarding any manual override that was active. This keeps the two controls from drifting into a confusing combination (e.g. "1W" range showing monthly buckets) as a *persisted default* — the user can still manually re-select an unusual combination like "1W + Monthly" immediately after picking the range if they want it.
+4. **Persisted independently.** Both the range and the granularity are remembered across page reloads via two separate browser localStorage entries, so returning to the dashboard restores the last-used view exactly as left.
+
+If the corresponding query returns no data (e.g. no realized trades in the selected window), the widget shows the existing generic empty-state message: "No realized P&L data for this period." No new empty/error states were introduced by this feature.
+
+> ℹ️ Note: This is a frontend-only enhancement. The granularity toggle is a new user-facing control over an aggregation option (`period` = daily/weekly/monthly) that the backend `GET /api/v1/portfolio-tracker/performance` endpoint already supported before this change — no API contract, request/response shape, or backend behavior changed.
 
 ### 2.4 Holdings Table
 
