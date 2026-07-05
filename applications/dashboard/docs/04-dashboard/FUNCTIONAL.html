@@ -62,12 +62,29 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <p><strong>Data source:</strong> <code>GET /api/v1/portfolio-tracker/positions?status=active</code></p>
 
 <h3>2.3 Performance chart (mini)</h3>
-<p>A compact ECharts line chart showing cumulative P&amp;L over the last 3 months with daily grouping. This is the same data used by the full performance chart on the Portfolio page, presented in a smaller format for the dashboard overview.</p>
+<p>A compact ECharts chart showing cumulative P&amp;L (line, with green area fill) and per-period P&amp;L (bars), fetched from <code>GET /api/v1/portfolio-tracker/performance</code> — the same endpoint used by the full performance chart on the Portfolio page.</p>
+
+<h4>Range selector</h4>
+<p>Six range preset buttons are shown in the widget header: <code>1W</code>, <code>1M</code>, <code>3M</code>, <code>6M</code>, <code>1Y</code>, <code>YTD</code>. Selecting a range sets the chart's date window and, by default, an implied aggregation granularity:</p>
+<table>
+  <thead><tr><th>Range</th><th>Implied granularity</th></tr></thead>
+  <tbody>
+    <tr><td>1W, 1M</td><td>Daily</td></tr>
+    <tr><td>3M, 6M</td><td>Weekly</td></tr>
+    <tr><td>1Y, YTD</td><td>Monthly</td></tr>
+  </tbody>
+</table>
+
+<h4>Granularity toggle (D/W/M)</h4>
+<p>A separate Daily / Weekly / Monthly toggle sits next to the range buttons, letting the user view a different level of detail than the range's default — for example, a <code>3M</code> range with <code>Daily</code> granularity to see day-by-day P&amp;L over three months.</p>
 <ul>
-  <li>Y-axis shows cumulative P&amp;L in THB</li>
-  <li>Green area fill below the line when P&amp;L is positive</li>
-  <li>No interactive controls — it is a read-only summary view</li>
+  <li><strong>Default follows range</strong> — on first load (or when no saved value exists), granularity is whatever the selected range implies (see table above).</li>
+  <li><strong>Independent override</strong> — the user can pick any granularity regardless of the selected range; the chart re-fetches immediately.</li>
+  <li><strong>Changing the range resets granularity</strong> — selecting a new range button resets granularity back to that range's implied default, discarding any manual override. This prevents a confusing combination (e.g. <code>1W</code> range showing monthly buckets) from becoming the <em>persisted</em> default — the user can still manually re-select an unusual combination immediately after choosing the range.</li>
+  <li><strong>Persisted independently</strong> — the range and the granularity are each remembered across page reloads via separate browser localStorage entries, so the dashboard restores the last-used view exactly as left.</li>
 </ul>
+<p>If the query returns no data for the selected range/granularity combination, the widget shows the existing generic empty-state message: <em>"No realized P&amp;L data for this period."</em> No new empty or error states were introduced by this feature.</p>
+<div class="callout tip">This is a frontend-only enhancement. The granularity toggle exposes an aggregation option (<code>period</code> = daily/weekly/monthly) that the backend <code>GET /api/v1/portfolio-tracker/performance</code> endpoint already supported before this change — no API contract, request/response shape, or backend behavior changed.</div>
 
 <h3>2.4 Holdings table</h3>
 <p>A compact sortable table of open positions sorted by Net P&amp;L (descending). Shows the top positions at a glance without requiring navigation to the full Portfolio page.</p>

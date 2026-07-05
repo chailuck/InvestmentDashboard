@@ -893,7 +893,7 @@ Response:
   <table>
     <tr><th>Widget ID</th><th>Component file</th><th>Description</th></tr>
     <tr><td><code>portfolio_summary</code></td><td><code>components/dashboard/PortfolioSummaryWidget.tsx</code></td><td>Four metric cards: Open P&amp;L, Open Positions (W/L), Win Rate, Avg P&amp;L per trade. Framer Motion animate-on-update.</td></tr>
-    <tr><td><code>portfolio_chart</code></td><td><code>components/dashboard/PortfolioChartWidget.tsx</code></td><td>Compact ECharts cumulative P&amp;L line chart, last 3 months.</td></tr>
+    <tr><td><code>portfolio_chart</code></td><td><code>components/dashboard/PortfolioChartWidget.tsx</code></td><td>Compact ECharts cumulative P&amp;L line + per-period P&amp;L bar chart. 1W/1M/3M/6M/1Y/YTD range buttons plus an independent Daily/Weekly/Monthly granularity toggle (defaults to the range's implied granularity; resets on range change). Both selections persist to localStorage.</td></tr>
     <tr><td><code>holdings_table</code></td><td><code>components/dashboard/HoldingsTableWidget.tsx</code></td><td>Top open positions sorted by P&amp;L. Columns: Symbol, Direction, P&amp;L, P&amp;L %.</td></tr>
     <tr><td><code>allocation_chart</code></td><td><code>components/dashboard/AllocationChartWidget.tsx</code></td><td>ECharts donut — % of portfolio value per stock (currentPrice × size).</td></tr>
     <tr><td><code>risk_metrics</code></td><td><code>components/dashboard/RiskMetricsWidget.tsx</code></td><td>Win rate, max drawdown, Sharpe-like metrics.</td></tr>
