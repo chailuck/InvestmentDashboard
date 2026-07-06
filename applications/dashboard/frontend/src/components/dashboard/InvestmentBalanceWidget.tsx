@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic'
 import { format, subMonths, subWeeks, startOfYear } from 'date-fns'
 import { portfolioTrackerService } from '@/services/portfolioTracker'
 import { investmentTransactionService } from '@/services/investmentTransaction'
+import { portfolioDbService } from '@/services/portfolioDb'
 import { cn } from '@/lib/utils'
 import type { WidgetConfig } from '@/types'
 
@@ -24,7 +25,7 @@ function periodToParams(p: Period, earliestTxDate?: string): { from_date: string
     case '6M':  return { from_date: d(subMonths(today, 6)),  period: 'weekly'  }
     case '1Y':  return { from_date: d(subMonths(today, 12)), period: 'monthly' }
     case 'YTD': return { from_date: d(startOfYear(today)),   period: 'monthly' }
-    case 'All': return { from_date: earliestTxDate ?? d(subMonths(today, 60)), period: 'monthly' }
+    case 'All': return { from_date: '2000-01-01', period: 'monthly' }
   }
 }
 
@@ -71,6 +72,14 @@ export function InvestmentBalanceWidget({ config: _config }: { config: WidgetCon
     staleTime: 60_000,
   })
 
+  const { data: dbSummary } = useQuery({
+    queryKey: ['portfolio-db-summary'],
+    queryFn: portfolioDbService.getSummary,
+    refetchInterval: 5 * 60_000,
+    staleTime: 60_000,
+    retry: 1,
+  })
+
   const balanceData = useMemo(() => {
     const transactions = txData?.transactions ?? []
     const totalInvested = txData?.summary?.net_investment ?? 0
@@ -109,16 +118,22 @@ export function InvestmentBalanceWidget({ config: _config }: { config: WidgetCon
     // Use actual total net investment from transaction summary — not the last chart point,
     // which can be stale when transactions fall after the performance data cutoff date.
     const totalInvested = txData?.summary?.net_investment ?? 0
-    if (!balanceData.length) return { invested: totalInvested, value: 0, pnl: 0, pnlPct: 0 }
+    const openPnl = dbSummary?.openPnl ?? 0
+    if (!balanceData.length) return { invested: totalInvested, value: 0, pnl: 0, pnlPct: 0, openPnl, totalWithOpen: 0, totalWithOpenPct: 0 }
     const last = balanceData[balanceData.length - 1]
-    const pnl  = last.portfolioValue - totalInvested
+    const pnl  = last.cumulativePnl
+    const totalWithOpen = last.portfolioValue + openPnl
     return {
-      invested: totalInvested,
-      value:    last.portfolioValue,
+      invested:         totalInvested,
+      value:            last.portfolioValue,
       pnl,
-      pnlPct: totalInvested !== 0 ? (pnl / totalInvested) * 100 : 0,
+      pnlPct:           totalInvested !== 0 ? (pnl / totalInvested) * 100 : 0,
+      openPnl,
+      openPnlPct:       totalInvested !== 0 ? (openPnl / totalInvested) * 100 : 0,
+      totalWithOpen,
+      totalWithOpenPct: totalInvested !== 0 ? ((pnl + openPnl) / totalInvested) * 100 : 0,
     }
-  }, [balanceData, txData])
+  }, [balanceData, txData, dbSummary])
 
   const chartOption = useMemo(() => {
     if (!balanceData.length) return {}
@@ -193,13 +208,17 @@ export function InvestmentBalanceWidget({ config: _config }: { config: WidgetCon
   }, [balanceData])
 
   const isLoading = perfLoading || txLoading
-  const { invested, value, pnl, pnlPct } = summary
-  const pnlUp = pnl >= 0
+  const { invested, value, pnl, pnlPct, openPnl, openPnlPct, totalWithOpen, totalWithOpenPct } = summary
+  const pnlUp         = pnl >= 0
+  const openUp        = openPnl >= 0
+  const totalWithOpenUp = totalWithOpen >= (summary.invested)
+
+  const sign = (n: number) => n >= 0 ? '+' : ''
 
   return (
     <div className="flex flex-col h-full">
       {/* Summary row */}
-      <div className="grid grid-cols-3 gap-2 px-4 pt-3 pb-1 shrink-0">
+      <div className="grid grid-cols-5 gap-x-3 gap-y-1 px-4 pt-3 pb-1 shrink-0">
         <div>
           <div className="text-[10px] text-ink-muted leading-tight">Net Invested</div>
           <div className="text-sm font-bold text-ink-primary tabular-nums">{fmtNum(invested)} ฿</div>
@@ -209,11 +228,25 @@ export function InvestmentBalanceWidget({ config: _config }: { config: WidgetCon
           <div className="text-sm font-bold text-ink-primary tabular-nums">{fmtNum(value)} ฿</div>
         </div>
         <div>
-          <div className="text-[10px] text-ink-muted leading-tight">Total P&L</div>
+          <div className="text-[10px] text-ink-muted leading-tight">Closed P&L <span className="text-ink-disabled">({period})</span></div>
           <div className={cn('text-sm font-bold tabular-nums', pnlUp ? 'text-gain' : 'text-loss')}>
-            {pnlUp ? '+' : ''}{fmtNum(pnl)} ฿
-            <span className="text-[10px] ml-1 opacity-70">
-              ({pnlUp ? '+' : ''}{pnlPct.toFixed(1)}%)
+            {sign(pnl)}{fmtNum(pnl)} ฿
+            <span className="text-[10px] ml-1 opacity-70">({sign(pnl)}{pnlPct.toFixed(1)}%)</span>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] text-ink-muted leading-tight">Open P&L</div>
+          <div className={cn('text-sm font-bold tabular-nums', openUp ? 'text-gain' : 'text-loss')}>
+            {sign(openPnl)}{fmtNum(openPnl)} ฿
+            <span className="text-[10px] ml-1 opacity-70">({sign(openPnl)}{openPnlPct.toFixed(1)}%)</span>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] text-ink-muted leading-tight">Total Value (incl. Open)</div>
+          <div className="text-sm font-bold text-ink-primary tabular-nums">
+            {fmtNum(totalWithOpen)} ฿
+            <span className={cn('text-[10px] ml-1 opacity-70', (pnl + openPnl) >= 0 ? 'text-gain' : 'text-loss')}>
+              ({sign(pnl + openPnl)}{totalWithOpenPct.toFixed(1)}%)
             </span>
           </div>
         </div>

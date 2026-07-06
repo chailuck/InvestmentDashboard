@@ -572,7 +572,116 @@ def _render_purchase_plan(
     return _card(h + subtitle + _by_date_table("purchase", items, ph, wd) + legend)
 
 
-def _render_portfolio_detail_table(positions: list[dict]) -> str:
+def _render_portfolio_summary_card(summary: dict) -> str:
+    """Stats card: investment value, all-time P&L, open P&L, totals, win rate."""
+    def _pnl_cell(label: str, value: float, pct: float | None = None,
+                  extra_label: str = "", extra_val: str = "") -> str:
+        c    = _GAIN if value >= 0 else _LOSS
+        sign = "+" if value >= 0 else ""
+        pct_html = ""
+        if pct is not None:
+            pct_c    = _GAIN if pct >= 0 else _LOSS
+            pct_sign = "+" if pct >= 0 else ""
+            pct_html = (
+                f'<div style="font-size:11px;color:{pct_c};font-weight:500;margin-top:2px;">'
+                f'{pct_sign}{pct:.2f}%</div>'
+            )
+        extra_html = ""
+        if extra_label:
+            extra_html = (
+                f'<div style="font-size:10px;color:{_INK_MUT};margin-top:3px;">'
+                f'{extra_label}: <span style="color:{_INK_PRI};">{extra_val}</span></div>'
+            )
+        return (
+            f'<td style="padding:10px 14px;vertical-align:top;'
+            f'border-right:1px solid {_BORDER};">'
+            f'<div style="font-size:10px;color:{_INK_MUT};margin-bottom:4px;">{label}</div>'
+            f'<div style="font-size:14px;font-weight:700;color:{c};font-family:monospace;">'
+            f'{sign}{value:,.0f}</div>'
+            f'{pct_html}{extra_html}</td>'
+        )
+
+    def _neutral_cell(label: str, main: str, sub: str = "") -> str:
+        sub_html = (
+            f'<div style="font-size:10px;color:{_INK_MUT};margin-top:3px;">{sub}</div>'
+            if sub else ""
+        )
+        return (
+            f'<td style="padding:10px 14px;vertical-align:top;'
+            f'border-right:1px solid {_BORDER};">'
+            f'<div style="font-size:10px;color:{_INK_MUT};margin-bottom:4px;">{label}</div>'
+            f'<div style="font-size:14px;font-weight:700;color:{_INK_PRI};font-family:monospace;">'
+            f'{main}</div>{sub_html}</td>'
+        )
+
+    inv_v    = summary.get("investmentValue", 0.0) or 0.0
+    cl_pnl   = summary.get("alltimeClosedPnl", 0.0) or 0.0
+    cl_pct   = summary.get("alltimeClosedPnlPct", 0.0) or 0.0
+    op_pnl   = summary.get("openPnl", 0.0) or 0.0
+    op_pct   = summary.get("openPnlPct", 0.0) or 0.0
+    tot_val  = summary.get("totalValue", 0.0) or 0.0
+    tot_pnl  = summary.get("totalPnl", 0.0) or 0.0
+    tot_pct  = summary.get("totalPnlPct", 0.0) or 0.0
+    winrate  = summary.get("winrate", 0.0) or 0.0
+    t_closed = summary.get("totalClosed", 0) or 0
+    w_closed = summary.get("winningClosed", 0) or 0
+
+    wr_c = _GAIN if winrate >= 50 else _LOSS
+    tot_val_c = _GAIN if tot_val >= inv_v else _LOSS
+
+    row1 = (
+        f'<tr>'
+        + _neutral_cell("Investment Value", f'{inv_v:,.0f}', "Capital deployed")
+        + _pnl_cell("All-time Closed P&amp;L", cl_pnl, cl_pct)
+        + _pnl_cell("Open P&amp;L (Unrealized)", op_pnl, op_pct)
+        + (
+            f'<td style="padding:10px 14px;vertical-align:top;">'
+            f'<div style="font-size:10px;color:{_INK_MUT};margin-bottom:4px;">Win Rate (All-time)</div>'
+            f'<div style="font-size:14px;font-weight:700;color:{wr_c};font-family:monospace;">'
+            f'{winrate:.1f}%</div>'
+            f'<div style="font-size:10px;color:{_INK_MUT};margin-top:3px;">'
+            f'{w_closed}W / {t_closed - w_closed}L ({t_closed} trades)</div>'
+            f'</td>'
+        )
+        + f'</tr>'
+    )
+
+    tot_sign = "+" if tot_pnl >= 0 else ""
+    tot_pct_sign = "+" if tot_pct >= 0 else ""
+    tot_pnl_c = _GAIN if tot_pnl >= 0 else _LOSS
+
+    row2 = (
+        f'<tr style="background:{_OVERLAY}22;">'
+        + (
+            f'<td style="padding:10px 14px;vertical-align:top;border-right:1px solid {_BORDER};">'
+            f'<div style="font-size:10px;color:{_INK_MUT};margin-bottom:4px;">Total Portfolio Value</div>'
+            f'<div style="font-size:15px;font-weight:800;color:{tot_val_c};font-family:monospace;">'
+            f'{tot_val:,.0f}</div>'
+            f'<div style="font-size:10px;color:{_INK_MUT};margin-top:3px;">'
+            f'Investment + Closed P&amp;L + Open P&amp;L</div></td>'
+        )
+        + (
+            f'<td colspan="2" style="padding:10px 14px;vertical-align:top;border-right:1px solid {_BORDER};">'
+            f'<div style="font-size:10px;color:{_INK_MUT};margin-bottom:4px;">Total P&amp;L</div>'
+            f'<div style="font-size:15px;font-weight:800;color:{tot_pnl_c};font-family:monospace;">'
+            f'{tot_sign}{tot_pnl:,.0f}</div>'
+            f'<div style="font-size:11px;color:{tot_pnl_c};margin-top:2px;font-weight:500;">'
+            f'{tot_pct_sign}{tot_pct:.2f}%</div></td>'
+        )
+        + f'<td></td></tr>'
+    )
+
+    return (
+        f'<div style="overflow-x:auto;margin-bottom:14px;">'
+        f'<table width="100%" cellpadding="0" cellspacing="0" border="0"'
+        f' style="border-collapse:collapse;background:{_CARD};'
+        f'border:1px solid {_BORDER};border-radius:6px;">'
+        f'<tbody>{row1}{row2}</tbody>'
+        f'</table></div>'
+    )
+
+
+def _render_portfolio_detail_table(positions: list[dict], show_open_col: bool = True) -> str:
     """Flat positions table — mirrors PortfolioOverview PositionsTable."""
     if not positions:
         return ""
@@ -585,23 +694,24 @@ def _render_portfolio_detail_table(positions: list[dict]) -> str:
     TD      = f'padding:6px 10px;font-size:11px;vertical-align:top;white-space:nowrap;border-bottom:1px solid rgba(42,52,80,0.3);'
     TD_MONO = TD + 'font-family:monospace;'
 
-    headers = ["Symbol","Dir","Entry Date","Entry ฿","Exit Date","Exit ฿","Current ฿","Size","Net P&L","P&L%","Status"]
+    headers = ["Symbol", "Dir", "Entry Date", "Entry ฿", "Exit Date", "Exit ฿",
+               "Current ฿", "Size", "Net P&L", "P&L%", "Status"]
     thead = "".join(f'<th style="{TH}">{h}</th>' for h in headers)
 
     rows_html = ""
     for pos in positions:
-        is_short  = str(pos.get("direction","")).upper() == "SHORT"
-        is_closed = pos.get("status","") != "active"
+        is_short  = str(pos.get("direction", "")).upper() == "SHORT"
+        is_closed = pos.get("status", "") != "active"
         status_c  = _INK_MUT if is_closed else _GAIN
-        status_lbl= "CLOSED" if is_closed else "OPEN"
+        status_lbl = "CLOSED" if is_closed else "OPEN"
         dir_c     = _LOSS if is_short else _GAIN
         dir_lbl   = "↓ S" if is_short else "↑ L"
 
-        net_pnl = pos.get("netPnl", 0.0) or 0.0
-        pnl_pct = pos.get("pnlPct", 0.0) or 0.0
-        pnl_c   = _GAIN if net_pnl >= 0 else _LOSS
-        pnl_sign= "+" if net_pnl >= 0 else ""
-        pct_sign= "+" if pnl_pct >= 0 else ""
+        net_pnl  = pos.get("netPnl", 0.0) or 0.0
+        pnl_pct  = pos.get("pnlPct", 0.0) or 0.0
+        pnl_c    = _GAIN if net_pnl >= 0 else _LOSS
+        pnl_sign = "+" if net_pnl >= 0 else ""
+        pct_sign = "+" if pnl_pct >= 0 else ""
 
         entry_p = pos.get("entryPrice")
         exit_p  = pos.get("exitPrice")
@@ -609,14 +719,14 @@ def _render_portfolio_detail_table(positions: list[dict]) -> str:
 
         rows_html += (
             f'<tr>'
-            f'<td style="{TD_MONO}font-weight:700;color:{_INK_PRI};">{pos.get("symbol","")}</td>'
+            f'<td style="{TD_MONO}font-weight:700;color:{_INK_PRI};">{pos.get("symbol", "")}</td>'
             f'<td style="{TD}color:{dir_c};font-weight:600;">{dir_lbl}</td>'
             f'<td style="{TD}color:{_INK_SEC};">{pos.get("entryDate") or "—"}</td>'
             f'<td style="{TD_MONO}color:{_INK_SEC};">{f"{entry_p:.2f}" if entry_p else "—"}</td>'
             f'<td style="{TD}color:{_INK_SEC};">{pos.get("exitDate") or "—"}</td>'
             f'<td style="{TD_MONO}color:{_INK_SEC};">{f"{exit_p:.2f}" if exit_p else "—"}</td>'
             f'<td style="{TD_MONO}color:{_INK_PRI};">{f"{cur_p:.2f}" if (cur_p and not is_closed) else "—"}</td>'
-            f'<td style="{TD_MONO}color:{_INK_SEC};">{int(pos.get("positionSize",0)):,}</td>'
+            f'<td style="{TD_MONO}color:{_INK_SEC};">{int(pos.get("positionSize", 0)):,}</td>'
             f'<td style="{TD_MONO}color:{pnl_c};font-weight:600;">{pnl_sign}{net_pnl:,.0f}</td>'
             f'<td style="{TD_MONO}color:{pnl_c};font-weight:600;">{pct_sign}{pnl_pct:.1f}%</td>'
             f'<td style="{TD}"><span style="display:inline-block;padding:1px 7px;border-radius:4px;'
@@ -625,9 +735,9 @@ def _render_portfolio_detail_table(positions: list[dict]) -> str:
             f'</tr>'
         )
 
-    total_pnl = sum(p.get("netPnl", 0.0) or 0.0 for p in positions)
-    total_c   = _GAIN if total_pnl >= 0 else _LOSS
-    total_sign= "+" if total_pnl >= 0 else ""
+    total_pnl  = sum(p.get("netPnl", 0.0) or 0.0 for p in positions)
+    total_c    = _GAIN if total_pnl >= 0 else _LOSS
+    total_sign = "+" if total_pnl >= 0 else ""
     tfoot = (
         f'<tr style="background:{_OVERLAY};">'
         f'<td colspan="8" style="{TD}font-weight:600;color:{_INK_SEC};text-align:right;">Total</td>'
@@ -655,18 +765,49 @@ def _render_portfolio(
     h = _heading("Portfolio Positions")
     if data is None:
         return _card(h + f'<p style="color:{_INK_MUT};font-size:11px;">No portfolio data available.</p>')
-    positions = data.get("positions", [])
-    if not positions:
-        return _card(h + f'<p style="color:{_INK_MUT};font-size:11px;">No active positions.</p>')
 
-    active = [p for p in positions if p.get("status") == "active"]
+    open_positions = data.get("open_positions", [])
+    closed_recent  = data.get("closed_recent", [])
+    summary        = data.get("summary", {})
+
+    if not open_positions and not closed_recent:
+        return _card(h + f'<p style="color:{_INK_MUT};font-size:11px;">No positions.</p>')
+
     legend = (
         f'<p style="margin:4px 0 0 0;font-size:9px;color:{_INK_MUT};">'
         f'<span style="color:{_BRAND_400};">blue row</span>&nbsp;= today</p>'
     )
-    by_date_section = _by_date_table("portfolio", active, ph, wd) + legend if active else ""
-    detail_section  = _render_portfolio_detail_table(positions)
-    return _card(h + by_date_section + detail_section)
+    by_date_section = _by_date_table("portfolio", open_positions, ph, wd) + legend if open_positions else ""
+
+    summary_section = _render_portfolio_summary_card(summary) if summary else ""
+
+    open_heading = (
+        f'<div style="font-size:11px;font-weight:700;color:{_INK_SEC};'
+        f'margin:16px 0 4px 0;padding-top:12px;border-top:1px solid {_BORDER};">'
+        f'Open Positions</div>'
+    ) if open_positions else ""
+    open_table = _render_portfolio_detail_table(open_positions) if open_positions else (
+        f'<p style="color:{_INK_MUT};font-size:11px;margin:8px 0;">No open positions.</p>'
+    )
+
+    closed_heading = (
+        f'<div style="font-size:11px;font-weight:700;color:{_INK_SEC};'
+        f'margin:20px 0 4px 0;padding-top:12px;border-top:1px solid {_BORDER};">'
+        f'Closed (Last 2 Weeks)</div>'
+    )
+    closed_table = _render_portfolio_detail_table(closed_recent) if closed_recent else (
+        f'<p style="color:{_INK_MUT};font-size:11px;margin:8px 0;">No closed positions in last 2 weeks.</p>'
+    )
+
+    return _card(
+        h
+        + summary_section
+        + by_date_section
+        + open_heading
+        + open_table
+        + closed_heading
+        + closed_table
+    )
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────

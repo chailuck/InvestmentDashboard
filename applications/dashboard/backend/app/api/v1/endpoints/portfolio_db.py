@@ -631,6 +631,88 @@ async def undo_sell(pos_id: uuid.UUID, user_id: UserId, db: DB) -> dict[str, Any
 
 # â”€â”€ Portfolio mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+@router.get("/summary")
+async def get_portfolio_summary(user_id: UserId, db: DB) -> dict[str, Any]:
+    """Return all-time portfolio summary stats for the top-bar indicators."""
+    uid = uuid.UUID(user_id)
+
+    active_result = await db.execute(
+        select(PortfolioDbPosition).where(
+            PortfolioDbPosition.user_id == uid,
+            PortfolioDbPosition.status == "active",
+        )
+    )
+    active_rows = active_result.scalars().all()
+
+    closed_result = await db.execute(
+        select(PortfolioDbPosition).where(
+            PortfolioDbPosition.user_id == uid,
+            PortfolioDbPosition.status == "closed",
+        )
+    )
+    closed_rows = closed_result.scalars().all()
+
+    # Live prices for active positions
+    active_symbols = list({r.symbol for r in active_rows})
+    prices: dict[str, float | None] = {}
+    if active_symbols:
+        price_results = await asyncio.gather(
+            *[asyncio.get_running_loop().run_in_executor(None, _fetch_price, s) for s in active_symbols],
+            return_exceptions=True,
+        )
+        for sym, pr in zip(active_symbols, price_results):
+            prices[sym] = pr if not isinstance(pr, Exception) else None
+
+    # Investment value (capital deployed)
+    investment_value = sum(
+        float(r.entry_price or 0) * (r.position_size or 0) for r in active_rows
+    )
+
+    # Open (unrealized) P&L
+    open_pnl = 0.0
+    for r in active_rows:
+        ep = float(r.entry_price or 0)
+        cp = prices.get(r.symbol)
+        sz = r.position_size or 0
+        if ep and cp and sz:
+            diff = (cp - ep) if r.direction.upper() != "SHORT" else (ep - cp)
+            open_pnl += diff * sz
+    open_pnl = round(open_pnl, 2)
+    open_pnl_pct = round((open_pnl / investment_value) * 100, 2) if investment_value else 0.0
+
+    # All-time closed P&L
+    alltime_closed_pnl = round(sum(_pos_net_pnl(r) for r in closed_rows), 2)
+    alltime_closed_investment = sum(
+        float(r.entry_price or 0) * (r.position_size or 0) for r in closed_rows
+    )
+    alltime_closed_pnl_pct = (
+        round((alltime_closed_pnl / alltime_closed_investment) * 100, 2)
+        if alltime_closed_investment else 0.0
+    )
+
+    total_pnl = round(alltime_closed_pnl + open_pnl, 2)
+    total_pnl_pct = round(alltime_closed_pnl_pct + open_pnl_pct, 2)
+    total_value = round(investment_value + alltime_closed_pnl + open_pnl, 2)
+
+    total_closed = len(closed_rows)
+    winning_closed = sum(1 for r in closed_rows if _pos_net_pnl(r) > 0)
+    winrate = round(winning_closed / total_closed * 100, 1) if total_closed else 0.0
+
+    return {
+        "investmentValue": round(investment_value, 0),
+        "alltimeClosedPnl": round(alltime_closed_pnl, 0),
+        "alltimeClosedPnlPct": alltime_closed_pnl_pct,
+        "openPnl": round(open_pnl, 0),
+        "openPnlPct": open_pnl_pct,
+        "totalValue": round(total_value, 0),
+        "totalPnl": round(total_pnl, 0),
+        "totalPnlPct": total_pnl_pct,
+        "winrate": winrate,
+        "totalClosed": total_closed,
+        "winningClosed": winning_closed,
+    }
+
+
 @router.get("/mode")
 async def get_mode(user_id: UserId, db: DB) -> dict[str, str]:
     mode = await get_user_portfolio_mode(user_id, db)

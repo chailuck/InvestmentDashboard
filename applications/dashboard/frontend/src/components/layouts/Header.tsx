@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import React, { useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Bell, Search, RefreshCw, Menu, Wifi, WifiOff } from 'lucide-react'
+import { Bell, Search, RefreshCw, Menu, Wifi, WifiOff, Wallet, TrendingUp, TrendingDown, Percent } from 'lucide-react'
 import { useWebSocket } from '@/websocket/hooks'
 import { useNotificationStore } from '@/store/notifications'
 import {
@@ -12,6 +12,7 @@ import {
   type SetIndex,
   type GlobalIndex,
 } from '@/services/portfolioTracker'
+import { investmentTransactionService } from '@/services/investmentTransaction'
 import { cn } from '@/lib/utils'
 
 interface HeaderProps {
@@ -36,6 +37,11 @@ export function Header({ onMobileMenuOpen, pageTitle = 'Dashboard' }: HeaderProp
       {/* Page title (small screens only) */}
       <div className="flex-1 min-w-0 hidden sm:block lg:hidden">
         <h1 className="text-sm font-semibold text-ink-primary truncate">{pageTitle}</h1>
+      </div>
+
+      {/* Portfolio summary indicators */}
+      <div className="hidden lg:flex items-center shrink-0 border-r border-border/30 pr-3 mr-1">
+        <PortfolioIndicators />
       </div>
 
       {/* Market ticker strip — two-row layout */}
@@ -112,6 +118,128 @@ export function Header({ onMobileMenuOpen, pageTitle = 'Dashboard' }: HeaderProp
         </div>
       </div>
     </header>
+  )
+}
+
+// ── Portfolio summary indicators ───────────────────────────────────────────────
+
+function PortfolioIndicators() {
+  const { data: txData } = useQuery({
+    queryKey: ['inv-balance-widget-tx'],
+    queryFn: () => investmentTransactionService.list({}),
+    staleTime: 120_000,
+    refetchInterval: 5 * 60_000,
+  })
+
+  const { data: trackerSummary, isLoading } = useQuery({
+    queryKey: ['portfolio-tracker-summary-alltime'],
+    queryFn: () => portfolioTrackerService.getSummary({}),
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+    retry: 1,
+  })
+
+  if (isLoading || !txData || !trackerSummary) {
+    return (
+      <div className="flex items-center gap-3">
+        {['Total', 'P&L', 'P&L%'].map(n => (
+          <div key={n} className="flex items-center gap-1">
+            <span className="text-[10px] text-ink-muted">{n}</span>
+            <span className="skeleton w-14 h-2.5 rounded" />
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const netInvestment = txData.summary.net_investment
+  const accumulatedPnl = trackerSummary.accumulated_pnl
+  const totalValue = netInvestment + accumulatedPnl
+  const totalPnl = accumulatedPnl
+  const totalPnlPct = netInvestment !== 0 ? (accumulatedPnl / netInvestment) * 100 : 0
+
+  const isUp = totalPnl >= 0
+  const pnlHex    = isUp ? '#22C55E' : '#EF4444'
+  const sign = isUp ? '+' : ''
+  const PnlIcon = isUp ? TrendingUp : TrendingDown
+
+  const fmt = (n: number) =>
+    Math.abs(n) >= 1_000_000
+      ? `${(n / 1_000_000).toFixed(2)}M`
+      : Math.abs(n) >= 1_000
+      ? `${(n / 1_000).toFixed(1)}K`
+      : n.toFixed(0)
+
+  const pnlChipStyle: React.CSSProperties = {
+    background: isUp ? 'rgba(34,197,94,0.10)' : 'rgba(239,68,68,0.10)',
+    border: `1px solid ${isUp ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
+    borderRadius: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '5px 9px',
+    flexShrink: 0,
+  }
+
+  const totalChipStyle: React.CSSProperties = {
+    background: '#1C2333',
+    border: '1px solid rgba(42,52,80,0.6)',
+    borderRadius: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '5px 9px',
+    flexShrink: 0,
+  }
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: '8.5px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    color: '#334155',
+    fontWeight: 500,
+    lineHeight: 1,
+  }
+
+  const valueStyle = (color: string): React.CSSProperties => ({
+    fontSize: '12px',
+    fontWeight: 700,
+    color,
+    fontVariantNumeric: 'tabular-nums',
+    letterSpacing: '-0.01em',
+    lineHeight: 1,
+    marginTop: '2px',
+  })
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+      {/* Total chip */}
+      <div style={totalChipStyle}>
+        <Wallet style={{ width: 14, height: 14, color: '#60A5FA', flexShrink: 0 }} />
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={labelStyle}>Total</span>
+          <span style={valueStyle('#E2E8F0')}>฿{fmt(totalValue)}</span>
+        </div>
+      </div>
+
+      {/* P&L chip */}
+      <div style={pnlChipStyle}>
+        <PnlIcon style={{ width: 14, height: 14, color: pnlHex, flexShrink: 0 }} />
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={labelStyle}>P&amp;L</span>
+          <span style={valueStyle(pnlHex)}>{sign}฿{fmt(totalPnl)}</span>
+        </div>
+      </div>
+
+      {/* P&L% chip */}
+      <div style={pnlChipStyle}>
+        <Percent style={{ width: 14, height: 14, color: pnlHex, flexShrink: 0 }} />
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={labelStyle}>P&amp;L%</span>
+          <span style={valueStyle(pnlHex)}>{sign}{totalPnlPct.toFixed(2)}%</span>
+        </div>
+      </div>
+    </div>
   )
 }
 

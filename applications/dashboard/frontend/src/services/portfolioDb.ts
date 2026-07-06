@@ -1,5 +1,19 @@
 import { apiClient } from './api'
 
+export interface PortfolioSummary {
+  investmentValue: number
+  alltimeClosedPnl: number
+  alltimeClosedPnlPct: number
+  openPnl: number
+  openPnlPct: number
+  totalValue: number
+  totalPnl: number
+  totalPnlPct: number
+  winrate: number
+  totalClosed: number
+  winningClosed: number
+}
+
 export interface DbPosition {
   id: string
   symbol: string
@@ -74,6 +88,11 @@ export const portfolioDbService = {
 
   async undoSell(id: string): Promise<any> {
     const { data } = await apiClient.post(`/portfolio-db/positions/${id}/undo-sell`)
+    return data
+  },
+
+  async getSummary(): Promise<PortfolioSummary> {
+    const { data } = await apiClient.get('/portfolio-db/summary')
     return data
   },
 }

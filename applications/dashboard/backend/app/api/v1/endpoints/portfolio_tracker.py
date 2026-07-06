@@ -155,7 +155,7 @@ async def get_summary(
 ) -> dict[str, Any]:
     today = date.today()
     to_d = to_date or today
-    from_d = from_date or (today - timedelta(days=30))
+    from_d = from_date  # None = no lower bound (all-time)
     _empty = {"accumulated_pnl": 0, "win_rate": 0.0, "avg_pnl": 0.0,
               "avg_pnl_pct": 0.0, "total_trades": 0, "wins": 0, "losses": 0}
 
@@ -191,7 +191,7 @@ async def get_summary(
     records: list[dict] = []
     for _, r in closed.iterrows():
         edate = r["Exit Date"].date() if pd.notna(r["Exit Date"]) else today
-        if edate < from_d or edate > to_d:
+        if (from_d is not None and edate < from_d) or edate > to_d:
             continue
         entry = float(r["Entry Price"]) if pd.notna(r["Entry Price"]) else 0.0
         exit_price = float(r["Exit Price"]) if pd.notna(r["Exit Price"]) else entry

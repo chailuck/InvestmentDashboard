@@ -244,38 +244,53 @@ def _fetch_yfinance_sync(symbol: str) -> float | None:
 
 
 async def _fetch_portfolio(db: AsyncSession, user_id: str) -> dict | None:
-    """Fetch all PortfolioDbPosition rows (active + recently closed) with live prices."""
+    """Fetch portfolio positions split into open/closed-recent/summary.
+
+    Returns:
+        {
+            "open_positions": [...],   # active positions
+            "closed_recent": [...],    # closed within last 2 weeks
+            "summary": { ... },        # all-time aggregate stats
+        }
+    """
     from datetime import date, timedelta
     uid = uuid.UUID(user_id)
     cutoff = date.today() - timedelta(weeks=2)
-    result = await db.execute(
+
+    # Active positions
+    active_result = await db.execute(
+        select(PortfolioDbPosition)
+        .where(PortfolioDbPosition.user_id == uid, PortfolioDbPosition.status == "active")
+        .order_by(PortfolioDbPosition.entry_date.desc().nullsfirst())
+    )
+    active_rows = active_result.scalars().all()
+
+    # Closed within last 2 weeks
+    closed_recent_result = await db.execute(
         select(PortfolioDbPosition)
         .where(
             PortfolioDbPosition.user_id == uid,
-            (
-                (PortfolioDbPosition.status == "active") |
-                (
-                    (PortfolioDbPosition.status != "active") &
-                    (PortfolioDbPosition.exit_date >= cutoff)
-                )
-            ),
+            PortfolioDbPosition.status != "active",
+            PortfolioDbPosition.exit_date >= cutoff,
         )
-        .order_by(PortfolioDbPosition.entry_date.desc().nullsfirst())
+        .order_by(PortfolioDbPosition.exit_date.desc().nullsfirst())
     )
-    rows = result.scalars().all()
-    if not rows:
-        return {"positions": [], "total": 0, "totalNetPnl": 0.0}
+    closed_recent_rows = closed_recent_result.scalars().all()
 
-    # Fetch live prices for active positions only
-    active_symbols = list({r.symbol for r in rows if r.status == "active"})
+    # ALL closed positions (for all-time summary stats)
+    all_closed_result = await db.execute(
+        select(PortfolioDbPosition)
+        .where(PortfolioDbPosition.user_id == uid, PortfolioDbPosition.status != "active")
+    )
+    all_closed_rows = all_closed_result.scalars().all()
+
+    # Live prices for active positions only
+    active_symbols = list({r.symbol for r in active_rows})
     prices: dict[str, float | None] = {}
     if active_symbols:
         loop = asyncio.get_running_loop()
         price_results = await asyncio.gather(
-            *[
-                loop.run_in_executor(None, _fetch_yfinance_sync, sym)
-                for sym in active_symbols
-            ],
+            *[loop.run_in_executor(None, _fetch_yfinance_sync, sym) for sym in active_symbols],
             return_exceptions=True,
         )
         for sym, pr in zip(active_symbols, price_results):
@@ -284,46 +299,89 @@ async def _fetch_portfolio(db: AsyncSession, user_id: str) -> dict | None:
     def _f(v: Any) -> float | None:
         return float(v) if v is not None else None
 
-    def _serialize_pos(pos: PortfolioDbPosition) -> dict:
+    def _ser_active(pos: PortfolioDbPosition) -> dict:
         entry    = _f(pos.entry_price)
-        exit_p   = _f(pos.exit_price)
         size     = pos.position_size or 0
         cp       = prices.get(pos.symbol)
         is_short = pos.direction.upper() == "SHORT"
-        is_closed = pos.status != "active" and exit_p is not None
-
-        price_for_pnl = exit_p if is_closed else cp
-        net_pnl: float | None = None
-        pnl_pct: float | None = None
-        if entry and price_for_pnl and size:
-            diff    = (price_for_pnl - entry) if not is_short else (entry - price_for_pnl)
+        net_pnl = pnl_pct = None
+        if entry and cp and size:
+            diff    = (cp - entry) if not is_short else (entry - cp)
             net_pnl = round(diff * size, 2)
             pnl_pct = round((diff / entry) * 100, 2) if entry else None
-
         return {
-            "id": str(pos.id),
-            "symbol": pos.symbol,
-            "direction": pos.direction,
+            "id": str(pos.id), "symbol": pos.symbol, "direction": pos.direction,
             "entryDate": pos.entry_date.isoformat() if pos.entry_date else None,
-            "exitDate": pos.exit_date.isoformat() if pos.exit_date else None,
-            "entryPrice": entry or 0.0,
-            "exitPrice": exit_p,
-            "currentPrice": cp or 0.0,
-            "positionSize": size,
-            "netPnl": net_pnl or 0.0,
-            "pnlPct": pnl_pct or 0.0,
-            "sl": _f(pos.sl),
-            "tp": _f(pos.tp),
-            "status": pos.status,
-            "remarks": pos.remarks,
+            "exitDate": None, "entryPrice": entry or 0.0, "exitPrice": None,
+            "currentPrice": cp or 0.0, "positionSize": size,
+            "netPnl": net_pnl or 0.0, "pnlPct": pnl_pct or 0.0,
+            "sl": _f(pos.sl), "tp": _f(pos.tp), "status": pos.status, "remarks": pos.remarks,
         }
 
-    serialized = [_serialize_pos(r) for r in rows]
-    total_pnl = sum(p["netPnl"] for p in serialized)
+    def _ser_closed(pos: PortfolioDbPosition) -> dict:
+        entry    = _f(pos.entry_price)
+        exit_p   = _f(pos.exit_price)
+        size     = pos.position_size or 0
+        is_short = pos.direction.upper() == "SHORT"
+        net_pnl = pnl_pct = None
+        if entry and exit_p and size:
+            diff    = (exit_p - entry) if not is_short else (entry - exit_p)
+            net_pnl = round(diff * size, 2)
+            pnl_pct = round((diff / entry) * 100, 2) if entry else None
+        return {
+            "id": str(pos.id), "symbol": pos.symbol, "direction": pos.direction,
+            "entryDate": pos.entry_date.isoformat() if pos.entry_date else None,
+            "exitDate": pos.exit_date.isoformat() if pos.exit_date else None,
+            "entryPrice": entry or 0.0, "exitPrice": exit_p, "currentPrice": 0.0,
+            "positionSize": size, "netPnl": net_pnl or 0.0, "pnlPct": pnl_pct or 0.0,
+            "sl": _f(pos.sl), "tp": _f(pos.tp), "status": pos.status, "remarks": pos.remarks,
+        }
+
+    open_positions  = [_ser_active(r) for r in active_rows]
+    closed_recent   = [_ser_closed(r) for r in closed_recent_rows]
+
+    def _closed_net_pnl(pos: PortfolioDbPosition) -> float:
+        ep = float(pos.entry_price or 0)
+        xp = float(pos.exit_price or 0) if pos.exit_price else None
+        sz = pos.position_size or 0
+        if not ep or not xp or not sz:
+            return 0.0
+        diff = (xp - ep) if pos.direction.upper() != "SHORT" else (ep - xp)
+        return round(diff * sz, 2)
+
+    # Summary stats
+    investment_value = sum(float(r.entry_price or 0) * (r.position_size or 0) for r in active_rows)
+    open_pnl         = round(sum(p["netPnl"] for p in open_positions), 2)
+    open_pnl_pct     = round((open_pnl / investment_value) * 100, 2) if investment_value else 0.0
+
+    alltime_closed_pnl  = round(sum(_closed_net_pnl(r) for r in all_closed_rows), 2)
+    alltime_closed_inv  = sum(float(r.entry_price or 0) * (r.position_size or 0) for r in all_closed_rows)
+    alltime_closed_pct  = round((alltime_closed_pnl / alltime_closed_inv) * 100, 2) if alltime_closed_inv else 0.0
+
+    total_pnl     = round(alltime_closed_pnl + open_pnl, 2)
+    total_pnl_pct = round(alltime_closed_pct + open_pnl_pct, 2)
+    total_value   = round(investment_value + alltime_closed_pnl + open_pnl, 2)
+
+    total_closed   = len(all_closed_rows)
+    winning_closed = sum(1 for r in all_closed_rows if _closed_net_pnl(r) > 0)
+    winrate        = round(winning_closed / total_closed * 100, 1) if total_closed else 0.0
+
     return {
-        "positions": serialized,
-        "total": len(serialized),
-        "totalNetPnl": round(total_pnl, 0),
+        "open_positions": open_positions,
+        "closed_recent":  closed_recent,
+        "summary": {
+            "investmentValue":     round(investment_value, 0),
+            "alltimeClosedPnl":    round(alltime_closed_pnl, 0),
+            "alltimeClosedPnlPct": alltime_closed_pct,
+            "openPnl":             round(open_pnl, 0),
+            "openPnlPct":          open_pnl_pct,
+            "totalValue":          round(total_value, 0),
+            "totalPnl":            round(total_pnl, 0),
+            "totalPnlPct":         total_pnl_pct,
+            "winrate":             winrate,
+            "totalClosed":         total_closed,
+            "winningClosed":       winning_closed,
+        },
     }
 
 
