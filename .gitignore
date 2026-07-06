@@ -42,3 +42,4 @@ Thumbs.db
 
 # Uploads / generated data
 applications/dashboard/backend/uploads/
+.claude/worktrees/federated-plotting-cherny

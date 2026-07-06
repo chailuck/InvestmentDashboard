@@ -184,73 +184,68 @@ function PortfolioIndicators() {
       ? `${(n / 1_000).toFixed(1)}K`
       : n.toFixed(0)
 
-  const pnlChipStyle: React.CSSProperties = {
-    background: isUp ? 'rgba(34,197,94,0.10)' : 'rgba(239,68,68,0.10)',
-    border: `1px solid ${isUp ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
-    borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '5px 9px',
-    flexShrink: 0,
-  }
-
-  const totalChipStyle: React.CSSProperties = {
-    background: '#1C2333',
-    border: '1px solid rgba(42,52,80,0.6)',
-    borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '5px 9px',
-    flexShrink: 0,
-  }
+  const chip = (hex: string): React.CSSProperties => ({
+    background: hex === '#22C55E' ? 'rgba(34,197,94,0.10)' : hex === '#EF4444' ? 'rgba(239,68,68,0.10)' : '#1C2333',
+    border: `1px solid ${hex === '#22C55E' ? 'rgba(34,197,94,0.25)' : hex === '#EF4444' ? 'rgba(239,68,68,0.25)' : 'rgba(42,52,80,0.6)'}`,
+    borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 9px', flexShrink: 0,
+  })
 
   const labelStyle: React.CSSProperties = {
-    fontSize: '8.5px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-    color: '#334155',
-    fontWeight: 500,
-    lineHeight: 1,
+    fontSize: '8.5px', textTransform: 'uppercase', letterSpacing: '0.06em',
+    color: '#334155', fontWeight: 500, lineHeight: 1,
   }
 
-  const valueStyle = (color: string): React.CSSProperties => ({
-    fontSize: '12px',
-    fontWeight: 700,
-    color,
-    fontVariantNumeric: 'tabular-nums',
-    letterSpacing: '-0.01em',
-    lineHeight: 1,
-    marginTop: '2px',
+  const val = (color: string): React.CSSProperties => ({
+    fontSize: '12px', fontWeight: 700, color, fontVariantNumeric: 'tabular-nums',
+    letterSpacing: '-0.01em', lineHeight: 1, marginTop: '2px',
   })
+
+  const ico = (color: string) => ({ width: 14, height: 14, color, flexShrink: 0 } as React.CSSProperties)
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-      {/* Total chip */}
-      <div style={totalChipStyle}>
-        <Wallet style={{ width: 14, height: 14, color: '#60A5FA', flexShrink: 0 }} />
+      {/* Total (closed) */}
+      <div style={chip('neutral')}>
+        <Wallet style={ico('#60A5FA')} />
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <span style={labelStyle}>Total</span>
-          <span style={valueStyle('#E2E8F0')}>฿{fmt(totalValue)}</span>
+          <span style={val('#E2E8F0')}>฿{fmt(totalValue)}</span>
         </div>
       </div>
 
-      {/* P&L chip */}
-      <div style={pnlChipStyle}>
-        <PnlIcon style={{ width: 14, height: 14, color: pnlHex, flexShrink: 0 }} />
+      {/* P&L */}
+      <div style={chip(pnlHex)}>
+        <PnlIcon style={ico(pnlHex)} />
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <span style={labelStyle}>P&amp;L</span>
-          <span style={valueStyle(pnlHex)}>{sign}฿{fmt(totalPnl)}</span>
+          <span style={val(pnlHex)}>{sign(totalPnl)}฿{fmt(totalPnl)}</span>
         </div>
       </div>
 
-      {/* P&L% chip */}
-      <div style={pnlChipStyle}>
-        <Percent style={{ width: 14, height: 14, color: pnlHex, flexShrink: 0 }} />
+      {/* P&L% */}
+      <div style={chip(pnlHex)}>
+        <Percent style={ico(pnlHex)} />
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <span style={labelStyle}>P&amp;L%</span>
-          <span style={valueStyle(pnlHex)}>{sign}{totalPnlPct.toFixed(2)}%</span>
+          <span style={val(pnlHex)}>{sign(totalPnl)}{totalPnlPct.toFixed(2)}%</span>
+        </div>
+      </div>
+
+      {/* Open P&L */}
+      <div style={chip(openHex)}>
+        <OpenIcon style={ico(openHex)} />
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={labelStyle}>Open P&amp;L</span>
+          <span style={val(openHex)}>{sign(openPnl)}฿{fmt(openPnl)}</span>
+        </div>
+      </div>
+
+      {/* Total Portfolio (incl. open) */}
+      <div style={chip('neutral')}>
+        <Layers style={ico('#60A5FA')} />
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={labelStyle}>Total Port</span>
+          <span style={val('#E2E8F0')}>฿{fmt(totalWithOpen)}</span>
         </div>
       </div>
     </div>
