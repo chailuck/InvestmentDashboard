@@ -4,7 +4,7 @@ import React, { useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Bell, Search, RefreshCw, Menu, Wifi, WifiOff, Wallet, TrendingUp, TrendingDown, Percent } from 'lucide-react'
+import { Bell, Search, RefreshCw, Menu, Wifi, WifiOff, Wallet, TrendingUp, TrendingDown, Percent, Activity, Layers } from 'lucide-react'
 import { useWebSocket } from '@/websocket/hooks'
 import { useNotificationStore } from '@/store/notifications'
 import {
@@ -13,6 +13,7 @@ import {
   type GlobalIndex,
 } from '@/services/portfolioTracker'
 import { investmentTransactionService } from '@/services/investmentTransaction'
+import { portfolioDbService } from '@/services/portfolioDb'
 import { cn } from '@/lib/utils'
 
 interface HeaderProps {
@@ -139,10 +140,18 @@ function PortfolioIndicators() {
     retry: 1,
   })
 
+  const { data: dbSummary } = useQuery({
+    queryKey: ['portfolio-db-summary'],
+    queryFn: portfolioDbService.getSummary,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+    retry: 1,
+  })
+
   if (isLoading || !txData || !trackerSummary) {
     return (
       <div className="flex items-center gap-3">
-        {['Total', 'P&L', 'P&L%'].map(n => (
+        {['Total', 'P&L', 'P&L%', 'Open P&L', 'Total Port'].map(n => (
           <div key={n} className="flex items-center gap-1">
             <span className="text-[10px] text-ink-muted">{n}</span>
             <span className="skeleton w-14 h-2.5 rounded" />
@@ -154,14 +163,19 @@ function PortfolioIndicators() {
 
   const netInvestment = txData.summary.net_investment
   const accumulatedPnl = trackerSummary.accumulated_pnl
-  const totalValue = netInvestment + accumulatedPnl
-  const totalPnl = accumulatedPnl
-  const totalPnlPct = netInvestment !== 0 ? (accumulatedPnl / netInvestment) * 100 : 0
+  const openPnl      = dbSummary?.openPnl ?? 0
+  const totalValue   = netInvestment + accumulatedPnl
+  const totalWithOpen = totalValue + openPnl
+  const totalPnl     = accumulatedPnl
+  const totalPnlPct  = netInvestment !== 0 ? (accumulatedPnl / netInvestment) * 100 : 0
 
-  const isUp = totalPnl >= 0
+  const isUp     = totalPnl >= 0
+  const openIsUp = openPnl >= 0
   const pnlHex    = isUp ? '#22C55E' : '#EF4444'
-  const sign = isUp ? '+' : ''
-  const PnlIcon = isUp ? TrendingUp : TrendingDown
+  const openHex   = openIsUp ? '#22C55E' : '#EF4444'
+  const sign = (n: number) => n >= 0 ? '+' : ''
+  const PnlIcon  = isUp ? TrendingUp : TrendingDown
+  const OpenIcon = openIsUp ? TrendingUp : TrendingDown
 
   const fmt = (n: number) =>
     Math.abs(n) >= 1_000_000
