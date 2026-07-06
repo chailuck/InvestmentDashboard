@@ -119,7 +119,7 @@ export function InvestmentBalanceWidget({ config: _config }: { config: WidgetCon
     // which can be stale when transactions fall after the performance data cutoff date.
     const totalInvested = txData?.summary?.net_investment ?? 0
     const openPnl = dbSummary?.openPnl ?? 0
-    if (!balanceData.length) return { invested: totalInvested, value: 0, pnl: 0, pnlPct: 0, openPnl, totalWithOpen: 0, totalWithOpenPct: 0 }
+    if (!balanceData.length) return { invested: totalInvested, value: 0, pnl: 0, pnlPct: 0, openPnl, openPnlPct: 0, totalWithOpen: 0, totalWithOpenPct: 0 }
     const last = balanceData[balanceData.length - 1]
     const pnl  = last.cumulativePnl
     const totalWithOpen = last.portfolioValue + openPnl
