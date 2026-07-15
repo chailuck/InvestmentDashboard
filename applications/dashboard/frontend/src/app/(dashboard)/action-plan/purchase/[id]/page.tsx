@@ -640,7 +640,7 @@ export default function PurchasePlanEditor() {
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={() => router.push('/action-plan')} className="btn-icon">
+        <button onClick={() => router.push('/action-plan?tab=plans')} className="btn-icon">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex-1 min-w-0">

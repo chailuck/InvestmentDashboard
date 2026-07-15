@@ -1424,7 +1424,7 @@ function PortfolioDropdown({
 
 // ── DB Manager panel ───────────────────────────────────────────────────────────
 
-function DbManagerPanel() {
+function DbManagerPanel({ portfolioId }: { portfolioId?: string }) {
   const { data: mode, isLoading, isError } = useQuery({
     queryKey: ['portfolio-db-mode'],
     queryFn: () => portfolioDbService.getMode(),
@@ -1450,7 +1450,7 @@ function DbManagerPanel() {
     </div>
   )
 
-  return <PortfolioDbManager />
+  return <PortfolioDbManager portfolioId={portfolioId} />
 }
 
 // ── Main page ──────────────────────────────────────────────────────────────────
@@ -1701,7 +1701,7 @@ export default function PortfolioPage() {
       )}
 
       {/* DB Manager tab */}
-      {activeTab === 'db-manager' && <DbManagerPanel />}
+      {activeTab === 'db-manager' && <DbManagerPanel portfolioId={portfolioId} />}
 
       {/* Overview tab content */}
       {activeTab === 'overview' && <>

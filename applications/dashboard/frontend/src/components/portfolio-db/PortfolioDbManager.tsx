@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Trash2, Edit2, Save, X, Loader2, RefreshCw,
-  TrendingDown, CornerDownRight, Undo2, AlertCircle,
+  TrendingDown, CornerDownRight, Undo2, AlertCircle, Link2,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
@@ -332,7 +332,7 @@ function DeleteModal({ pos, onConfirm, onClose, loading }: {
 
 // ── Portfolio DB Manager ───────────────────────────────────────────────────────
 
-export function PortfolioDbManager() {
+export function PortfolioDbManager({ portfolioId }: { portfolioId?: string }) {
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<'active' | 'closed' | 'all'>('active')
   const [editTarget, setEditTarget] = useState<DbPosition | null>(null)
@@ -341,6 +341,7 @@ export function PortfolioDbManager() {
   const [sellTarget, setSellTarget] = useState<DbPosition | null>(null)
   const [mutating, setMutating] = useState(false)
   const [undoing, setUndoing] = useState<string | null>(null)
+  const [patching, setPatching] = useState(false)
 
   const { data: positions = [], isLoading, refetch } = useQuery({
     queryKey: ['portfolio-db-positions', statusFilter],
@@ -349,9 +350,25 @@ export function PortfolioDbManager() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['portfolio-db-positions'] })
 
+  const handlePatchPortfolioIds = async () => {
+    setPatching(true)
+    try {
+      const res = await portfolioDbService.patchNullPortfolioIds()
+      await invalidate()
+      toast.success(res.updated > 0
+        ? `Fixed ${res.updated} position${res.updated !== 1 ? 's' : ''} → "${res.portfolio_name}"`
+        : 'All positions already have a portfolio assigned')
+    }
+    catch (e: any) { toast.error(e?.response?.data?.detail ?? 'Failed to patch portfolio IDs') }
+    finally { setPatching(false) }
+  }
+
   const handleCreate = async (input: PositionInput) => {
     setMutating(true)
-    try { await portfolioDbService.create(input); setCreateOpen(false); await invalidate(); toast.success('Position added') }
+    try {
+      await portfolioDbService.create({ ...input, portfolio_id: portfolioId ?? null })
+      setCreateOpen(false); await invalidate(); toast.success('Position added')
+    }
     catch (e: any) { toast.error(e?.response?.data?.detail ?? 'Failed to add position') }
     finally { setMutating(false) }
   }
@@ -418,6 +435,10 @@ export function PortfolioDbManager() {
         ))}
         <button onClick={() => refetch()} className="btn-icon" title="Refresh">
           <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
+        </button>
+        <button onClick={handlePatchPortfolioIds} disabled={patching}
+          className="btn-icon" title="Fix positions with missing portfolio ID">
+          {patching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
         </button>
         <button onClick={() => setCreateOpen(true)} className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5">
           <Plus className="w-3.5 h-3.5" /> Add Position

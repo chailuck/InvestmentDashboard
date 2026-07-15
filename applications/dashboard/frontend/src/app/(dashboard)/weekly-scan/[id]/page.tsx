@@ -4,10 +4,10 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { format } from 'date-fns'
+import { format, getISOWeek } from 'date-fns'
 import {
   ScanLine, ArrowLeft, RefreshCw, Plus, Trash2, X, Loader2,
-  AlertCircle, ChevronDown, Play, ShoppingCart, Check, Filter, BookmarkCheck, Clipboard,
+  AlertCircle, ChevronDown, Play, ShoppingCart, Check, Filter, BookmarkCheck, Clipboard, FileDown,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -469,6 +469,7 @@ export default function WeeklyScanPage() {
   const [markingPortfo,  setMarkingPortfo]  = useState(false)
   const [savingConfig,   setSavingConfig]   = useState<'idle' | 'saving' | 'done'>('idle')
   const [copied,         setCopied]         = useState(false)
+  const [exported,       setExported]       = useState(false)
   const [addToList,      setAddToList]      = useState<string>('')
   const [headerCollapsed, setHeaderCollapsed] = useState(false)
 
@@ -640,6 +641,80 @@ export default function WeeklyScanPage() {
     } catch { setSavingConfig('idle') }
   }
 
+  const exportMarkdown = () => {
+    if (!scan) return
+
+    // Determine the trading week this scan covers: the Monday after scan creation.
+    const created = new Date(scan.created_at)
+    const daysToNextMonday = (1 - created.getDay() + 7) % 7 || 7
+    const weekMonday = new Date(created)
+    weekMonday.setDate(created.getDate() + daysToNextMonday)
+    const weekSunday = new Date(weekMonday)
+    weekSunday.setDate(weekMonday.getDate() + 6)
+
+    const weekNum = getISOWeek(weekMonday)
+    const monStr  = format(weekMonday, 'd MMM yyyy')
+    const sunStr  = format(weekSunday, 'd MMM yyyy')
+    const filename = `${scan.name}.md`
+
+    const exportItems = activeListTab
+      ? scan.items.filter(i => i.list_name === activeListTab)
+      : scan.items
+    const sorted = [...exportItems].sort((a, b) => a.symbol.localeCompare(b.symbol))
+
+    const COLOR_ORDER = ['CYAN', 'GREEN', 'YELLOW', 'RED', 'PURPLE', ''] as const
+    const COLOR_LABELS: Record<string, string> = {
+      CYAN:   'CYAN — Strong Candidate',
+      GREEN:  'GREEN — Buy',
+      YELLOW: 'YELLOW — Watch',
+      RED:    'RED — Avoid / Short',
+      PURPLE: 'PURPLE — In Portfolio',
+      '':     'Unreviewed',
+    }
+    const groups: Record<string, typeof sorted> = { CYAN: [], GREEN: [], YELLOW: [], RED: [], PURPLE: [], '': [] }
+    for (const item of sorted) groups[item.color_mark ?? ''].push(item)
+
+    const fmtN = (v: number | null | undefined) => (v != null ? v.toFixed(2) : '—')
+    const fmtS = (s: string | null | undefined) => {
+      if (!s) return '—'
+      return STRATEGY_ICONS[s]?.short ?? s
+    }
+
+    const tblHead = '| Symbol | Strategy | Buy | TP | SL | Size | Remark |\n|--------|----------|-----|----|----|------|--------|'
+    const tblRow  = (it: typeof sorted[0]) =>
+      `| ${it.symbol} | ${fmtS(it.strategy)} | ${fmtN(it.buy_price)} | ${fmtN(it.tp)} | ${fmtN(it.sl)} | ${it.size ?? '—'} | ${it.remark ?? ''} |`
+
+    let md = `# ${scan.name} — Week ${weekNum} (${monStr}–${sunStr})\n\n`
+    if (activeListTab) md += `**List:** ${activeListTab}  \n`
+    md += `**Generated:** ${format(new Date(), 'd MMM yyyy')}  \n`
+    md += `**Total symbols:** ${exportItems.length}\n\n`
+
+    md += `## Summary\n\n| Color | Count |\n|-------|-------|\n`
+    for (const key of COLOR_ORDER) {
+      const n = groups[key].length
+      if (n > 0) md += `| ${COLOR_LABELS[key]} | ${n} |\n`
+    }
+    md += '\n'
+
+    for (const key of COLOR_ORDER) {
+      const items = groups[key]
+      if (!items.length) continue
+      md += `## ${COLOR_LABELS[key]}\n\n${tblHead}\n`
+      for (const it of items) md += tblRow(it) + '\n'
+      md += '\n'
+    }
+
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href = url; a.download = filename
+    document.body.appendChild(a); a.click()
+    document.body.removeChild(a); URL.revokeObjectURL(url)
+
+    setExported(true)
+    setTimeout(() => setExported(false), 2000)
+  }
+
   if (isLoading) return (
     <div className="flex items-center justify-center h-64 gap-2 text-ink-muted">
       <Loader2 className="w-5 h-5 animate-spin" /> Loading scan…
@@ -668,7 +743,7 @@ export default function WeeklyScanPage() {
     <div className="space-y-3">
       {/* ── Title row — always visible ── */}
       <div className="flex items-center gap-3">
-        <button onClick={() => router.push('/action-plan')} className="btn-icon shrink-0">
+        <button onClick={() => router.push('/action-plan?tab=plans')} className="btn-icon shrink-0">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -816,6 +891,19 @@ export default function WeeklyScanPage() {
             ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
             : <span className="w-3 h-3 rounded-full bg-purple-400 shrink-0" />}
           Mark portfolio purple
+        </button>
+
+        {/* Export as Markdown */}
+        <button onClick={exportMarkdown} disabled={!scan || scan.items.length === 0}
+          title="Export scan as Markdown file for knowledge and analysis"
+          className={cn(
+            'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50',
+            exported
+              ? 'border-gain/40 bg-gain/10 text-gain'
+              : 'border-teal-500/30 bg-teal-500/10 text-teal-400 hover:bg-teal-500/20',
+          )}>
+          {exported ? <Check className="w-3.5 h-3.5" /> : <FileDown className="w-3.5 h-3.5" />}
+          {exported ? 'Exported!' : 'Export MD'}
         </button>
 
         <form onSubmit={handleAdd} className="flex gap-1.5 flex-1 min-w-0">

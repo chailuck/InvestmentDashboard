@@ -717,9 +717,23 @@ def _render_portfolio_detail_table(positions: list[dict], show_open_col: bool = 
         exit_p  = pos.get("exitPrice")
         cur_p   = pos.get("currentPrice")
 
+        # SL / TP beneath the symbol
+        sl_val = _f(pos.get("sl"))
+        tp_val = _f(pos.get("tp"))
+        sl_tp_sub = ""
+        if sl_val is not None or tp_val is not None:
+            sl_s = f'<span style="color:{_LOSS};">SL:&nbsp;{sl_val:.1f}</span>' if sl_val is not None else ""
+            sep  = "&nbsp;&nbsp;" if (sl_val is not None and tp_val is not None) else ""
+            tp_s = f'<span style="color:{_GAIN};">TP:&nbsp;{tp_val:.1f}</span>' if tp_val is not None else ""
+            sl_tp_sub = (
+                f'<div style="font-size:9px;font-family:monospace;margin-top:2px;">'
+                + sl_s + sep + tp_s + '</div>'
+            )
+
         rows_html += (
             f'<tr>'
-            f'<td style="{TD_MONO}font-weight:700;color:{_INK_PRI};">{pos.get("symbol", "")}</td>'
+            f'<td style="{TD_MONO}font-weight:700;color:{_INK_PRI};">'
+            f'{pos.get("symbol", "")}{sl_tp_sub}</td>'
             f'<td style="{TD}color:{dir_c};font-weight:600;">{dir_lbl}</td>'
             f'<td style="{TD}color:{_INK_SEC};">{pos.get("entryDate") or "—"}</td>'
             f'<td style="{TD_MONO}color:{_INK_SEC};">{f"{entry_p:.2f}" if entry_p else "—"}</td>'
@@ -777,7 +791,7 @@ def _render_portfolio(
         f'<p style="margin:4px 0 0 0;font-size:9px;color:{_INK_MUT};">'
         f'<span style="color:{_BRAND_400};">blue row</span>&nbsp;= today</p>'
     )
-    by_date_section = _by_date_table("portfolio", open_positions, ph, wd) + legend if open_positions else ""
+    by_date_section = (_by_date_table("portfolio", open_positions, ph, wd) + legend) if open_positions else ""
 
     summary_section = _render_portfolio_summary_card(summary) if summary else ""
 

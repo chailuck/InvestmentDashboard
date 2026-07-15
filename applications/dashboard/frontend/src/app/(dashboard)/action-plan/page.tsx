@@ -1,20 +1,23 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { format, parseISO } from 'date-fns'
+import { format, parseISO, getISOWeek } from 'date-fns'
 import {
   ClipboardList, Plus, Edit2, Trash2, Copy, X, Loader2,
   ShoppingCart, Briefcase, AlertCircle, ScanLine, LayoutDashboard,
-  BookOpen, TrendingUp, ChevronRight, ArrowRight, CalendarDays,
+  BookOpen, TrendingUp, ChevronRight, ArrowRight, CalendarDays, FileDown, Check,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
-import { actionPlanService, type PlanSummary, type PlanType, type ViewMonths } from '@/services/actionPlan'
+import { actionPlanService, type PlanSummary, type PlanType, type ViewMonths, type ActionPlan } from '@/services/actionPlan'
 import { weeklyScanService, COLOR_MARKS, type ScanListSummary } from '@/services/weeklyScan'
 import { reviewListService, type ReviewSummary } from '@/services/reviewList'
+import { portfolioDbService, type DbPosition } from '@/services/portfolioDb'
+import { objectiveService, type ObjectivePosition } from '@/services/objective'
+import { portfolioService } from '@/services/portfolio'
 import { WeeklyPlanDashboard } from '@/components/action-plan/WeeklyPlanDashboard'
 
 type ActiveTab = 'plans' | 'weekly-dashboard'
@@ -404,12 +407,336 @@ function PlanSection({ type }: { type: PlanType }) {
   )
 }
 
+// ── Export All MD Modal ────────────────────────────────────────────────────────
+
+const EXPORT_COLOR_ORDER = ['CYAN', 'GREEN', 'YELLOW', 'RED', 'PURPLE', ''] as const
+const EXPORT_COLOR_LABELS: Record<string, string> = {
+  CYAN: 'CYAN — Strong Candidate', GREEN: 'GREEN — Buy',
+  YELLOW: 'YELLOW — Watch', RED: 'RED — Avoid / Short',
+  PURPLE: 'PURPLE — In Portfolio', '': 'Unreviewed',
+}
+
+type StepStatus = 'pending' | 'loading' | 'done' | 'error'
+interface ExportStep { id: string; label: string; status: StepStatus; detail?: string }
+
+function buildOverallMd({
+  dateStr, purchasePlan, positions, scan, scanSummary, reviewItems,
+}: {
+  dateStr: string
+  purchasePlan: ActionPlan | null
+  positions: DbPosition[]
+  scan: any | null
+  scanSummary: any | null
+  reviewItems: ObjectivePosition[]
+}): string {
+  const fmtN   = (v: number | null | undefined, dp = 2) => v != null ? v.toFixed(dp) : '—'
+  const fmtPct = (v: number | null | undefined) => v != null ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '—'
+  const fmtPnl = (v: number | null | undefined) => v != null ? `${v >= 0 ? '+' : ''}${Math.round(v).toLocaleString()}` : '—'
+  const fmtD   = (d: string | null | undefined) => d ? format(parseISO(d), 'd MMM yyyy') : '—'
+
+  let md = `# OVERALL PLAN ${dateStr}\n\n`
+  md += `**Generated:** ${format(new Date(), 'd MMM yyyy HH:mm')}  \n\n`
+  md += `---\n\n`
+
+  // ── 1. Purchase Action Plan ──────────────────────────────────────────────────
+  md += `## 1. Purchase Action Plan`
+  if (purchasePlan) md += ` — ${purchasePlan.name}`
+  md += '\n\n'
+  if (!purchasePlan || purchasePlan.purchase_items.length === 0) {
+    md += '_No purchase plan items._\n\n'
+  } else {
+    if (purchasePlan.notes) md += `**Notes:** ${purchasePlan.notes}  \n\n`
+    if (purchasePlan.set_analysis) md += `**Market Analysis:** ${purchasePlan.set_analysis}  \n\n`
+    md += `| # | Stock | Strategy | Buy | TP | SL | Size | Current | Triggered | Reason |\n`
+    md += `|---|-------|----------|-----|----|----|----|---------|-----------|--------|\n`
+    for (const it of purchasePlan.purchase_items) {
+      md += `| ${it.sort_order} | **${it.stock}** | ${it.strategy ?? '—'} | ${fmtN(it.buy_price)} | ${fmtN(it.tp)} | ${fmtN(it.sl)} | ${it.size ?? '—'} | ${fmtN(it.current_price)} | ${it.triggered ? '✓' : '—'} | ${it.reason ?? ''} |\n`
+    }
+    if (purchasePlan.ai_recommend) md += `\n**AI Recommendation:** ${purchasePlan.ai_recommend}\n`
+    md += '\n'
+  }
+  md += `---\n\n`
+
+  // ── 2. Portfolio DB ──────────────────────────────────────────────────────────
+  md += `## 2. Portfolio DB (Active Positions)\n\n`
+  if (positions.length === 0) {
+    md += '_No active positions._\n\n'
+  } else {
+    const totalPnl = positions.reduce((s, p) => s + (p.netPnl ?? 0), 0)
+    md += `**${positions.length} active positions** | **Total P&L:** ${fmtPnl(totalPnl)}  \n\n`
+    md += `| Symbol | Dir | Entry Date | Entry | Current | P&L | P&L% | TP | SL | Remarks |\n`
+    md += `|--------|-----|------------|-------|---------|-----|------|----|----|--------|\n`
+    for (const p of [...positions].sort((a, b) => a.symbol.localeCompare(b.symbol))) {
+      md += `| **${p.symbol}** | ${p.direction === 'LONG' ? '↑ L' : '↓ S'} | ${fmtD(p.entryDate)} | ${fmtN(p.entryPrice)} | ${fmtN(p.currentPrice)} | ${fmtPnl(p.netPnl)} | ${fmtPct(p.pnlPct)} | ${fmtN(p.tp)} | ${fmtN(p.sl)} | ${p.remarks ?? ''} |\n`
+    }
+    md += '\n'
+  }
+  md += `---\n\n`
+
+  // ── 3. Weekly Scan ───────────────────────────────────────────────────────────
+  md += `## 3. Weekly Scan`
+  const scanItems: any[] = scan?.items ?? []
+  if (scanSummary) {
+    const c = new Date(scanSummary.created_at)
+    const dToMon = (1 - c.getDay() + 7) % 7 || 7
+    const mon = new Date(c); mon.setDate(c.getDate() + dToMon)
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+    md += ` — ${scanSummary.name} (Week ${getISOWeek(mon)}, ${format(mon, 'd MMM')}–${format(sun, 'd MMM yyyy')})`
+  }
+  md += '\n\n'
+  if (scanItems.length === 0) {
+    md += '_No scan items._\n\n'
+  } else {
+    const groups: Record<string, any[]> = { CYAN: [], GREEN: [], YELLOW: [], RED: [], PURPLE: [], '': [] }
+    for (const it of [...scanItems].sort((a: any, b: any) => a.symbol.localeCompare(b.symbol))) {
+      groups[it.color_mark ?? ''].push(it)
+    }
+    md += `| Color | Count |\n|-------|-------|\n`
+    for (const k of EXPORT_COLOR_ORDER) {
+      if (groups[k].length) md += `| ${EXPORT_COLOR_LABELS[k]} | ${groups[k].length} |\n`
+    }
+    md += '\n'
+    for (const k of EXPORT_COLOR_ORDER) {
+      if (!groups[k].length) continue
+      md += `### ${EXPORT_COLOR_LABELS[k]}\n\n`
+      md += `| Symbol | List | Strategy | Buy | TP | SL | Size | Remark |\n`
+      md += `|--------|------|----------|-----|----|----|----|--------|\n`
+      for (const it of groups[k]) {
+        md += `| **${it.symbol}** | ${it.list_name ?? '—'} | ${it.strategy ?? '—'} | ${fmtN(it.buy_price)} | ${fmtN(it.tp)} | ${fmtN(it.sl)} | ${it.size ?? '—'} | ${it.remark ?? ''} |\n`
+      }
+      md += '\n'
+    }
+  }
+  md += `---\n\n`
+
+  // ── 4. Portfolio Action Review ───────────────────────────────────────────────
+  md += `## 4. Portfolio Action Review (Latest 2 Weeks)\n\n`
+  if (reviewItems.length === 0) {
+    md += '_No entries or exits in the latest 2 weeks._\n\n'
+  } else {
+    md += `| Symbol | Dir | Status | Entry Date | Entry | Exit Date | Exit | Size | TP | SL | Reason | Feel | Sell Reason | Remarks |\n`
+    md += `|--------|-----|--------|------------|-------|-----------|------|------|----|----|--------|------|-------------|--------|\n`
+    for (const it of reviewItems) {
+      const dir = it.direction === 'LONG' ? '↑ L' : it.direction === 'SHORT' ? '↓ S' : it.direction
+      md += `| **${it.symbol}** | ${dir} | ${it.status} | ${fmtD(it.entry_date)} | ${fmtN(it.entry_price)} | ${fmtD(it.exit_date)} | ${fmtN(it.exit_price)} | ${it.position_size ?? '—'} | ${fmtN(it.tp)} | ${fmtN(it.sl)} | ${it.reason ?? ''} | ${it.feel ?? ''} | ${it.sell_reason ?? ''} | ${it.remarks ?? ''} |\n`
+    }
+    md += '\n'
+  }
+
+  return md
+}
+
+function ExportAllModal({ onClose }: { onClose: () => void }) {
+  const [steps, setSteps] = useState<ExportStep[]>([
+    { id: 'purchase', label: '1. Purchase Action Plan',                    status: 'pending' },
+    { id: 'positions', label: '2. Portfolio DB Positions',                 status: 'pending' },
+    { id: 'scan',      label: '3. Latest Weekly Scan',                     status: 'pending' },
+    { id: 'review',    label: '4. Portfolio Action Review (last 2 weeks)', status: 'pending' },
+    { id: 'generate',  label: 'Generating & downloading',                  status: 'pending' },
+  ])
+  const [done,     setDone]     = useState(false)
+  const [error,    setError]    = useState<string | null>(null)
+  const [filename, setFilename] = useState('')
+  const ran = useRef(false)
+
+  const setStep = (id: string, status: StepStatus, detail?: string) =>
+    setSteps(prev => prev.map(s => s.id === id ? { ...s, status, detail } : s))
+
+  useEffect(() => {
+    if (ran.current) return
+    ran.current = true
+    ;(async () => {
+      try {
+        const dateStr = format(new Date(), 'yyyyMMdd')
+        const fname = `OVERALL PLAN ${dateStr}.md`
+        setFilename(fname)
+
+        // Step 1 — Purchase Action Plan
+        setStep('purchase', 'loading')
+        const purchasePlans = await actionPlanService.list('purchase', null)
+        const latestPurchase = purchasePlans[0] ?? null
+        const purchasePlanFull = latestPurchase ? await actionPlanService.get(latestPurchase.id) : null
+        setStep('purchase', 'done', latestPurchase?.name ?? 'None found')
+
+        // Step 2 — Portfolio DB Positions
+        setStep('positions', 'loading')
+        const positions = await portfolioDbService.getPositions('active')
+        setStep('positions', 'done', `${positions.length} active`)
+
+        // Step 3 — Latest Weekly Scan
+        setStep('scan', 'loading')
+        const scans = await weeklyScanService.listScans()
+        const latestScan = scans[0] ?? null
+        const scanFull = latestScan ? await weeklyScanService.getScan(latestScan.id) : null
+        setStep('scan', 'done', latestScan?.name ?? 'None found')
+
+        // Step 4 — Portfolio Action Review (last 2 weeks)
+        setStep('review', 'loading')
+        const portfolios = await portfolioService.list()
+        const defaultPort = portfolios.find(p => p.is_default) ?? portfolios[0] ?? null
+        let reviewItems: ObjectivePosition[] = []
+        if (defaultPort) {
+          const res = await objectiveService.list(defaultPort.id, 'week2')
+          reviewItems = res.items
+        }
+        setStep('review', 'done', `${reviewItems.length} position${reviewItems.length !== 1 ? 's' : ''}`)
+
+        // Step 5 — Generate + download
+        setStep('generate', 'loading')
+        const md = buildOverallMd({ dateStr, purchasePlan: purchasePlanFull, positions, scan: scanFull, scanSummary: latestScan, reviewItems })
+        const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = fname
+        document.body.appendChild(a); a.click()
+        document.body.removeChild(a); URL.revokeObjectURL(url)
+        setStep('generate', 'done')
+        setDone(true)
+
+      } catch (e: any) {
+        setError(e?.message ?? 'Export failed')
+        setSteps(prev => prev.map(s => s.status === 'loading' ? { ...s, status: 'error' } : s))
+      }
+    })()
+  }, [])
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-surface-card border border-border/60 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/50">
+          <h2 className="text-sm font-semibold text-ink-primary flex items-center gap-2">
+            <FileDown className="w-4 h-4 text-teal-400" />
+            Export Overall Plan MD
+          </h2>
+          <button onClick={onClose} className="btn-icon"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="space-y-3">
+            {steps.map(step => (
+              <div key={step.id} className="flex items-start gap-3">
+                <div className="w-5 h-5 shrink-0 mt-0.5 flex items-center justify-center">
+                  {step.status === 'pending' && <div className="w-2 h-2 rounded-full bg-border" />}
+                  {step.status === 'loading' && <Loader2 className="w-4 h-4 animate-spin text-brand-400" />}
+                  {step.status === 'done'    && <Check className="w-4 h-4 text-gain" />}
+                  {step.status === 'error'   && <AlertCircle className="w-4 h-4 text-loss" />}
+                </div>
+                <div className="min-w-0">
+                  <p className={cn('text-xs',
+                    step.status === 'done'    ? 'text-ink-secondary' :
+                    step.status === 'loading' ? 'font-medium text-ink-primary' :
+                    step.status === 'error'   ? 'text-loss' :
+                    'text-ink-disabled',
+                  )}>
+                    {step.label}
+                  </p>
+                  {step.detail && (
+                    <p className="text-[10px] text-ink-muted mt-0.5">{step.detail}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 text-loss text-xs px-3 py-2.5 rounded-lg bg-loss/10 border border-loss/20">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {error}
+            </div>
+          )}
+
+          {done && (
+            <div className="text-gain text-xs px-3 py-2.5 rounded-lg bg-gain/10 border border-gain/20">
+              <p className="flex items-center gap-2"><Check className="w-3.5 h-3.5" /> Downloaded successfully!</p>
+              <p className="font-mono mt-1 text-ink-muted">{filename}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end px-5 py-3 border-t border-border/40 bg-surface-elevated/30">
+          <button onClick={onClose} className="btn-ghost text-sm px-4 py-1.5">
+            {done ? 'Close' : 'Cancel'}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
 // ── Weekly Scan summary section ────────────────────────────────────────────────
 
 function WeeklyScanSection() {
   const router = useRouter()
   const queryClient = useQueryClient()
   const [createModal, setCreateModal] = useState(false)
+  const [exportingId, setExportingId] = useState<string | null>(null)
+  const [exportedId,  setExportedId]  = useState<string | null>(null)
+
+  const exportScanMd = async (scanId: string, scanName: string, createdAt: string) => {
+    if (exportingId) return
+    setExportingId(scanId)
+    try {
+      const scan = await weeklyScanService.getScan(scanId)
+
+      const created = new Date(createdAt)
+      const daysToNextMonday = (1 - created.getDay() + 7) % 7 || 7
+      const weekMonday = new Date(created)
+      weekMonday.setDate(created.getDate() + daysToNextMonday)
+      const weekSunday = new Date(weekMonday)
+      weekSunday.setDate(weekMonday.getDate() + 6)
+
+      const weekNum  = getISOWeek(weekMonday)
+      const monStr   = format(weekMonday, 'd MMM yyyy')
+      const sunStr   = format(weekSunday, 'd MMM yyyy')
+      const filename = `${scanName}.md`
+
+      const COLOR_ORDER = ['CYAN', 'GREEN', 'YELLOW', 'RED', 'PURPLE', ''] as const
+      const COLOR_LABELS: Record<string, string> = {
+        CYAN: 'CYAN — Strong Candidate', GREEN: 'GREEN — Buy',
+        YELLOW: 'YELLOW — Watch', RED: 'RED — Avoid / Short',
+        PURPLE: 'PURPLE — In Portfolio', '': 'Unreviewed',
+      }
+      const sorted = [...scan.items].sort((a, b) => a.symbol.localeCompare(b.symbol))
+      const groups: Record<string, typeof sorted> = { CYAN: [], GREEN: [], YELLOW: [], RED: [], PURPLE: [], '': [] }
+      for (const it of sorted) groups[it.color_mark ?? ''].push(it)
+
+      const fmtN = (v: number | null | undefined) => (v != null ? v.toFixed(2) : '—')
+      const tblHead = '| Symbol | Strategy | Buy | TP | SL | Size | Remark |\n|--------|----------|-----|----|----|------|--------|'
+      const tblRow  = (it: typeof sorted[0]) =>
+        `| ${it.symbol} | ${it.strategy ?? '—'} | ${fmtN(it.buy_price)} | ${fmtN(it.tp)} | ${fmtN(it.sl)} | ${it.size ?? '—'} | ${it.remark ?? ''} |`
+
+      let md = `# ${scanName} — Week ${weekNum} (${monStr}–${sunStr})\n\n`
+      md += `**Generated:** ${format(new Date(), 'd MMM yyyy')}  \n`
+      md += `**Total symbols:** ${scan.items.length}\n\n`
+      md += `## Summary\n\n| Color | Count |\n|-------|-------|\n`
+      for (const key of COLOR_ORDER) {
+        const n = groups[key].length
+        if (n > 0) md += `| ${COLOR_LABELS[key]} | ${n} |\n`
+      }
+      md += '\n'
+      for (const key of COLOR_ORDER) {
+        const items = groups[key]
+        if (!items.length) continue
+        md += `## ${COLOR_LABELS[key]}\n\n${tblHead}\n`
+        for (const it of items) md += tblRow(it) + '\n'
+        md += '\n'
+      }
+
+      const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href = url; a.download = filename
+      document.body.appendChild(a); a.click()
+      document.body.removeChild(a); URL.revokeObjectURL(url)
+
+      setExportedId(scanId)
+      setTimeout(() => setExportedId(null), 2000)
+    } catch { } finally { setExportingId(null) }
+  }
   const [suggestedName, setSuggestedName] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ScanListSummary | null>(null)
@@ -514,6 +841,20 @@ function WeeklyScanSection() {
                       <Link href={`/weekly-scan/${scan.id}`} className="btn-icon" title="Open">
                         <Edit2 className="w-3.5 h-3.5" />
                       </Link>
+                      <button
+                        onClick={() => exportScanMd(scan.id, scan.name, scan.created_at)}
+                        disabled={exportingId === scan.id}
+                        title="Export as Markdown"
+                        className={cn(
+                          'btn-icon transition-colors',
+                          exportedId === scan.id ? 'text-gain' : 'text-teal-400/70 hover:text-teal-400',
+                        )}>
+                        {exportingId === scan.id
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : exportedId === scan.id
+                            ? <Check className="w-3.5 h-3.5" />
+                            : <FileDown className="w-3.5 h-3.5" />}
+                      </button>
                       <button onClick={() => setDeleteTarget(scan)} className="btn-icon text-loss/70 hover:text-loss" title="Delete">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -761,19 +1102,36 @@ const TABS: { id: ActiveTab; label: string; icon: React.ElementType }[] = [
 ]
 
 export default function ActionPlanPage() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('weekly-dashboard')
+  const searchParams = useSearchParams()
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    const tab = searchParams.get('tab')
+    return tab === 'plans' ? 'plans' : 'weekly-dashboard'
+  })
+  const [showExportAll, setShowExportAll] = useState(false)
 
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-ink-primary flex items-center gap-2">
-          <ClipboardList className="w-5 h-5 text-brand-400" />
-          Action Plan
-        </h1>
-        <p className="text-xs text-ink-muted mt-0.5">
-          Prepare, save, and generate purchase &amp; portfolio trading plans.
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-ink-primary flex items-center gap-2">
+            <ClipboardList className="w-5 h-5 text-brand-400" />
+            Action Plan
+          </h1>
+          <p className="text-xs text-ink-muted mt-0.5">
+            Prepare, save, and generate purchase &amp; portfolio trading plans.
+          </p>
+        </div>
+        {activeTab === 'plans' && (
+          <button
+            onClick={() => setShowExportAll(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
+            style={{ color: '#2dd4bf', borderColor: '#2dd4bf55', background: 'rgba(45,212,191,0.07)' }}
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            Export All MD
+          </button>
+        )}
       </div>
 
       {/* Tab bar */}
@@ -812,6 +1170,8 @@ export default function ActionPlanPage() {
       {activeTab === 'weekly-dashboard' && (
         <WeeklyPlanDashboard />
       )}
+
+      {showExportAll && <ExportAllModal onClose={() => setShowExportAll(false)} />}
     </div>
   )
 }

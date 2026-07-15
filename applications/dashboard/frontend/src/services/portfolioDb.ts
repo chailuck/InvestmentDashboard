@@ -48,6 +48,7 @@ export interface PositionInput {
   exit_date: string | null
   exit_price: number | null
   remarks: string | null
+  portfolio_id?: string | null
 }
 
 export const portfolioDbService = {
@@ -93,6 +94,11 @@ export const portfolioDbService = {
 
   async getSummary(): Promise<PortfolioSummary> {
     const { data } = await apiClient.get('/portfolio-db/summary')
+    return data
+  },
+
+  async patchNullPortfolioIds(): Promise<{ updated: number; portfolio_id?: string; portfolio_name?: string }> {
+    const { data } = await apiClient.post('/portfolio-db/positions/patch-null-portfolio')
     return data
   },
 }

@@ -4,12 +4,13 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Save, FileDown, Copy, CheckCircle2,
-  Loader2, X, RefreshCw, AlertCircle, Download, Upload, ClipboardCopy,
+  Loader2, X, RefreshCw, AlertCircle, Download, Upload, ClipboardCopy, Database,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { actionPlanService } from '@/services/actionPlan'
 import { portfolioTrackerService } from '@/services/portfolioTracker'
+import { portfolioDbService } from '@/services/portfolioDb'
 import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 
 // ── Row type ──────────────────────────────────────────────────────────────────
@@ -195,6 +196,8 @@ export default function PortfolioPlanEditor() {
   const [saveMsg, setSaveMsg] = useState<'ok' | 'err' | null>(null)
   const [copyingPrev, setCopyingPrev] = useState(false)
   const [copyMsg, setCopyMsg] = useState<string | null>(null)
+  const [syncingDb, setSyncingDb] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const [generateText, setGenerateText] = useState<string | null>(null)
   const [analyticsSymbol, setAnalyticsSymbol] = useState<string | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
@@ -330,6 +333,67 @@ export default function PortfolioPlanEditor() {
     }
   }
 
+  // ── Sync / upsert from DB portfolio ──────────────────────────────────────
+
+  const syncFromDb = async () => {
+    setSyncingDb(true)
+    setSyncMsg(null)
+    try {
+      const dbPositions = await portfolioDbService.getPositions('active')
+      if (!dbPositions.length) {
+        setSyncMsg('No active positions found in the DB portfolio.')
+        return
+      }
+
+      const dbMap = new Map(dbPositions.map(p => [p.symbol.toUpperCase(), p]))
+
+      // Compute diff against current rows (read directly — avoids stale-counter bug with setRows callback)
+      const existingSymbols = new Set(rows.map(r => r.symbol.toUpperCase()))
+
+      const merged: Row[] = rows.map(row => {
+        const pos = dbMap.get(row.symbol.toUpperCase())
+        if (!pos) return row
+        return {
+          ...row,
+          current_price: pos.currentPrice ?? row.current_price,
+          size:          pos.positionSize ?? row.size,
+          entry_price:   pos.entryPrice   ?? row.entry_price,
+          tp:            pos.tp           ?? row.tp,
+          sl:            pos.sl           ?? row.sl,
+          order_size:    pos.positionSize ?? row.order_size,
+        }
+      })
+
+      const newRows: Row[] = dbPositions
+        .filter(pos => !existingSymbols.has((pos.symbol ?? '').toUpperCase()))
+        .map(pos => ({
+          symbol:        (pos.symbol ?? '').toUpperCase(),
+          current_price: pos.currentPrice ?? null,
+          size:          pos.positionSize ?? null,
+          entry_price:   pos.entryPrice   ?? null,
+          tp:            pos.tp           ?? null,
+          sl:            pos.sl           ?? null,
+          order_size:    pos.positionSize ?? null,
+        }))
+
+      setRows([...merged, ...newRows])
+
+      const updated = rows.filter(r => dbMap.has(r.symbol.toUpperCase())).length
+      const added   = newRows.length
+      const parts: string[] = []
+      if (updated) parts.push(`${updated} updated`)
+      if (added)   parts.push(`${added} added`)
+      setSyncMsg(parts.length
+        ? `Synced from DB: ${parts.join(', ')}. Press Save to persist.`
+        : 'No matching DB positions found.')
+    } catch (e: any) {
+      setSyncMsg(e?.response?.data?.detail ?? 'Failed to sync from DB portfolio.')
+    } finally {
+      setSyncingDb(false)
+      setTimeout(() => setSyncMsg(null), 8000)
+    }
+  }
+
   // ── Row update ────────────────────────────────────────────────────────────
 
   const updateRow = (idx: number, patch: Partial<Row>) =>
@@ -443,7 +507,7 @@ export default function PortfolioPlanEditor() {
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={() => router.push('/action-plan')} className="btn-icon">
+        <button onClick={() => router.push('/action-plan?tab=plans')} className="btn-icon">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex-1 min-w-0">
@@ -478,6 +542,20 @@ export default function PortfolioPlanEditor() {
               : <ClipboardCopy className="w-3.5 h-3.5" />
             }
             Copy Prev Plan
+          </button>
+
+          <button
+            onClick={syncFromDb}
+            disabled={syncingDb || saving}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors"
+            style={{ color: '#818cf8', borderColor: '#818cf855', background: 'rgba(129,140,248,0.07)' }}
+            title="Upsert rows from active DB portfolio positions — updates existing, adds new, preserves TP/SL/Order Size"
+          >
+            {syncingDb
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Database className="w-3.5 h-3.5" />
+            }
+            Sync from DB
           </button>
 
           <input ref={importRef} type="file" accept=".txt" className="hidden" onChange={restoreList} />
@@ -549,6 +627,21 @@ export default function PortfolioPlanEditor() {
             ? <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             : <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
           {copyMsg}
+        </div>
+      )}
+
+      {/* Sync from DB feedback */}
+      {syncMsg && (
+        <div className={cn(
+          'flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs border',
+          syncMsg.startsWith('Failed') || syncMsg.startsWith('No active')
+            ? 'bg-loss/8 border-loss/20 text-loss'
+            : 'bg-gain/8 border-gain/20 text-gain',
+        )}>
+          {syncMsg.startsWith('Failed') || syncMsg.startsWith('No active')
+            ? <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            : <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
+          {syncMsg}
         </div>
       )}
 

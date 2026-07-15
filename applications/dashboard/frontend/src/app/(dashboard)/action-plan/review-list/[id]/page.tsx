@@ -556,7 +556,7 @@ export default function ReviewDetailPage() {
       {/* Page header */}
       <div>
         <button
-          onClick={() => router.push('/action-plan')}
+          onClick={() => router.push('/action-plan?tab=plans')}
           className="flex items-center gap-1.5 text-xs text-ink-muted hover:text-ink-primary mb-3 transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />

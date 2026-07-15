@@ -127,7 +127,12 @@ async def list_objective_positions(
     conditions: list = [PortfolioDbPosition.user_id == uid]
 
     if portfolio_id:
-        conditions.append(PortfolioDbPosition.portfolio_id == uuid.UUID(portfolio_id))
+        conditions.append(
+            or_(
+                PortfolioDbPosition.portfolio_id == uuid.UUID(portfolio_id),
+                PortfolioDbPosition.portfolio_id.is_(None),
+            )
+        )
 
     if no_reason_only:
         conditions.append(

@@ -494,7 +494,7 @@ class EmailService:
                 if i.get("stock")
             ]
             portfolio_syms = [
-                p.get("symbol") for p in (portfolio or {}).get("positions", [])
+                p.get("symbol") for p in (portfolio or {}).get("open_positions", [])
                 if p.get("symbol")
             ]
             all_syms = list(dict.fromkeys(purchase_syms + portfolio_syms))

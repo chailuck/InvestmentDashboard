@@ -38,6 +38,7 @@ class PositionIn(BaseModel):
     exit_date: Optional[date] = None
     exit_price: Optional[float] = None
     remarks: Optional[str] = None
+    portfolio_id: Optional[str] = None
 
 
 # â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -476,6 +477,38 @@ async def get_performance_by_stock_db(user_id: str, db: AsyncSession,
 
 # â”€â”€ CRUD endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+@router.post("/positions/patch-null-portfolio", status_code=200)
+async def patch_null_portfolio_ids(user_id: UserId, db: DB) -> dict[str, Any]:
+    """Assign the user's default portfolio_id to any position that has portfolio_id = NULL."""
+    from app.models.portfolio import Portfolio as PortfolioModel
+    uid = uuid.UUID(user_id)
+
+    # Find user's default portfolio (fallback: first portfolio)
+    port_result = await db.execute(
+        select(PortfolioModel)
+        .where(PortfolioModel.user_id == uid)
+        .order_by(PortfolioModel.is_default.desc(), PortfolioModel.created_at.asc())
+        .limit(1)
+    )
+    default_portfolio = port_result.scalar_one_or_none()
+    if not default_portfolio:
+        return {"updated": 0, "message": "No portfolio found for user"}
+
+    # Update all positions with null portfolio_id
+    from sqlalchemy import update as sa_update
+    result = await db.execute(
+        sa_update(PortfolioDbPosition)
+        .where(
+            PortfolioDbPosition.user_id == uid,
+            PortfolioDbPosition.portfolio_id.is_(None),
+        )
+        .values(portfolio_id=default_portfolio.id)
+    )
+    await db.commit()
+    count = result.rowcount
+    return {"updated": count, "portfolio_id": str(default_portfolio.id), "portfolio_name": default_portfolio.name}
+
+
 @router.get("/positions")
 async def get_positions(
     user_id: UserId,
@@ -504,6 +537,7 @@ async def create_position(body: PositionIn, user_id: UserId, db: DB) -> dict[str
         exit_date=body.exit_date,
         exit_price=body.exit_price,
         remarks=body.remarks,
+        portfolio_id=uuid.UUID(body.portfolio_id) if body.portfolio_id else None,
     )
     db.add(pos)
     await db.commit()
