@@ -21,6 +21,8 @@ from .endpoints.portfolios import router as portfolios_router
 from .endpoints.investment_transactions import router as investment_transactions_router
 from .endpoints.users import router as users_router
 from .endpoints.email import router as email_router
+from .endpoints.daily_performance import router as daily_performance_router
+from .endpoints.portfolio_cash_transactions import router as portfolio_cash_transactions_router
 
 v1_router = APIRouter(prefix="/api/v1")
 
@@ -43,3 +45,5 @@ v1_router.include_router(dr_mapping_router)
 v1_router.include_router(objective_router)
 v1_router.include_router(review_list_router)
 v1_router.include_router(email_router)
+v1_router.include_router(daily_performance_router)
+v1_router.include_router(portfolio_cash_transactions_router)

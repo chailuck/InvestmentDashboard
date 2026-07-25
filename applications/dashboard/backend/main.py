@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.models.portfolio import Portfolio, Holding, InvestmentTransaction  # noqa: F401
     from app.models.weekly_scan import UserScanConfig, WeeklyScan, WeeklyScanItem, UserSymbolList, PeScanResult  # noqa: F401
     from app.models.dr_mapping import DrMapping  # noqa: F401
+    from app.models.daily_performance import DailyPerformance  # noqa: F401
     from app.auth.jwt import hash_password
 
     async with engine.begin() as conn:
@@ -155,12 +156,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             recipient=settings.daily_email_recipient,
         )
 
+    # Start daily performance snapshot scheduler (always active)
+    from app.scheduler import start_performance_scheduler
+    start_performance_scheduler()
+    log.info("Daily performance scheduler started")
+
     yield
 
     # Shutdown
     if settings.daily_email_enabled:
         from app.scheduler import stop_scheduler
         stop_scheduler()
+
+    from app.scheduler import stop_performance_scheduler
+    stop_performance_scheduler()
 
     await engine.dispose()
     await close_redis()

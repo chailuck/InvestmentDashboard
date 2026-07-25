@@ -9,7 +9,7 @@ import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings, SlidersHorizontal,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
   ShoppingCart, Briefcase, ArrowUpRight, FlaskConical, HardDriveDownload, GitBranch, ScanLine, Search,
-  RefreshCw,
+  RefreshCw, Activity,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
@@ -873,8 +873,9 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
           open={analyticsOpen}
           onToggle={() => setAnalyticsOpen(o => !o)}
         >
-          <SubLink href="/analytics"             label="Search"     icon={Search} />
-          <SubLink href="/analytics/pe-scanner"  label="PE Scanner" icon={ScanLine} />
+          <SubLink href="/analytics"                          label="Search"            icon={Search} />
+          <SubLink href="/analytics/pe-scanner"             label="PE Scanner"        icon={ScanLine} />
+          <SubLink href="/analytics/daily-performance"      label="Daily Performance" icon={Activity} />
         </AccordionGroup>
         <NavLink href="/ai-copilot"  label="AI Copilot"  icon={Bot} badge="AI" />
 

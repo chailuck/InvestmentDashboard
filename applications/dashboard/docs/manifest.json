@@ -100,6 +100,14 @@
       ]
     },
     {
+      "id": "daily-performance",
+      "label": "Daily Performance",
+      "children": [
+        { "id": "dp-functional", "label": "Functional Spec",  "file": "10-daily-performance/FUNCTIONAL.html" },
+        { "id": "dp-technical",  "label": "Technical Design", "file": "10-daily-performance/TECHNICAL.html"  }
+      ]
+    },
+    {
       "id": "weekly-review",
       "label": "Weekly Review",
       "children": [

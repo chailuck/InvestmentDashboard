@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Performance — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Daily Performance — Technical Design</h1>
+
+<p><strong>Version:</strong> 2.0 &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-07-18</p>
+
+<hr>
+
+<h2>1. Architecture</h2>
+
+<h3>Backend files</h3>
+<pre><code>backend/app/models/daily_performance.py          — SQLAlchemy ORM model (DailyPerformance)
+backend/app/services/daily_performance_service.py — Snapshot computation and upsert logic
+backend/app/api/v1/endpoints/daily_performance.py — FastAPI router (3 endpoints)
+backend/app/scheduler.py                          — APScheduler jobs (daily_performance_job,
+                                                    start_performance_scheduler,
+                                                    stop_performance_scheduler)</code></pre>
+
+<h3>Frontend files</h3>
+<pre><code>frontend/src/services/dailyPerformance.ts
+  — API client (getRecords, runSnapshot, updateRecord) and TypeScript types
+
+frontend/src/app/(dashboard)/analytics/daily-performance/page.tsx
+  — 'use client' page (~1 088 lines); SVG chart, editable table, portfolio selector</code></pre>
+
+<h3>Alembic migrations</h3>
+<pre><code>f6g7h8i9j0k1  add_sell_reason_sell_feel           (2026-06-26)
+   └─ a1b2c3d4e5f6  add_daily_performance_table   (2026-07-17) — creates table, UNIQUE(user_id, date)
+      └─ b2c3d4e5f6a7  add_portfolio_id_to_daily_performance (2026-07-18)
+                         — adds portfolio_id FK, swaps UNIQUE to (portfolio_id, date)</code></pre>
+
+<hr>
+
+<h2>2. Database schema</h2>
+
+<p>Table: <code>daily_performance</code></p>
+
+<table>
+  <thead>
+    <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>id</code></td><td><code>UUID</code></td><td>No</td><td><code>uuid4()</code></td><td>Primary key</td></tr>
+    <tr><td><code>user_id</code></td><td><code>UUID</code></td><td>No</td><td>—</td><td>FK → <code>users.id</code> ON DELETE CASCADE. Denormalised for direct user queries without a join.</td></tr>
+    <tr><td><strong><code>portfolio_id</code></strong></td><td><code>UUID</code></td><td><strong>No</strong></td><td>—</td><td><strong>FK → <code>portfolios.id</code> ON DELETE CASCADE.</strong> Scopes each snapshot to a specific portfolio. Added in migration <code>b2c3d4e5f6a7</code>.</td></tr>
+    <tr><td><code>date</code></td><td><code>DATE</code></td><td>No</td><td>—</td><td>Calendar date of the snapshot.</td></tr>
+    <tr><td><code>investment</code></td><td><code>NUMERIC(16,2)</code></td><td>No</td><td><code>0</code></td><td>Total capital deployed across all positions with <code>entry_date &lt;= date</code>.</td></tr>
+    <tr><td><code>closed_pnl</code></td><td><code>NUMERIC(16,2)</code></td><td>No</td><td><code>0</code></td><td>Cumulative realised P&amp;L from positions closed on or before <code>date</code>.</td></tr>
+    <tr><td><code>closed_pnl_pct</code></td><td><code>NUMERIC(8,4)</code></td><td>No</td><td><code>0</code></td><td><code>closed_pnl / investment × 100</code>; zero when <code>investment = 0</code>.</td></tr>
+    <tr><td><code>open_pnl</code></td><td><code>NUMERIC(16,2)</code></td><td>No</td><td><code>0</code></td><td>Unrealised P&amp;L of active positions at snapshot time using live prices.</td></tr>
+    <tr><td><code>open_pnl_pct</code></td><td><code>NUMERIC(8,4)</code></td><td>No</td><td><code>0</code></td><td><code>open_pnl / investment × 100</code>; zero when <code>investment = 0</code>.</td></tr>
+    <tr><td><code>open_positions</code></td><td><code>JSONB</code></td><td>Yes</td><td><code>NULL</code></td><td>Array of <code>{"symbol": str, "pnl": float, "pnl_pct": float}</code>. NULL when no active positions.</td></tr>
+    <tr><td><code>created_at</code></td><td><code>TIMESTAMPTZ</code></td><td>No</td><td><code>now()</code></td><td>Row creation time.</td></tr>
+    <tr><td><code>updated_at</code></td><td><code>TIMESTAMPTZ</code></td><td>No</td><td><code>now()</code></td><td>Last write time; updated on every upsert.</td></tr>
+  </tbody>
+</table>
+
+<h3>Constraints and indexes</h3>
+<table>
+  <thead><tr><th>Name</th><th>Type</th><th>Columns</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>uq_daily_performance_portfolio_date</code></td><td>UNIQUE</td><td><code>(portfolio_id, date)</code></td><td>One snapshot per portfolio per day. Enables idempotent upsert via ON CONFLICT. Added by <code>b2c3d4e5f6a7</code>; replaced <code>uq_daily_performance_user_date</code>.</td></tr>
+    <tr><td><code>ix_daily_performance_user_id</code></td><td>INDEX</td><td><code>user_id</code></td><td>Created in <code>a1b2c3d4e5f6</code>.</td></tr>
+    <tr><td><code>ix_daily_performance_date</code></td><td>INDEX</td><td><code>date</code></td><td>Created in <code>a1b2c3d4e5f6</code>.</td></tr>
+    <tr><td><code>ix_daily_performance_portfolio_id</code></td><td>INDEX</td><td><code>portfolio_id</code></td><td>Created in <code>b2c3d4e5f6a7</code>.</td></tr>
+  </tbody>
+</table>
+
+<h3>Migration detail — b2c3d4e5f6a7</h3>
+<p>Uses a three-phase NOT NULL strategy to handle tables that may or may not have existing rows at migration time:</p>
+<ol>
+  <li>Add <code>portfolio_id</code> as nullable + FK constraint.</li>
+  <li><code>DELETE FROM daily_performance WHERE portfolio_id IS NULL</code> — pre-existing user-scoped rows are irrecoverably purged because they cannot be attributed to a single portfolio.</li>
+  <li>Alter column to <code>NOT NULL</code>.</li>
+  <li>Drop <code>uq_daily_performance_user_date</code>; create <code>uq_daily_performance_portfolio_date</code>; create <code>ix_daily_performance_portfolio_id</code>.</li>
+</ol>
+<div class="callout warn">The data purge in Phase 2 is intentional and documented in the migration header. On a fresh deployment with no pre-existing data it is a no-op.</div>
+
+<hr>
+
+<h2>3. Service API</h2>
+
+<p>Source: <code>backend/app/services/daily_performance_service.py</code></p>
+
+<h3>run_daily_snapshot</h3>
+<pre><code>async def run_daily_snapshot(
+    db: AsyncSession,
+    user_id: str,          # string UUID of the owner user
+    snapshot_date: date,   # calendar date for the snapshot
+    portfolio_id: str,     # string UUID of the target portfolio (required)
+) -> DailyPerformance</code></pre>
+
+<p>Computes and upserts a snapshot for one portfolio. Steps:</p>
+<ol>
+  <li>Query all <code>PortfolioDbPosition</code> rows where <code>portfolio_id</code> matches and <code>entry_date &lt;= snapshot_date</code>.</li>
+  <li>Sum <code>entry_price × position_size</code> for all positions → <code>investment</code>.</li>
+  <li>Filter positions with <code>status="closed"</code> and <code>exit_date &lt;= snapshot_date</code>; sum <code>_pos_net_pnl(pos)</code> → <code>closed_pnl</code>; compute <code>closed_pnl_pct</code>.</li>
+  <li>Collect unique symbols for active positions; fetch live prices in parallel via <code>asyncio.gather</code> + <code>loop.run_in_executor</code> (yfinance is blocking); compute per-position and aggregate <code>open_pnl</code>; build <code>open_positions</code> list.</li>
+  <li>Execute PostgreSQL <code>INSERT ... ON CONFLICT (uq_daily_performance_portfolio_date) DO UPDATE</code>. Sets <code>updated_at = now()</code> on conflict.</li>
+  <li>Re-query and return the upserted row.</li>
+</ol>
+
+<p>Price-fetch failures are caught per-symbol; the symbol's P&amp;L contribution is treated as 0.0 and a warning is logged. The snapshot always completes even if all price fetches fail.</p>
+
+<h3>run_snapshot_for_all_portfolios</h3>
+<pre><code>async def run_snapshot_for_all_portfolios(
+    db: AsyncSession,
+    snapshot_date: date,
+) -> dict  # {"succeeded": int, "failed": int, "total": int}</code></pre>
+
+<p>Called by the APScheduler nightly job. Queries <code>SELECT id, user_id FROM portfolios</code> (all portfolios, all users). Iterates the result list and calls <code>run_daily_snapshot</code> for each portfolio. Per-portfolio exceptions are caught; a failed portfolio triggers a rollback of the current session state before continuing. The returned dict carries <code>succeeded</code>, <code>failed</code>, and <code>total</code> counts.</p>
+
+<h3>Price helper — _fetch_price</h3>
+<pre><code>def _fetch_price(symbol: str) -> float | None</code></pre>
+<p>Calls <code>yf.Ticker(f"{symbol}.BK").history(period="2d")</code> and returns the most recent closing price as a float, or <code>None</code> on any exception. Runs synchronously; callers must invoke via <code>loop.run_in_executor</code>.</p>
+
+<h3>P&amp;L helper — _pos_net_pnl</h3>
+<pre><code>def _pos_net_pnl(pos: PortfolioDbPosition) -> float</code></pre>
+<p>Returns realised net P&amp;L for a closed position. Returns <code>0.0</code> if any of <code>entry_price</code>, <code>exit_price</code>, or <code>position_size</code> is <code>None</code>. Direction defaults to LONG when <code>pos.direction</code> is absent.</p>
+
+<div class="callout warn">TD-DP-05: <code>_pos_net_pnl</code> duplicates logic from <code>portfolio_db.py</code>. The duplication is intentional to break a circular import cycle at module-load time, as noted in the source comment.</div>
+
+<hr>
+
+<h2>4. REST API</h2>
+
+<p><strong>Router prefix:</strong> <code>/api/v1/daily-performance</code> — all endpoints require <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+
+<h3>GET /daily-performance</h3>
+<p>Returns daily performance snapshots for one portfolio, ordered by date ascending.</p>
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>date_from</code></td><td>date (YYYY-MM-DD)</td><td>No</td><td>today − 60 days</td><td>Window start</td></tr>
+    <tr><td><code>date_to</code></td><td>date (YYYY-MM-DD)</td><td>No</td><td>today</td><td>Window end</td></tr>
+    <tr><td><code>portfolio_id</code></td><td>UUID</td><td>No</td><td>user's default portfolio</td><td>Target portfolio; resolved via <code>_resolve_portfolio_id</code></td></tr>
+  </tbody>
+</table>
+<p><strong>Error codes:</strong></p>
+<ul>
+  <li><code>400</code> — date range exceeds 366 days.</li>
+  <li><code>403</code> — <code>portfolio_id</code> does not belong to the authenticated user.</li>
+  <li><code>404</code> — no default portfolio found and <code>portfolio_id</code> was not provided.</li>
+</ul>
+<p><strong>Response:</strong> <code>200 OK</code> — JSON array of serialised <code>DailyPerformance</code> records (see serialisation helper below).</p>
+
+<h3>POST /daily-performance/run</h3>
+<p>Triggers an on-demand snapshot for the authenticated user's portfolio using <code>date.today()</code>.</p>
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>portfolio_id</code></td><td>UUID (query)</td><td>No</td><td>Defaults to the user's default portfolio</td></tr>
+  </tbody>
+</table>
+<p><strong>Response:</strong> <code>200 OK</code> — <code>{"status": "ok", ...serialised_record}</code>. Idempotent — re-running overwrites today's record.</p>
+
+<h3>PUT /daily-performance/{date_str}</h3>
+<p>Partially patches a stored snapshot. Only fields present and non-None in the request body are written. Percentage columns are recomputed server-side.</p>
+<table>
+  <thead><tr><th>Parameter</th><th>Location</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>date_str</code></td><td>path</td><td>string</td><td>Yes</td><td>Date in <code>YYYY-MM-DD</code> format</td></tr>
+    <tr><td><code>portfolio_id</code></td><td>query</td><td>UUID</td><td>No</td><td>Defaults to the user's default portfolio</td></tr>
+  </tbody>
+</table>
+<p><strong>Request body</strong> (<code>DailyPerformanceUpdate</code>):</p>
+<pre><code>{
+  "investment":      float | null,
+  "closed_pnl":     float | null,
+  "open_pnl":       float | null,
+  "open_positions": [{"symbol": str, "pnl": float, "pnl_pct": float}] | null
+}</code></pre>
+<p><strong>Error codes:</strong></p>
+<ul>
+  <li><code>400</code> — <code>date_str</code> is not a valid ISO date.</li>
+  <li><code>403</code> — portfolio does not belong to the authenticated user.</li>
+  <li><code>404</code> — no record exists for this portfolio and date.</li>
+</ul>
+<p><strong>Response:</strong> <code>200 OK</code> — serialised updated record.</p>
+
+<h3>Serialisation helper — _serialize</h3>
+<p>All endpoints return records via the <code>_serialize(row)</code> helper, which casts <code>Numeric</code> columns to <code>float</code> and formats dates as ISO strings:</p>
+<pre><code>{
+  "id": str,
+  "date": "YYYY-MM-DD",
+  "portfolio_id": str,
+  "investment": float,
+  "closed_pnl": float,
+  "closed_pnl_pct": float,
+  "open_pnl": float,
+  "open_pnl_pct": float,
+  "open_positions": [{"symbol": str, "pnl": float, "pnl_pct": float}] | null,
+  "created_at": ISO datetime string | null,
+  "updated_at": ISO datetime string | null
+}</code></pre>
+
+<hr>
+
+<h2>5. _resolve_portfolio_id</h2>
+
+<pre><code>async def _resolve_portfolio_id(
+    db: AsyncSession,
+    uid: uuid.UUID,
+    portfolio_id_param: uuid.UUID | None,
+) -> uuid.UUID</code></pre>
+
+<p>Used by all three endpoints to resolve the target portfolio UUID and enforce ownership.</p>
+
+<h3>With portfolio_id_param provided</h3>
+<ol>
+  <li>Query <code>SELECT * FROM portfolios WHERE id = portfolio_id_param</code>.</li>
+  <li>If no row found → raise <code>HTTP 404 "Portfolio not found."</code></li>
+  <li>If <code>portfolio.user_id != uid</code> → raise <code>HTTP 403 "Portfolio does not belong to the authenticated user."</code> (IDOR protection)</li>
+  <li>Return <code>portfolio.id</code>.</li>
+</ol>
+
+<h3>Without portfolio_id_param (None)</h3>
+<ol>
+  <li>Query <code>SELECT * FROM portfolios WHERE user_id = uid AND is_default IS TRUE</code>.</li>
+  <li>If no default portfolio found → raise <code>HTTP 404</code> with message instructing the caller to pass <code>?portfolio_id=&lt;uuid&gt;</code> explicitly or mark a portfolio as default.</li>
+  <li>Return the default portfolio's <code>id</code>.</li>
+</ol>
+
+<div class="callout">The function intentionally never returns a portfolio that does not belong to <code>uid</code>. There is no path that allows a user to read or write another user's snapshots.</div>
+
+<hr>
+
+<h2>6. Frontend service</h2>
+
+<p>Source: <code>frontend/src/services/dailyPerformance.ts</code></p>
+
+<h3>Types</h3>
+<pre><code>interface OpenPosition {
+  symbol: string
+  pnl: number
+  pnl_pct: number
+}
+
+interface DailyPerformanceRecord {
+  id: string
+  portfolio_id: string
+  date: string            // ISO date YYYY-MM-DD
+  investment: number
+  closed_pnl: number
+  closed_pnl_pct: number
+  open_pnl: number
+  open_pnl_pct: number
+  open_positions: OpenPosition[] | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+interface DailyPerformanceUpdateInput {
+  investment?: number
+  closed_pnl?: number
+  open_pnl?: number
+  open_positions?: OpenPosition[]
+}</code></pre>
+
+<h3>Methods</h3>
+<table>
+  <thead><tr><th>Method</th><th>HTTP call</th><th>Returns</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>getRecords(portfolioId, dateFrom?, dateTo?)</code></td>
+      <td><code>GET /daily-performance?portfolio_id=&amp;date_from=&amp;date_to=</code></td>
+      <td><code>DailyPerformanceRecord[]</code></td>
+    </tr>
+    <tr>
+      <td><code>runSnapshot(portfolioId)</code></td>
+      <td><code>POST /daily-performance/run?portfolio_id=</code></td>
+      <td><code>DailyPerformanceRecord &amp; { status: string }</code></td>
+    </tr>
+    <tr>
+      <td><code>updateRecord(portfolioId, date, update)</code></td>
+      <td><code>PUT /daily-performance/{date}?portfolio_id=</code></td>
+      <td><code>DailyPerformanceRecord</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>7. Frontend page architecture</h2>
+
+<p>Source: <code>frontend/src/app/(dashboard)/analytics/daily-performance/page.tsx</code></p>
+<p>The page is a single <code>'use client'</code> component (<code>DailyPerformancePage</code>) with no nested server components.</p>
+
+<h3>State</h3>
+<table>
+  <thead><tr><th>State variable</th><th>Type</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>portfolios</code></td><td><code>Portfolio[]</code></td><td>All portfolios fetched on mount via <code>GET /portfolios</code></td></tr>
+    <tr><td><code>selectedPortfolioId</code></td><td><code>string | null</code></td><td>Active portfolio. Initialised to the default portfolio on load.</td></tr>
+    <tr><td><code>portfoliosLoading</code></td><td><code>boolean</code></td><td>True until the portfolio fetch completes; gates the data fetch.</td></tr>
+    <tr><td><code>records</code></td><td><code>DailyPerformanceRecord[]</code></td><td>Snapshot records for the selected portfolio and date range.</td></tr>
+    <tr><td><code>loading</code></td><td><code>boolean</code></td><td>True while <code>getRecords</code> is in flight.</td></tr>
+    <tr><td><code>runningSnapshot</code></td><td><code>boolean</code></td><td>True while <code>runSnapshot</code> is in flight.</td></tr>
+    <tr><td><code>error</code></td><td><code>string | null</code></td><td>Error message displayed in the error banner.</td></tr>
+    <tr><td><code>dateFrom</code> / <code>dateTo</code></td><td><code>string</code></td><td>ISO date strings for the filter; default today − 60 days / today.</td></tr>
+    <tr><td><code>editCell</code></td><td><code>{ rowId, field } | null</code></td><td>Which cell is currently being edited inline.</td></tr>
+    <tr><td><code>editValue</code></td><td><code>string</code></td><td>Current raw string value of the active edit input.</td></tr>
+    <tr><td><code>containerWidth</code></td><td><code>number</code></td><td>Observed width of the chart container div.</td></tr>
+    <tr><td><code>hoverIndex</code></td><td><code>number | null</code></td><td>Index into <code>records</code> of the currently hovered chart point.</td></tr>
+  </tbody>
+</table>
+
+<h3>Effects</h3>
+<ul>
+  <li><strong>Portfolio fetch</strong> (<code>useEffect([], [])</code>): Fetches <code>GET /portfolios</code> once on mount. Sets <code>portfolios</code>, resolves default, sets <code>portfoliosLoading = false</code>. Cancels via a <code>cancelled</code> flag on unmount.</li>
+  <li><strong>Chart resize</strong> (<code>useEffect([], [])</code>): Attaches a <code>ResizeObserver</code> to the chart container div. Updates <code>containerWidth</code> on each resize event. Disconnects on unmount.</li>
+  <li><strong>Data fetch</strong> (<code>useEffect([fetchData], [fetchData])</code>): Calls <code>fetchData</code> whenever the memoised callback changes (i.e., when <code>selectedPortfolioId</code>, <code>dateFrom</code>, or <code>dateTo</code> changes). <code>fetchData</code> exits early if <code>selectedPortfolioId</code> is null.</li>
+</ul>
+
+<h3>Chart computation</h3>
+<p><code>chartData</code> is derived via <code>useMemo([records, containerWidth])</code>. It computes inner dimensions, coordinate-mapping functions (<code>xOf</code>, <code>yOf</code>), five evenly spaced Y ticks, up to eight X axis labels, and SVG point arrays for all three series. Returns <code>null</code> when <code>records</code> is empty or <code>containerWidth</code> is zero.</p>
+
+<h3>Inline edit flow</h3>
+<ol>
+  <li>User clicks an <code>EditableNumberCell</code>; <code>startEdit(rowId, field, value)</code> sets <code>editCell</code> and <code>editValue</code>.</li>
+  <li>User types; controlled input updates <code>editValue</code>.</li>
+  <li>On blur or Enter: <code>commitEdit</code> is called. Parses <code>editValue</code> to float; if invalid, cancels. Otherwise calls <code>dailyPerformanceService.updateRecord</code> then <code>fetchData</code>.</li>
+  <li>On Escape: <code>cancelEdit</code> clears <code>editCell</code> without a network call.</li>
+</ol>
+
+<hr>
+
+<h2>8. Known technical debt</h2>
+
+<table>
+  <thead><tr><th>ID</th><th>Description</th><th>Impact</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="badge yellow">TD-DP-01</span></td>
+      <td>No unit or integration tests for <code>run_daily_snapshot</code> or <code>run_snapshot_for_all_portfolios</code>.</td>
+      <td>Regression risk on service logic changes.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-DP-02</span></td>
+      <td><code>_fetch_price</code> has no retry on transient network failures. A single exception causes the symbol's P&amp;L to silently default to 0.0.</td>
+      <td>Snapshot may understate open P&amp;L on flaky connections.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-DP-03</span></td>
+      <td>The scheduler fires on SET market holidays — a snapshot is written even when the market is closed, recording stale prices from the previous session.</td>
+      <td>Holiday-day rows show incorrect open P&amp;L.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-DP-04</span></td>
+      <td>No rate-limiting on <code>POST /daily-performance/run</code>. A user can trigger repeated snapshots within milliseconds, each spawning parallel yfinance fetches.</td>
+      <td>Potential for accidental API abuse of the Yahoo Finance endpoint.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-DP-05</span></td>
+      <td><code>_pos_net_pnl</code> is duplicated from <code>portfolio_db.py</code> to avoid a circular import. Source comment acknowledges this.</td>
+      <td>Business logic divergence risk if the two copies are modified independently.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-DP-06</span></td>
+      <td>The GET endpoint defaults to a 60-day window but the hard cap is 366 days. The discrepancy is not surfaced in the API schema or UI.</td>
+      <td>Minor documentation gap; no runtime consequence.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-DP-07</span></td>
+      <td>The frontend does not validate that <code>date_from &lt;= date_to</code> before submitting. An inverted range returns an empty array with no user-visible error.</td>
+      <td>Confusing UX when dates are accidentally reversed.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-DP-08</span></td>
+      <td><code>open_positions</code> is stored as <code>NULL</code> rather than <code>[]</code> when a portfolio has no active positions. Code that checks <code>open_positions.length</code> must guard for null.</td>
+      <td>Frontend already handles null correctly; a future consumer may not.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-DP-09</span></td>
+      <td>No page-level frontend tests for acceptance criteria AC-004 (preset buttons update date range), AC-005 (inline edit commits via Enter/blur), or AC-010 (portfolio selector re-fetches data).</td>
+      <td>Interaction regressions will not be caught automatically.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-DP-10</span></td>
+      <td>No migration integration test covers the three-phase NOT NULL strategy in <code>b2c3d4e5f6a7</code>. The purge of pre-existing rows (Phase 2) is untested.</td>
+      <td>Correctness of the migration on a non-empty table is unverified.</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>9. Architecture decision records</h2>
+
+<h3>ADR-DP-01: Portfolio-scoped snapshots</h3>
+<p><strong>Date:</strong> 2026-07-18 &nbsp;|&nbsp; <strong>Status:</strong> Accepted</p>
+
+<h4>Context</h4>
+<p>The initial <code>daily_performance</code> table (migration <code>a1b2c3d4e5f6</code>) stored one snapshot per user per day via a UNIQUE constraint on <code>(user_id, date)</code>. Position data in <code>portfolio_positions_db</code> is already scoped to individual portfolios via <code>portfolio_id</code>. Computing a user-level snapshot required aggregating across all portfolios, collapsing portfolio-specific P&amp;L into a single row. This prevented independent performance tracking for users who maintain separate trading strategies in separate portfolios.</p>
+
+<h4>Decision</h4>
+<p>We will scope daily snapshots to individual portfolios. The UNIQUE constraint changes from <code>(user_id, date)</code> to <code>(portfolio_id, date)</code>. One snapshot row is written per portfolio per day.</p>
+
+<h4>Alternatives considered</h4>
+<ul>
+  <li><strong>Keep user-scoped snapshots:</strong> Simple, no migration required. Rejected because it aggregates across portfolios with different risk profiles, making per-portfolio performance analysis impossible.</li>
+  <li><strong>Add portfolio_id as a nullable column alongside the old user-scoped constraint:</strong> Preserves backward compatibility. Rejected because the two constraint forms are mutually inconsistent and would require dual-write logic.</li>
+</ul>
+
+<h4>Consequences</h4>
+<ul>
+  <li>A user with N portfolios now receives N snapshot rows per day rather than one.</li>
+  <li>The scheduler must iterate all portfolios across all users (handled by <code>run_snapshot_for_all_portfolios</code>).</li>
+  <li>Existing snapshot rows created before this migration are purged — they cannot be attributed to a single portfolio without ambiguity.</li>
+  <li>Frontend must pass <code>portfolio_id</code> as a required context for all API calls.</li>
+</ul>
+
+<hr>
+
+<h3>ADR-DP-02: Portfolio resolution in the API layer</h3>
+<p><strong>Date:</strong> 2026-07-18 &nbsp;|&nbsp; <strong>Status:</strong> Accepted</p>
+
+<h4>Context</h4>
+<p>After moving to portfolio-scoped snapshots, every endpoint must determine which portfolio to act on. Options were: (a) resolve in each endpoint handler, (b) resolve in the service layer, (c) extract into a shared helper in the API layer.</p>
+
+<h4>Decision</h4>
+<p>We will centralise portfolio resolution in a single async helper function <code>_resolve_portfolio_id</code> in the endpoint module. The function enforces IDOR protection (portfolio must belong to the authenticated user) and provides a default-portfolio fallback when no <code>portfolio_id</code> is passed.</p>
+
+<h4>Consequences</h4>
+<ul>
+  <li>IDOR protection is applied consistently — it cannot be accidentally skipped by a new endpoint.</li>
+  <li>The service layer receives a fully resolved <code>portfolio_id</code> (already validated), keeping the service free of auth concerns.</li>
+  <li>All three endpoints share a single resolution path, making security audits straightforward.</li>
+</ul>
+
+<hr>
+
+<h3>ADR-DP-03: Retain user_id as a denormalised field</h3>
+<p><strong>Date:</strong> 2026-07-18 &nbsp;|&nbsp; <strong>Status:</strong> Accepted</p>
+
+<h4>Context</h4>
+<p>After adding <code>portfolio_id</code>, <code>user_id</code> is technically derivable via a join: <code>daily_performance JOIN portfolios ON portfolio_id = portfolios.id</code>. Keeping <code>user_id</code> duplicates data already present in the <code>portfolios</code> table.</p>
+
+<h4>Decision</h4>
+<p>We will retain <code>user_id</code> as a denormalised foreign key on <code>daily_performance</code>. It is documented in the model docstring as a convenience field for direct user-scoped queries without a join.</p>
+
+<h4>Consequences</h4>
+<ul>
+  <li>Queries scoped to a user (e.g., "show all snapshots for user X") do not require a join to <code>portfolios</code>.</li>
+  <li>The field must be kept in sync when <code>portfolio.user_id</code> changes (edge case; portfolio ownership transfers are not currently supported).</li>
+  <li>The <code>user_id</code> index (<code>ix_daily_performance_user_id</code>) retained from the original migration supports these queries efficiently.</li>
+</ul>
+
+</body>
+</html>

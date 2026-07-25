@@ -75,6 +75,19 @@ services:
       - "${INVESTMENT_AGENT_PATH:-./data/investmentAgent}:/app/investment_agent:ro"
       - ./docs:/app/docs:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Override the Dockerfile CMD to enforce a single uvicorn worker.
+    # The daily_performance backfill uses an in-process concurrency guard
+    # (_active_backfills set) that is NOT safe across multiple worker processes.
+    # A distributed lock (Redis SETNX) must replace it before this can be
+    # increased above 1.
+    command:
+      - uvicorn
+      - main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --workers=1
+      - --loop=uvloop
+      - --http=httptools
     ports:
       - "8000:8000"
     healthcheck:

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Performance — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Daily Performance — Functional Specification</h1>
+
+<p><strong>Version:</strong> 2.0 &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-07-18 &nbsp;|&nbsp; <strong>Route:</strong> <code>/analytics/daily-performance</code></p>
+
+<hr>
+
+<h2>1. Overview</h2>
+<p>The Daily Performance module records a point-in-time snapshot of each portfolio at the end of each trading day. Each snapshot captures three figures: the total capital deployed across all positions in the portfolio (<code>investment</code>), the cumulative realised profit or loss from closed positions (<code>closed_pnl</code>), and the unrealised profit or loss on open positions valued at the time the snapshot was taken (<code>open_pnl</code>). A JSONB breakdown of per-symbol open P&amp;L is stored alongside the headline figures.</p>
+
+<p>Snapshots are <strong>portfolio-scoped</strong>: one row is written per portfolio per calendar day. A user with two portfolios receives two independent snapshot rows. This replaced an earlier user-scoped model (one row per user per day) as of migration <code>b2c3d4e5f6a7</code>.</p>
+
+<p>The module provides three user-facing capabilities:</p>
+<ul>
+  <li>A <strong>performance chart</strong> visualising investment, closed P&amp;L, and open P&amp;L over a date window.</li>
+  <li>A <strong>daily records table</strong> with inline editing so users can correct automatically computed figures.</li>
+  <li>A <strong>Run Now button</strong> to trigger an on-demand snapshot for today.</li>
+</ul>
+
+<div class="callout">The page is located under the Analytics section of the dashboard at <code>/analytics/daily-performance</code>. It is personal — each user sees only data for their own portfolios.</div>
+
+<hr>
+
+<h2>2. Portfolio selector</h2>
+<p>On page load the frontend fetches <code>GET /api/v1/portfolios</code>. The list is stored in component state. The active portfolio is initialised to the portfolio where <code>is_default === true</code>; if no default exists the first portfolio in the list is selected.</p>
+<ul>
+  <li>If the user has <strong>only one portfolio</strong> the selector is not rendered — the single portfolio is used silently.</li>
+  <li>If the user has <strong>two or more portfolios</strong> a labelled <code>&lt;select&gt;</code> element appears in the filter bar. Changing it immediately re-fetches performance data for the newly selected portfolio.</li>
+  <li>All subsequent API calls (list, run, update) pass the selected <code>portfolio_id</code> as a query parameter.</li>
+</ul>
+
+<div class="callout warn">Data fetch is guarded: if <code>selectedPortfolioId</code> is still <code>null</code> (portfolios have not loaded yet) no API call is fired. This prevents a race condition where the list endpoint is hit without a <code>portfolio_id</code>.</div>
+
+<hr>
+
+<h2>3. Date filter</h2>
+<p>The filter bar contains From and To date inputs plus five quick-select preset buttons. The default window on first load is <strong>today − 60 days</strong> to today.</p>
+
+<table>
+  <thead><tr><th>Preset</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><code>1M</code></td><td>Sets From = today − 1 month, To = today</td></tr>
+    <tr><td><code>2M</code></td><td>Sets From = today − 2 months, To = today</td></tr>
+    <tr><td><code>3M</code></td><td>Sets From = today − 3 months, To = today</td></tr>
+    <tr><td><code>6M</code></td><td>Sets From = today − 6 months, To = today</td></tr>
+    <tr><td><code>1Y</code></td><td>Sets From = today − 12 months, To = today</td></tr>
+  </tbody>
+</table>
+
+<p>The backend enforces a hard cap: if <code>date_to − date_from &gt; 366 days</code> it returns HTTP 400. The frontend does not pre-validate this; the error surfaces as an error banner.</p>
+
+<div class="callout warn">TD-DP-07: The frontend does not check whether <code>date_from &gt; date_to</code> before submitting. If a user types an invalid range, the API call will succeed with zero results rather than showing an informative error.</div>
+
+<hr>
+
+<h2>4. Performance chart</h2>
+<p>A custom SVG area chart renders inside a <code>ResizeObserver</code>-watched container so that it adapts to the available width without a page reload.</p>
+
+<h3>4.1 Series</h3>
+<table>
+  <thead><tr><th>Series</th><th>Colour</th><th>Source field</th></tr></thead>
+  <tbody>
+    <tr><td>Investment</td><td><code>#3b82f6</code> (blue)</td><td><code>record.investment</code></td></tr>
+    <tr><td>Closed P&amp;L</td><td><code>#22c55e</code> (green)</td><td><code>record.closed_pnl</code></td></tr>
+    <tr><td>Open P&amp;L</td><td><code>#a855f7</code> (purple)</td><td><code>record.open_pnl</code></td></tr>
+  </tbody>
+</table>
+
+<p>Each series is rendered as an <strong>area path</strong> (low-opacity fill) under a <strong>stroke line</strong> (full opacity). A zero-baseline line is drawn across the chart. Closed P&amp;L and Open P&amp;L may render below the baseline when those values are negative.</p>
+
+<h3>4.2 Hover tooltip</h3>
+<p>Moving the pointer over the SVG snaps to the nearest data point by dividing the inner chart width by the number of records. A crosshair line, three coloured dots, and a tooltip box appear showing:</p>
+<ul>
+  <li>The date of the selected record.</li>
+  <li>The investment value (blue).</li>
+  <li>The closed P&amp;L value (green).</li>
+  <li>The open P&amp;L value (purple).</li>
+</ul>
+<p>The tooltip repositions to the left of the crosshair if it would overflow the right edge of the SVG.</p>
+
+<h3>4.3 Axes</h3>
+<ul>
+  <li><strong>Y axis:</strong> 5 evenly spaced tick labels. Values ≥ 1,000,000 are formatted as <code>1.2M</code>; values ≥ 1,000 as <code>1K</code>.</li>
+  <li><strong>X axis:</strong> At most 8 labels, chosen at a uniform step across the records array. The last record always receives a label.</li>
+</ul>
+
+<hr>
+
+<h2>5. Daily records table</h2>
+<p>Below the chart a data table lists every snapshot in the date window, newest to oldest. Columns: Date, Investment, Closed P&amp;L, Closed %, Open P&amp;L, Open %, Open Positions.</p>
+
+<h3>5.1 Inline editing</h3>
+<p>The three numeric columns Investment, Closed P&amp;L, and Open P&amp;L are <strong>click-to-edit</strong>. Clicking a cell replaces the display value with an <code>&lt;input type="number"&gt;</code> that auto-focuses. The edit is committed on blur or Enter; Escape cancels without saving.</p>
+
+<p>On commit the frontend calls <code>PUT /api/v1/daily-performance/{date}?portfolio_id={id}</code> with only the changed field. The backend recomputes the affected percentage column (<code>closed_pnl_pct</code> or <code>open_pnl_pct</code>) using the stored investment value. If investment itself is updated in the same request, the backend applies investment first so the new denominator is used when recomputing percentages.</p>
+
+<h3>5.2 Open Positions column</h3>
+<p>If a snapshot has a non-empty <code>open_positions</code> array, each entry is rendered as a colour-coded chip: green background and value for positive P&amp;L, red for negative. The chip label is <code>SYMBOL (+999)</code>. Hovering shows the percentage. If the array is null or empty, an em dash is shown.</p>
+
+<div class="callout warn">TD-DP-08: When a portfolio has no active positions at snapshot time, <code>open_positions</code> is stored as <code>NULL</code> rather than an empty array <code>[]</code>. Both values render identically as an em dash in the UI.</div>
+
+<hr>
+
+<h2>6. Run Now</h2>
+<p>The Run Now button in the page header triggers <code>POST /api/v1/daily-performance/run?portfolio_id={id}</code> using today as the snapshot date. The button shows a spinning icon and the label "Running…" while the request is in flight.</p>
+<p>The operation is <strong>idempotent</strong>: if a snapshot already exists for today and the selected portfolio, it is overwritten with freshly fetched live prices and recalculated figures. Running it multiple times on the same day is safe.</p>
+<p>After a successful run the page re-fetches the record list so the new or updated row is immediately visible in the table and chart.</p>
+
+<hr>
+
+<h2>7. Business rules</h2>
+
+<h3>7.1 Investment</h3>
+<p>Sum of <code>entry_price × position_size</code> for all positions in the portfolio where <code>entry_date &lt;= snapshot_date</code>, regardless of whether the position is open or closed.</p>
+<pre><code>investment = Σ (entry_price × position_size)
+             for pos in portfolio_positions
+             where entry_date &lt;= snapshot_date</code></pre>
+
+<h3>7.2 Closed P&amp;L</h3>
+<p>Sum of net P&amp;L for all positions with <code>status = "closed"</code> and <code>exit_date &lt;= snapshot_date</code>.</p>
+<pre><code>for LONG:  net_pnl = (exit_price - entry_price) × position_size
+for SHORT: net_pnl = (entry_price - exit_price) × position_size
+
+closed_pnl    = Σ net_pnl over qualifying closed positions
+closed_pnl_pct = (closed_pnl / investment) × 100   [0.0 when investment = 0]</code></pre>
+
+<h3>7.3 Open P&amp;L</h3>
+<p>Unrealised P&amp;L for positions with <code>status = "active"</code>, using a live price fetched from Yahoo Finance at snapshot time. The ticker suffix <code>.BK</code> is appended automatically for SET symbols.</p>
+<pre><code>for LONG:  pos_pnl = (current_price - entry_price) × position_size
+for SHORT: pos_pnl = (entry_price - current_price) × position_size
+
+open_pnl    = Σ pos_pnl over active positions (0.0 on price-fetch failure)
+open_pnl_pct = (open_pnl / investment) × 100   [0.0 when investment = 0]</code></pre>
+
+<h3>7.4 Manual corrections</h3>
+<p>A user can override any of Investment, Closed P&amp;L, or Open P&amp;L via inline editing. Percentage fields are recomputed server-side after every update. Manual corrections do not modify <code>open_positions</code> — the JSONB breakdown retains the values from the last automated or on-demand snapshot.</p>
+
+<hr>
+
+<h2>8. Scheduler</h2>
+<p>An APScheduler <code>AsyncIOScheduler</code> named <code>_perf_scheduler</code> fires the snapshot job every weekday (Monday–Friday) at <strong>23:30 Bangkok time</strong> (Asia/Bangkok timezone, equivalent to 16:30 UTC). The scheduler starts unconditionally at application startup — it is not gated by any environment variable.</p>
+
+<p>The job calls <code>run_snapshot_for_all_portfolios(db, today)</code>, which iterates every portfolio across all users. Failures for individual portfolios are caught, logged, and counted; they do not abort the batch. A summary of <code>succeeded</code>, <code>failed</code>, and <code>total</code> counts is written to the structured log on completion.</p>
+
+<table>
+  <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>Schedule</td><td>Mon–Fri 23:30 Asia/Bangkok</td></tr>
+    <tr><td>Cron trigger fields</td><td><code>day_of_week=mon-fri, hour=23, minute=30, timezone=Asia/Bangkok</code></td></tr>
+    <tr><td>Max instances</td><td>1 (previous run must complete before a new one starts)</td></tr>
+    <tr><td>Misfire grace time</td><td>3 600 s (fires up to 1 hour late after a server outage)</td></tr>
+    <tr><td>Gated by env var?</td><td>No — always active</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>
