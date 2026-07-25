@@ -10,10 +10,18 @@ import { apiClient } from './api'
  */
 export interface PositionChip {
   symbol: string
+  /** Position size (number of shares/units). Added alongside purchased/sold columns. */
+  size?: number | null
   buy_price?: number | null
   close_price?: number | null
   pnl: number
   pnl_pct: number
+  /** ISO date of entry (entry_date on the position). Null for legacy rows. */
+  entry_date?: string | null
+  /** ISO date of exit. Present only on sold positions. */
+  exit_date?: string | null
+  /** Exit price. Present only on sold positions. */
+  exit_price?: number | null
 }
 
 /**
@@ -105,13 +113,20 @@ export const dailyPerformanceService = {
   },
 
   /**
-   * Trigger a real-time snapshot for today and persist it.
-   * POST /daily-performance/run
+   * Trigger an on-demand snapshot and persist it.
+   * POST /daily-performance/run?portfolio_id=X[&snapshot_date=YYYY-MM-DD]
+   *
+   * When `snapshotDate` is omitted the server defaults to today.
+   * Pass a specific date to regenerate a single past record (used by the
+   * per-row Refresh action: delete existing record then call this).
    */
-  async runSnapshot(portfolioId: string): Promise<DailyPerformanceRecord & { status: string }> {
-    const { data } = await apiClient.post('/daily-performance/run', null, {
-      params: { portfolio_id: portfolioId },
-    })
+  async runSnapshot(
+    portfolioId: string,
+    snapshotDate?: string,
+  ): Promise<DailyPerformanceRecord & { status: string }> {
+    const params: Record<string, string> = { portfolio_id: portfolioId }
+    if (snapshotDate) params.snapshot_date = snapshotDate
+    const { data } = await apiClient.post('/daily-performance/run', null, { params })
     return data
   },
 

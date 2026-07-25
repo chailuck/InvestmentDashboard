@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.models.daily_performance import DailyPerformance
-from app.models.portfolio_cash_transaction import PortfolioCashTransaction
+from app.models.portfolio import InvestmentTransaction
 from app.models.portfolio_db import PortfolioDbPosition
 
 _log = get_logger("daily_performance_service")
@@ -279,10 +279,12 @@ def _compute_snapshot_values(
         open_positions_list.append(
             {
                 "symbol": pos.symbol,
+                "size": pos.position_size or 0,
                 "buy_price": ep,
                 "close_price": cp,
                 "pnl": pos_pnl,
                 "pnl_pct": pos_pnl_pct,
+                "entry_date": pos.entry_date.isoformat() if pos.entry_date else None,
             }
         )
 
@@ -310,10 +312,12 @@ def _compute_snapshot_values(
         purchased_positions_list.append(
             {
                 "symbol": pos.symbol,
+                "size": pos.position_size or 0,
                 "buy_price": ep,
                 "close_price": cp,
                 "pnl": pos_pnl,
                 "pnl_pct": pos_pnl_pct,
+                "entry_date": pos.entry_date.isoformat() if pos.entry_date else None,
             }
         )
 
@@ -327,15 +331,19 @@ def _compute_snapshot_values(
         xp = float(pos.exit_price or 0)
         sz = pos.position_size or 0
         pos_pnl = _pos_net_pnl(pos)
-        invested = ep * sz
-        pos_pnl_pct = round((pos_pnl / invested) * 100, 4) if invested > 0 else 0.0
+        # pnl_pct: (exit - entry) / entry × 100 for LONG; simplified per-share basis
+        pos_pnl_pct = round((xp - ep) / ep * 100, 4) if ep > 0 else 0.0
         sold_positions_list.append(
             {
                 "symbol": pos.symbol,
+                "size": pos.position_size or 0,
                 "buy_price": ep,
                 "close_price": xp,
                 "pnl": pos_pnl,
                 "pnl_pct": pos_pnl_pct,
+                "entry_date": pos.entry_date.isoformat() if pos.entry_date else None,
+                "exit_date": pos.exit_date.isoformat() if pos.exit_date else None,
+                "exit_price": xp,
             }
         )
 
@@ -431,12 +439,21 @@ async def run_daily_snapshot(
             prices[sym] = pr if not isinstance(pr, Exception) else None
 
     # ── 4. Query cumulative cash investment ───────────────────────────────────
+    from sqlalchemy import case as sa_case  # deferred
     cash_sum_result = await db.execute(
         select(
-            sa_func.coalesce(sa_func.sum(PortfolioCashTransaction.amount), 0)
+            sa_func.coalesce(
+                sa_func.sum(
+                    sa_case(
+                        (InvestmentTransaction.action == "CASH_OUT", -InvestmentTransaction.amount),
+                        else_=InvestmentTransaction.amount,
+                    )
+                ),
+                0,
+            )
         ).where(
-            PortfolioCashTransaction.portfolio_id == portfolio_uuid,
-            PortfolioCashTransaction.date <= snapshot_date,
+            InvestmentTransaction.portfolio_id == portfolio_uuid,
+            InvestmentTransaction.date <= snapshot_date,
         )
     )
     cash_investment = float(cash_sum_result.scalar_one())
@@ -627,14 +644,18 @@ async def run_historical_backfill(
 
         # ── 4. Pre-fetch cash transactions for investment computation ──────────
         cash_q = (
-            select(PortfolioCashTransaction)
-            .where(PortfolioCashTransaction.portfolio_id == portfolio_uuid)
-            .order_by(PortfolioCashTransaction.date.asc())
+            select(InvestmentTransaction)
+            .where(InvestmentTransaction.portfolio_id == portfolio_uuid)
+            .order_by(InvestmentTransaction.date.asc())
         )
         cash_result = await db.execute(cash_q)
         cash_txns = cash_result.scalars().all()
         cash_pairs: list[tuple[date, float]] = [
-            (tx.date, float(tx.amount)) for tx in cash_txns
+            (
+                tx.date,
+                -float(tx.amount) if tx.action == "CASH_OUT" else float(tx.amount),
+            )
+            for tx in cash_txns
         ]
         _log.info(
             "daily_performance.backfill_cash_transactions_loaded",

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
 import {
   TrendingUp,
   RefreshCw,
@@ -9,19 +9,14 @@ import {
   CheckCircle2,
   Trash2,
   Pencil,
-  ChevronDown,
-  ChevronUp,
-  Plus,
   X,
 } from 'lucide-react'
 import {
   dailyPerformanceService,
-  portfolioCashTransactionService,
   type DailyPerformanceRecord,
   type DailyPerformanceUpdateInput,
   type BackfillResult,
   type PositionChip,
-  type CashTransaction,
 } from '@/services/dailyPerformance'
 import { apiClient } from '@/services/api'
 
@@ -57,21 +52,6 @@ function formatXLabel(dateStr: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-/**
- * Format a position chip label.
- * New format (when buy_price and close_price are available):
- *   SYMBOL (buy/close/+P&L%)   e.g. PTT (35.0/36.5/+4.3%)
- * Fallback for old records without price data:
- *   SYMBOL (+P&L%)
- */
-function formatPositionChip(pos: PositionChip): string {
-  const sign = pos.pnl_pct >= 0 ? '+' : ''
-  const pctStr = `${sign}${pos.pnl_pct.toFixed(1)}%`
-  if (pos.buy_price != null && pos.close_price != null) {
-    return `${pos.symbol} (${pos.buy_price.toFixed(1)}/${pos.close_price.toFixed(1)}/${pctStr})`
-  }
-  return `${pos.symbol} (${pctStr})`
-}
 
 // ─── Color constants (all inline styles — Tailwind JIT purges dynamic colors) ─
 
@@ -141,9 +121,160 @@ interface SortConfig {
   dir: SortDir
 }
 
-// ─── Position chips component ─────────────────────────────────────────────────
+// ─── Position chip card component ─────────────────────────────────────────────
 
-function PositionChips({ positions }: { positions: PositionChip[] | null | undefined }) {
+/**
+ * Renders a single position chip as a small card with summary data above the
+ * symbol and a fixed-positioned custom tooltip on hover.
+ * Uses position:fixed for the tooltip so it isn't clipped by overflow-x:auto.
+ */
+function PositionChipCard({ pos, chipKey, expanded }: { pos: PositionChip; chipKey: string; expanded: boolean }) {
+  const [tooltipVisible, setTooltipVisible] = useState(false)
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 })
+
+  const isSold = pos.exit_date != null || pos.exit_price != null
+  const size = pos.size ?? 0
+  const buyPrice = pos.buy_price ?? 0
+  const closeOrExitPrice = isSold ? (pos.exit_price ?? 0) : (pos.close_price ?? 0)
+
+  const totalValue = buyPrice * size
+  const totalCurrent = closeOrExitPrice * size
+  const pnlSign = pos.pnl >= 0 ? '+' : ''
+  const pctSign = pos.pnl_pct >= 0 ? '+' : ''
+  const isPositive = pos.pnl >= 0
+
+  const bgColor = isPositive ? COLORS.chipPositiveBg : COLORS.chipNegativeBg
+  const textColor = isPositive ? COLORS.positive : COLORS.negative
+  const borderColor = isPositive ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    setTooltipPos({ x: e.clientX + 12, y: e.clientY - 10 })
+  }
+
+  const hasData = size > 0 && buyPrice > 0
+
+  return (
+    <div
+      key={chipKey}
+      style={{
+        position: 'relative',
+        display: 'inline-flex',
+        flexDirection: 'column',
+        justifyContent: expanded ? 'flex-start' : 'center',
+        backgroundColor: bgColor,
+        border: `1px solid ${borderColor}`,
+        borderRadius: 6,
+        padding: '3px 6px',
+        fontSize: 10,
+        cursor: 'default',
+        width: 90,
+        height: expanded ? 120 : 45,
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+        userSelect: 'none',
+        flexShrink: 0,
+      }}
+      onMouseEnter={() => setTooltipVisible(true)}
+      onMouseLeave={() => setTooltipVisible(false)}
+      onMouseMove={handleMouseMove}
+    >
+      {/* Summary rows above symbol — shown only when expanded */}
+      {expanded && hasData && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 0.5, marginBottom: 2, overflow: 'hidden' }}>
+          <span style={{ color: 'rgba(160,160,160,0.75)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Val: {totalValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+          </span>
+          <span style={{ color: 'rgba(160,160,160,0.75)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Cur: {totalCurrent.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+          </span>
+          <span style={{ color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {pnlSign}{pos.pnl.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+          </span>
+          <span style={{ color: textColor, opacity: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {pctSign}{pos.pnl_pct.toFixed(2)}%
+          </span>
+        </div>
+      )}
+      {/* Symbol */}
+      <span
+        style={{
+          fontWeight: 600,
+          fontSize: 11,
+          color: textColor,
+          borderTop: (expanded && hasData) ? '1px solid rgba(128,128,128,0.15)' : 'none',
+          paddingTop: (expanded && hasData) ? 2 : 0,
+          textAlign: 'center',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {pos.symbol}
+      </span>
+      {/* Size — always visible below symbol */}
+      {pos.size != null && pos.size > 0 && (
+        <span
+          style={{
+            fontSize: 9,
+            color: 'rgba(160,160,160,0.55)',
+            textAlign: 'center',
+            marginTop: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          ×{pos.size.toLocaleString('en-US')}
+        </span>
+      )}
+
+      {/* Custom fixed-positioned tooltip */}
+      {tooltipVisible && (
+        <div
+          style={{
+            position: 'fixed',
+            left: tooltipPos.x,
+            top: tooltipPos.y,
+            zIndex: 9999,
+            backgroundColor: 'rgba(20,22,28,0.97)',
+            border: '1px solid rgba(128,128,128,0.2)',
+            borderRadius: 6,
+            padding: '7px 10px',
+            fontSize: 11,
+            lineHeight: 1.6,
+            color: 'rgba(220,220,220,0.9)',
+            pointerEvents: 'none',
+            whiteSpace: 'nowrap',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+            minWidth: 180,
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 3 }}>
+            {pos.symbol}{pos.size != null ? ` — ${pos.size.toLocaleString('en-US')} units` : ''}
+          </div>
+          <div>Buy: {pos.entry_date ?? '—'} @ {pos.buy_price != null ? pos.buy_price.toFixed(2) : '—'}</div>
+          {isSold ? (
+            <>
+              <div>Close (txn date): {pos.close_price != null ? pos.close_price.toFixed(2) : '—'}</div>
+              <div>Sold: {pos.exit_date ?? '—'} @ {pos.exit_price != null ? pos.exit_price.toFixed(2) : '—'}</div>
+            </>
+          ) : (
+            <div>Close: {pos.close_price != null ? pos.close_price.toFixed(2) : '—'}</div>
+          )}
+          <div style={{ color: isPositive ? COLORS.positive : COLORS.negative, marginTop: 2 }}>
+            P&L: {pnlSign}{pos.pnl.toFixed(0)} ({pctSign}{pos.pnl_pct.toFixed(2)}%)
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Renders a list of PositionChipCard items with no total row.
+ * Replaces both PositionChips and PositionChipsWithTotal.
+ */
+function PositionChipsList({ positions, expanded }: { positions: PositionChip[] | null | undefined; expanded: boolean }) {
   if (!positions || positions.length === 0) {
     return (
       <span style={{ color: 'rgba(128,128,128,0.4)', fontSize: 11 }} aria-label="None">
@@ -152,24 +283,9 @@ function PositionChips({ positions }: { positions: PositionChip[] | null | undef
     )
   }
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
       {positions.map((pos, j) => (
-        <span
-          key={`${pos.symbol}-${j}`}
-          style={{
-            display: 'block',
-            backgroundColor: pos.pnl >= 0 ? COLORS.chipPositiveBg : COLORS.chipNegativeBg,
-            color: pos.pnl >= 0 ? COLORS.positive : COLORS.negative,
-            borderRadius: 4,
-            padding: '1px 6px',
-            fontSize: 11,
-            fontWeight: 500,
-            whiteSpace: 'nowrap',
-          }}
-          title={`${pos.symbol}: P&L ${formatPct(pos.pnl_pct)}`}
-        >
-          {formatPositionChip(pos)}
-        </span>
+        <PositionChipCard key={`${pos.symbol}-${j}`} pos={pos} chipKey={`${pos.symbol}-${j}`} expanded={expanded} />
       ))}
     </div>
   )
@@ -184,7 +300,7 @@ function SortTh({
   onSort,
   className = '',
 }: {
-  label: string
+  label: ReactNode
   column: string
   sortConfig: SortConfig
   onSort: (col: string) => void
@@ -199,7 +315,7 @@ function SortTh({
       <button
         type="button"
         onClick={() => onSort(column)}
-        className="flex items-center gap-1 text-left text-xs font-medium text-ink-muted whitespace-nowrap hover:text-ink-primary transition-colors"
+        className="flex items-center gap-1 text-left text-xs font-medium text-ink-muted hover:text-ink-primary transition-colors"
         aria-sort={isActive ? (sortConfig.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
       >
         {label}
@@ -293,8 +409,9 @@ export default function DailyPerformancePage() {
     text: string
   } | null>(null)
 
-  // ── Per-row delete state ─────────────────────────────────────────────────────
+  // ── Per-row delete / refresh state ───────────────────────────────────────────
   const [deletingRowDate, setDeletingRowDate] = useState<string | null>(null)
+  const [refreshingRowDate, setRefreshingRowDate] = useState<string | null>(null)
 
   // ── Edit record modal state ──────────────────────────────────────────────────
   const [editingRecord, setEditingRecord] = useState<DailyPerformanceRecord | null>(null)
@@ -305,16 +422,8 @@ export default function DailyPerformancePage() {
   })
   const [editSaving, setEditSaving] = useState(false)
 
-  // ── Cash transactions panel state ────────────────────────────────────────────
-  const [showCashPanel, setShowCashPanel] = useState(false)
-  const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([])
-  const [cashLoading, setCashLoading] = useState(false)
-  const [showAddCashForm, setShowAddCashForm] = useState(false)
-  const [addCashForm, setAddCashForm] = useState({ date: getToday(), amount: '', note: '' })
-  const [addCashSaving, setAddCashSaving] = useState(false)
-  const [editingTxId, setEditingTxId] = useState<string | null>(null)
-  const [editTxForm, setEditTxForm] = useState({ amount: '', note: '' })
-  const [editTxSaving, setEditTxSaving] = useState(false)
+  // ── Chip row expand/collapse state ────────────────────────────────────────────
+  const [expandedChipRows, setExpandedChipRows] = useState<Set<string>>(new Set())
 
   // ── ResizeObserver for responsive chart ──────────────────────────────────────
   useEffect(() => {
@@ -368,25 +477,24 @@ export default function DailyPerformancePage() {
     fetchData()
   }, [fetchData])
 
-  // ── Cash transactions fetch ───────────────────────────────────────────────────
-  const fetchCashTransactions = useCallback(async () => {
-    if (!selectedPortfolioId) return
-    setCashLoading(true)
-    try {
-      const data = await portfolioCashTransactionService.list(selectedPortfolioId)
-      setCashTransactions(data)
-    } catch {
-      setError('Failed to load cash transactions.')
-    } finally {
-      setCashLoading(false)
+  // ── Accumulated P&L by date (must be defined before sortedRecords) ───────────
+  /**
+   * Running cumulative sum of DAILY realized P&L (sold_positions.pnl sum per day),
+   * sorted date ascending. Uses daily sell P&L — not the cumulative closed_pnl DB
+   * field — to avoid double-counting (closed_pnl is already a cumulative total).
+   * Result: Map<dateString, cumulativeDailyPnl>
+   */
+  const accPnlByDate = useMemo<Map<string, number>>(() => {
+    const map = new Map<string, number>()
+    const sortedByDate = [...records].sort((a, b) => a.date.localeCompare(b.date))
+    let running = 0
+    for (const r of sortedByDate) {
+      const dailyPnl = r.sold_positions?.reduce((s, p) => s + (p.pnl ?? 0), 0) ?? 0
+      running += dailyPnl
+      map.set(r.date, running)
     }
-  }, [selectedPortfolioId])
-
-  useEffect(() => {
-    if (showCashPanel) {
-      fetchCashTransactions()
-    }
-  }, [showCashPanel, fetchCashTransactions])
+    return map
+  }, [records])
 
   // ── Sorted records (for table only; chart always uses chronological order) ───
   const sortedRecords = useMemo<DailyPerformanceRecord[]>(() => {
@@ -395,6 +503,7 @@ export default function DailyPerformancePage() {
       let bVal: string | number
       switch (sortConfig.column) {
         case 'investment':    aVal = a.investment;    bVal = b.investment;    break
+        case 'acc_pnl':      aVal = accPnlByDate.get(a.date) ?? 0; bVal = accPnlByDate.get(b.date) ?? 0; break
         case 'closed_pnl':   aVal = a.closed_pnl;    bVal = b.closed_pnl;    break
         case 'closed_pct':   aVal = a.closed_pnl_pct; bVal = b.closed_pnl_pct; break
         case 'open_pnl':     aVal = a.open_pnl;      bVal = b.open_pnl;      break
@@ -405,7 +514,7 @@ export default function DailyPerformancePage() {
       if (aVal > bVal) return sortConfig.dir === 'asc' ? 1 : -1
       return 0
     })
-  }, [records, sortConfig])
+  }, [records, sortConfig, accPnlByDate])
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -416,6 +525,15 @@ export default function DailyPerformancePage() {
         : { column, dir: 'desc' },
     )
   }
+
+  const toggleChipRow = useCallback((date: string) => {
+    setExpandedChipRows(prev => {
+      const next = new Set(prev)
+      if (next.has(date)) next.delete(date)
+      else next.add(date)
+      return next
+    })
+  }, [])
 
   const handleRunNow = async () => {
     if (!selectedPortfolioId) return
@@ -482,6 +600,26 @@ export default function DailyPerformancePage() {
     }
   }
 
+  // ── Refresh row (delete-then-regenerate a single past date) ─────────────────
+
+  const handleRefreshRow = async (record: DailyPerformanceRecord) => {
+    if (!selectedPortfolioId) return
+    setRefreshingRowDate(record.date)
+    setError(null)
+    try {
+      // Step 1: remove the stale record
+      await dailyPerformanceService.deleteRecord(record.date, selectedPortfolioId)
+      // Step 2: regenerate using historical prices for that specific date
+      await dailyPerformanceService.runSnapshot(selectedPortfolioId, record.date)
+      // Step 3: reload the table
+      await fetchData()
+    } catch {
+      setError(`Failed to refresh record for ${record.date}. Please try again.`)
+    } finally {
+      setRefreshingRowDate(null)
+    }
+  }
+
   // ── Edit record modal ────────────────────────────────────────────────────────
 
   const handleOpenEdit = (record: DailyPerformanceRecord) => {
@@ -511,64 +649,6 @@ export default function DailyPerformancePage() {
       setError('Failed to save changes. Please try again.')
     } finally {
       setEditSaving(false)
-    }
-  }
-
-  // ── Cash transaction handlers ────────────────────────────────────────────────
-
-  const handleAddCashTx = async () => {
-    if (!selectedPortfolioId) return
-    const amount = parseFloat(addCashForm.amount)
-    if (!addCashForm.date || isNaN(amount)) return
-    setAddCashSaving(true)
-    try {
-      await portfolioCashTransactionService.create({
-        portfolio_id: selectedPortfolioId,
-        date: addCashForm.date,
-        amount,
-        note: addCashForm.note || undefined,
-      })
-      setAddCashForm({ date: getToday(), amount: '', note: '' })
-      setShowAddCashForm(false)
-      await fetchCashTransactions()
-    } catch {
-      setError('Failed to add cash transaction.')
-    } finally {
-      setAddCashSaving(false)
-    }
-  }
-
-  const handleStartEditTx = (tx: CashTransaction) => {
-    setEditingTxId(tx.id)
-    setEditTxForm({ amount: String(tx.amount), note: tx.note ?? '' })
-  }
-
-  const handleSaveTx = async () => {
-    if (!editingTxId) return
-    const amount = parseFloat(editTxForm.amount)
-    if (isNaN(amount)) return
-    setEditTxSaving(true)
-    try {
-      await portfolioCashTransactionService.update(editingTxId, {
-        amount,
-        note: editTxForm.note || undefined,
-      })
-      setEditingTxId(null)
-      await fetchCashTransactions()
-    } catch {
-      setError('Failed to update cash transaction.')
-    } finally {
-      setEditTxSaving(false)
-    }
-  }
-
-  const handleDeleteTx = async (id: string) => {
-    if (!window.confirm('Delete this cash transaction?')) return
-    try {
-      await portfolioCashTransactionService.delete(id)
-      await fetchCashTransactions()
-    } catch {
-      setError('Failed to delete cash transaction.')
     }
   }
 
@@ -935,14 +1015,29 @@ export default function DailyPerformancePage() {
             >
               <thead>
                 <tr>
-                  <SortTh label="Date"       column="date"        sortConfig={sortConfig} onSort={toggleSort} />
-                  <SortTh label="Investment"  column="investment"  sortConfig={sortConfig} onSort={toggleSort} />
-                  <SortTh label="Closed P&L"  column="closed_pnl"  sortConfig={sortConfig} onSort={toggleSort} />
-                  <SortTh label="Closed %"    column="closed_pct"  sortConfig={sortConfig} onSort={toggleSort} />
-                  <SortTh label="Open P&L"    column="open_pnl"    sortConfig={sortConfig} onSort={toggleSort} />
-                  <SortTh label="Open %"      column="open_pct"    sortConfig={sortConfig} onSort={toggleSort} />
-                  <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border whitespace-nowrap">
-                    Open Positions
+                  <SortTh label="Date" column="date" sortConfig={sortConfig} onSort={toggleSort} />
+                  <SortTh label="Investment" column="investment" sortConfig={sortConfig} onSort={toggleSort} />
+                  <SortTh
+                    label={<span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}><span>Acc.</span><span>P&L</span></span>}
+                    column="acc_pnl"
+                    sortConfig={sortConfig}
+                    onSort={toggleSort}
+                  />
+                  <SortTh
+                    label={<span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}><span>Open</span><span>P&L</span></span>}
+                    column="open_pnl"
+                    sortConfig={sortConfig}
+                    onSort={toggleSort}
+                  />
+                  <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border">
+                    <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
+                      <span>Daily</span><span>P&L</span>
+                    </span>
+                  </th>
+                  <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border">
+                    <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
+                      <span>Open</span><span>Positions</span>
+                    </span>
                   </th>
                   <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border whitespace-nowrap">
                     Purchased
@@ -950,6 +1045,12 @@ export default function DailyPerformancePage() {
                   <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border whitespace-nowrap">
                     Sold
                   </th>
+                  <SortTh
+                    label={<span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}><span>Closed</span><span>P&L</span></span>}
+                    column="closed_pnl"
+                    sortConfig={sortConfig}
+                    onSort={toggleSort}
+                  />
                   <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border whitespace-nowrap">
                     Actions
                   </th>
@@ -967,65 +1068,152 @@ export default function DailyPerformancePage() {
                       {record.date}
                     </td>
 
-                    {/* Investment */}
-                    <td className="py-2.5 px-3 text-ink-primary tabular-nums">
-                      {formatNumber(record.investment)}
+                    {/* Investment — shows: amount / Portfolio total */}
+                    <td className="py-2.5 px-3 tabular-nums">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <span className="text-ink-primary">
+                          {formatNumber(record.investment)}
+                        </span>
+                        <span style={{ fontSize: 10, color: '#ffffff' }}>
+                          Port: {formatNumber(record.investment + (accPnlByDate.get(record.date) ?? 0) + record.open_pnl)}
+                        </span>
+                      </div>
                     </td>
 
-                    {/* Closed P&L */}
-                    <td
-                      className="py-2.5 px-3 tabular-nums"
-                      style={{ color: record.closed_pnl >= 0 ? COLORS.positive : COLORS.negative }}
-                    >
-                      {formatNumber(record.closed_pnl)}
+                    {/* Acc. P&L — running cumulative realized P&L */}
+                    {(() => {
+                      const accPnl = accPnlByDate.get(record.date) ?? 0
+                      const sign = accPnl >= 0 ? '+' : ''
+                      return (
+                        <td className="py-2.5 px-3 tabular-nums">
+                          <span style={{ color: accPnl >= 0 ? COLORS.positive : COLORS.negative }}>
+                            {sign}{formatNumber(accPnl)}
+                          </span>
+                        </td>
+                      )
+                    })()}
+
+                    {/* Open P&L — value + % stacked */}
+                    <td className="py-2.5 px-3 tabular-nums">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <span style={{ color: record.open_pnl >= 0 ? COLORS.positive : COLORS.negative }}>
+                          {formatNumber(record.open_pnl)}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: record.open_pnl_pct >= 0 ? COLORS.positive : COLORS.negative,
+                            opacity: 0.7,
+                          }}
+                        >
+                          {formatPct(record.open_pnl_pct)}
+                        </span>
+                      </div>
                     </td>
 
-                    {/* Closed % */}
-                    <td
-                      className="py-2.5 px-3 whitespace-nowrap tabular-nums"
-                      style={{ color: record.closed_pnl_pct >= 0 ? COLORS.positive : COLORS.negative }}
-                    >
-                      {formatPct(record.closed_pnl_pct)}
-                    </td>
-
-                    {/* Open P&L */}
-                    <td
-                      className="py-2.5 px-3 tabular-nums"
-                      style={{ color: record.open_pnl >= 0 ? COLORS.positive : COLORS.negative }}
-                    >
-                      {formatNumber(record.open_pnl)}
-                    </td>
-
-                    {/* Open % */}
-                    <td
-                      className="py-2.5 px-3 whitespace-nowrap tabular-nums"
-                      style={{ color: record.open_pnl_pct >= 0 ? COLORS.positive : COLORS.negative }}
-                    >
-                      {formatPct(record.open_pnl_pct)}
+                    {/* Daily P&L — realized P&L from sells on this specific date */}
+                    <td className="py-2.5 px-3 tabular-nums">
+                      {(() => {
+                        const dailyPnl = record.sold_positions?.reduce((s, p) => s + (p.pnl ?? 0), 0) ?? 0
+                        const sign = dailyPnl >= 0 ? '+' : ''
+                        return (
+                          <span
+                            style={{
+                              color: dailyPnl > 0
+                                ? COLORS.positive
+                                : dailyPnl < 0
+                                  ? COLORS.negative
+                                  : 'rgba(128,128,128,0.4)',
+                            }}
+                          >
+                            {dailyPnl !== 0 ? `${sign}${formatNumber(dailyPnl)}` : '—'}
+                          </span>
+                        )
+                      })()}
                     </td>
 
                     {/* Open Positions chips */}
                     <td className="py-2.5 px-3">
-                      <PositionChips positions={record.open_positions} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleChipRow(record.date)}
+                          style={{
+                            alignSelf: 'flex-start',
+                            fontSize: 9,
+                            padding: '1px 5px',
+                            borderRadius: 3,
+                            border: '1px solid rgba(128,128,128,0.2)',
+                            background: 'none',
+                            cursor: 'pointer',
+                            color: 'rgba(160,160,160,0.65)',
+                            lineHeight: 1.5,
+                            userSelect: 'none',
+                          }}
+                          aria-label={expandedChipRows.has(record.date) ? 'Collapse chips' : 'Expand chips'}
+                          aria-expanded={expandedChipRows.has(record.date)}
+                        >
+                          {expandedChipRows.has(record.date) ? '▲' : '▼'}
+                        </button>
+                        <PositionChipsList positions={record.open_positions} expanded={expandedChipRows.has(record.date)} />
+                      </div>
                     </td>
 
                     {/* Purchased chips */}
                     <td className="py-2.5 px-3">
-                      <PositionChips positions={record.purchased_positions} />
+                      <PositionChipsList positions={record.purchased_positions} expanded={expandedChipRows.has(record.date)} />
                     </td>
 
                     {/* Sold chips */}
                     <td className="py-2.5 px-3">
-                      <PositionChips positions={record.sold_positions} />
+                      <PositionChipsList positions={record.sold_positions} expanded={expandedChipRows.has(record.date)} />
+                    </td>
+
+                    {/* Closed P&L — value + % stacked (moved: now before Actions) */}
+                    <td className="py-2.5 px-3 tabular-nums">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <span style={{ color: record.closed_pnl >= 0 ? COLORS.positive : COLORS.negative }}>
+                          {formatNumber(record.closed_pnl)}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: record.closed_pnl_pct >= 0 ? COLORS.positive : COLORS.negative,
+                            opacity: 0.7,
+                          }}
+                        >
+                          {formatPct(record.closed_pnl_pct)}
+                        </span>
+                      </div>
                     </td>
 
                     {/* Actions */}
                     <td className="py-2.5 px-3">
                       <div className="flex items-center gap-2">
+                        {/* Refresh: delete-then-regenerate this row's date */}
+                        <button
+                          type="button"
+                          onClick={() => handleRefreshRow(record)}
+                          disabled={
+                            refreshingRowDate === record.date ||
+                            deletingRowDate === record.date
+                          }
+                          className="text-ink-muted hover:text-brand-400 transition-colors disabled:opacity-40"
+                          aria-label={`Refresh record for ${record.date}`}
+                          title="Refresh record (delete + regenerate)"
+                        >
+                          <RefreshCw
+                            className={`w-3.5 h-3.5 ${refreshingRowDate === record.date ? 'animate-spin' : ''}`}
+                          />
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleOpenEdit(record)}
-                          className="text-ink-muted hover:text-ink-primary transition-colors"
+                          disabled={
+                            refreshingRowDate === record.date ||
+                            deletingRowDate === record.date
+                          }
+                          className="text-ink-muted hover:text-ink-primary transition-colors disabled:opacity-40"
                           aria-label={`Edit record for ${record.date}`}
                           title="Edit record"
                         >
@@ -1034,10 +1222,16 @@ export default function DailyPerformancePage() {
                         <button
                           type="button"
                           onClick={() => handleDeleteRow(record)}
-                          disabled={deletingRowDate === record.date}
+                          disabled={
+                            deletingRowDate === record.date ||
+                            refreshingRowDate === record.date
+                          }
                           className="text-ink-muted transition-colors disabled:opacity-40"
-                          style={{ color: deletingRowDate === record.date ? undefined : undefined }}
-                          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = COLORS.negative }}
+                          onMouseEnter={(e) => {
+                            if (deletingRowDate !== record.date && refreshingRowDate !== record.date) {
+                              (e.currentTarget as HTMLButtonElement).style.color = COLORS.negative
+                            }
+                          }}
                           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '' }}
                           aria-label={`Delete record for ${record.date}`}
                           title="Delete record"
@@ -1050,206 +1244,6 @@ export default function DailyPerformancePage() {
                 ))}
               </tbody>
             </table>
-          </div>
-        )}
-      </section>
-
-      {/* ── Section 4: Cash Transactions management panel ─────────────────────── */}
-      <section className="card" aria-labelledby="cash-panel-heading">
-        <button
-          type="button"
-          id="cash-panel-heading"
-          onClick={() => setShowCashPanel((p) => !p)}
-          className="w-full flex items-center justify-between p-4 text-sm font-semibold text-ink-primary hover:text-brand-400 transition-colors"
-          aria-expanded={showCashPanel}
-          aria-controls="cash-panel-body"
-        >
-          <span>Manage Investment Records</span>
-          {showCashPanel ? (
-            <ChevronUp className="w-4 h-4" aria-hidden="true" />
-          ) : (
-            <ChevronDown className="w-4 h-4" aria-hidden="true" />
-          )}
-        </button>
-
-        {showCashPanel && (
-          <div id="cash-panel-body" className="px-4 pb-4 space-y-3 border-t border-border pt-3">
-            <p className="text-xs text-ink-muted">
-              Record cash deposits and withdrawals. The cumulative total on any given date
-              is used as the &ldquo;Investment&rdquo; figure on daily snapshots.
-              Positive = deposit, negative = withdrawal.
-            </p>
-
-            {/* Add button / form */}
-            {!showAddCashForm ? (
-              <button
-                type="button"
-                onClick={() => setShowAddCashForm(true)}
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded border border-border text-ink-secondary hover:text-ink-primary hover:border-brand-400 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                Add Transaction
-              </button>
-            ) : (
-              <div
-                className="flex flex-wrap items-end gap-2 p-3 rounded-md"
-                style={{ backgroundColor: 'rgba(128,128,128,0.05)' }}
-              >
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-ink-muted">Date</label>
-                  <input
-                    type="date"
-                    value={addCashForm.date}
-                    onChange={(e) => setAddCashForm((p) => ({ ...p, date: e.target.value }))}
-                    className="input text-xs px-2 py-1.5"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-ink-muted">Amount</label>
-                  <input
-                    type="number"
-                    placeholder="e.g. 100000"
-                    value={addCashForm.amount}
-                    onChange={(e) => setAddCashForm((p) => ({ ...p, amount: e.target.value }))}
-                    className="input text-xs px-2 py-1.5 w-32"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-ink-muted">Note (optional)</label>
-                  <input
-                    type="text"
-                    placeholder="Initial deposit"
-                    value={addCashForm.note}
-                    onChange={(e) => setAddCashForm((p) => ({ ...p, note: e.target.value }))}
-                    className="input text-xs px-2 py-1.5 w-40"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={handleAddCashTx}
-                    disabled={addCashSaving || !addCashForm.date || !addCashForm.amount}
-                    className="btn-primary text-xs py-1.5"
-                  >
-                    {addCashSaving ? 'Saving…' : 'Save'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddCashForm(false)}
-                    className="text-xs px-2.5 py-1.5 rounded border border-border text-ink-secondary hover:text-ink-primary transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Transactions table */}
-            {cashLoading ? (
-              <div className="text-xs text-ink-muted py-4 text-center">Loading…</div>
-            ) : cashTransactions.length === 0 ? (
-              <p className="text-xs text-ink-muted py-4 text-center">
-                No cash transactions recorded. Add your first deposit above.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs border-collapse" aria-label="Cash transactions">
-                  <thead>
-                    <tr>
-                      {['Date', 'Amount', 'Note', ''].map((h) => (
-                        <th
-                          key={h}
-                          className="py-2 px-3 text-left font-medium text-ink-muted border-b border-border whitespace-nowrap"
-                        >
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cashTransactions.map((tx) =>
-                      editingTxId === tx.id ? (
-                        <tr key={tx.id} style={{ borderBottom: '1px solid rgba(128,128,128,0.08)' }}>
-                          <td className="py-2 px-3 font-mono text-ink-secondary">{tx.date}</td>
-                          <td className="py-2 px-3">
-                            <input
-                              type="number"
-                              value={editTxForm.amount}
-                              onChange={(e) => setEditTxForm((p) => ({ ...p, amount: e.target.value }))}
-                              className="input text-xs px-2 py-1 w-28"
-                              autoFocus
-                            />
-                          </td>
-                          <td className="py-2 px-3">
-                            <input
-                              type="text"
-                              value={editTxForm.note}
-                              onChange={(e) => setEditTxForm((p) => ({ ...p, note: e.target.value }))}
-                              className="input text-xs px-2 py-1 w-36"
-                            />
-                          </td>
-                          <td className="py-2 px-3">
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={handleSaveTx}
-                                disabled={editTxSaving}
-                                className="btn-primary text-xs py-0.5 px-2"
-                              >
-                                {editTxSaving ? '…' : 'Save'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setEditingTxId(null)}
-                                className="text-xs px-2 py-0.5 rounded border border-border text-ink-secondary hover:text-ink-primary transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (
-                        <tr key={tx.id} style={{ borderBottom: '1px solid rgba(128,128,128,0.08)' }}>
-                          <td className="py-2 px-3 font-mono text-ink-secondary">{tx.date}</td>
-                          <td
-                            className="py-2 px-3 tabular-nums"
-                            style={{ color: tx.amount >= 0 ? COLORS.positive : COLORS.negative }}
-                          >
-                            {tx.amount >= 0 ? '+' : ''}
-                            {tx.amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                          </td>
-                          <td className="py-2 px-3 text-ink-secondary">{tx.note ?? '—'}</td>
-                          <td className="py-2 px-3">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleStartEditTx(tx)}
-                                className="text-ink-muted hover:text-ink-primary transition-colors"
-                                aria-label="Edit transaction"
-                                title="Edit"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteTx(tx.id)}
-                                className="text-ink-muted transition-colors"
-                                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = COLORS.negative }}
-                                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '' }}
-                                aria-label="Delete transaction"
-                                title="Delete"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ),
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         )}
       </section>

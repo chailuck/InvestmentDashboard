@@ -277,18 +277,36 @@ async def trigger_historical_backfill(
 async def trigger_snapshot(
     user_id: UserId,
     db: DB,
-    portfolio_id: uuid.UUID | None = Query(None, description="Portfolio UUID. Defaults to user's default portfolio."),
+    portfolio_id: uuid.UUID | None = Query(
+        None,
+        description="Portfolio UUID. Defaults to user's default portfolio.",
+    ),
+    snapshot_date: date | None = Query(
+        None,
+        description=(
+            "Snapshot date (YYYY-MM-DD). Defaults to today. "
+            "Use this to regenerate a specific past day (e.g. after a per-row Refresh action)."
+        ),
+    ),
 ) -> dict[str, Any]:
     """Trigger an on-demand daily performance snapshot for the current user's portfolio.
 
-    Uses today's date as the snapshot date.  If a record already exists for
-    today it will be overwritten with fresh live prices and recalculated
-    figures (idempotent upsert).
+    When ``snapshot_date`` is omitted the snapshot is computed for today.
+    When ``snapshot_date`` is supplied the snapshot is computed for that specific
+    date using historical prices — useful for refreshing a single past record
+    without running a full backfill.  If a record already exists for the target
+    date it will be overwritten (idempotent upsert).
+
+    Args:
+        user_id:       Injected from the JWT bearer token.
+        db:            Async DB session.
+        portfolio_id:  Optional portfolio UUID; defaults to the user's default portfolio.
+        snapshot_date: Optional target date; defaults to today.
 
     Returns:
         A dict with ``status: "ok"`` merged with the serialised snapshot.
     """
-    snapshot_date = date.today()
+    effective_date = snapshot_date or date.today()
     uid = uuid.UUID(user_id)
     resolved_portfolio_id = await _resolve_portfolio_id(db, uid, portfolio_id)
 
@@ -296,10 +314,11 @@ async def trigger_snapshot(
         "daily_performance.manual_run",
         user_id=user_id,
         portfolio_id=str(resolved_portfolio_id),
-        snapshot_date=snapshot_date.isoformat(),
+        snapshot_date=effective_date.isoformat(),
+        requested_date=snapshot_date.isoformat() if snapshot_date else "today",
     )
 
-    row = await run_daily_snapshot(db, user_id, snapshot_date, portfolio_id=str(resolved_portfolio_id))
+    row = await run_daily_snapshot(db, user_id, effective_date, portfolio_id=str(resolved_portfolio_id))
     return {"status": "ok", **_serialize(row)}
 
 
