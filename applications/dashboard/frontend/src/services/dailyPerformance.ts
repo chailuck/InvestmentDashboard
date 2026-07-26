@@ -48,6 +48,8 @@ export interface DailyPerformanceRecord {
   purchased_positions: PositionChip[] | null
   /** Positions closed on this date (exit_date == date). Added in migration c3d4e5f6a7b8. */
   sold_positions: PositionChip[] | null
+  /** Accumulated realized P&L from day 1 of trading through this date. Null if backfill has not run for this record. */
+  acc_pnl: number | null
   created_at: string | null
   updated_at: string | null
 }

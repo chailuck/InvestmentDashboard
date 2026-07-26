@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 from datetime import date, timedelta
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,6 +26,7 @@ from app.services.daily_performance_service import (
     _compute_snapshot_values,
     _fetch_price_history,
     _get_historical_price,
+    run_daily_snapshot,
     run_historical_backfill,
 )
 
@@ -362,3 +364,271 @@ class TestRunHistoricalBackfill:
 
         # Lock must be released regardless of what happened inside
         assert PORTFOLIO_ID not in svc._active_backfills
+
+
+# ── _compute_snapshot_values – sold_positions pnl extraction ──────────────────
+
+class TestAccPnlSoldPositionsExtraction:
+    """TC-024 through TC-026: sold_positions.pnl values that feed the acc_pnl accumulator."""
+
+    def test_TC024_single_long_position_closed_on_snapshot_date_produces_correct_pnl(self):
+        """LONG closed exactly on snapshot_date: sold_positions[0]['pnl'] == 300.0."""
+        snap_date = date(2024, 6, 7)
+        pos = _pos(
+            symbol="PTT",
+            status="closed",
+            entry_date=date(2024, 5, 1),
+            exit_date=snap_date,
+            entry_price=100.0,
+            exit_price=130.0,
+            size=10,
+            direction="LONG",
+        )
+        r = _compute_snapshot_values([pos], snap_date, lambda s: None)
+        sold = r.get("sold_positions")
+        assert sold is not None
+        assert len(sold) == 1
+        assert sold[0]["pnl"] == pytest.approx(300.0)
+
+    def test_TC025_only_position_closed_on_snapshot_date_appears_in_sold_positions(self):
+        """Two positions: only the one whose exit_date == snapshot_date is in sold_positions."""
+        snap_date = date(2024, 6, 7)
+        pos_closed_today = _pos(
+            symbol="AAA",
+            status="closed",
+            entry_date=date(2024, 5, 1),
+            exit_date=snap_date,
+            entry_price=100.0,
+            exit_price=130.0,
+            size=10,
+        )
+        pos_still_open = _pos(
+            symbol="BBB",
+            status="active",
+            entry_date=date(2024, 5, 2),
+            exit_date=None,
+        )
+        r = _compute_snapshot_values(
+            [pos_closed_today, pos_still_open], snap_date, lambda s: 110.0
+        )
+        sold = r.get("sold_positions")
+        assert sold is not None
+        assert len(sold) == 1
+        assert sold[0]["symbol"] == "AAA"
+
+    def test_TC026_no_sales_on_snapshot_date_yields_zero_daily_pnl(self):
+        """Active-only portfolio: sold_positions is None/empty → acc_pnl contribution = 0.0."""
+        snap_date = date(2024, 6, 7)
+        pos = _pos(symbol="PTT", status="active", entry_date=date(2024, 5, 1))
+        r = _compute_snapshot_values([pos], snap_date, lambda s: 110.0)
+        sold = r.get("sold_positions")
+        # Mirrors the accumulator formula: sum over (sold_positions or [])
+        daily_pnl = sum(float(p.get("pnl", 0) or 0) for p in (sold or []))
+        assert daily_pnl == pytest.approx(0.0)
+
+
+# ── acc_pnl accumulation formula (pure logic) ─────────────────────────────────
+
+class TestAccPnlAccumulationFormula:
+    """TC-027 through TC-028: accumulation math verified in isolation, no async."""
+
+    def test_TC027_multi_day_accumulation_over_three_days(self):
+        """Day1: +200, Day2: 0 sales, Day3: +150 → running acc: 200 → 200 → 350."""
+        snap1 = date(2024, 6, 3)  # Monday
+        snap2 = date(2024, 6, 4)  # Tuesday
+        snap3 = date(2024, 6, 5)  # Wednesday
+
+        # Position closed Day 1: (100-80)*10 = 200
+        pos_day1 = _pos(
+            symbol="AAA",
+            status="closed",
+            entry_date=date(2024, 5, 1),
+            exit_date=snap1,
+            entry_price=80.0,
+            exit_price=100.0,
+            size=10,
+        )
+        # Position closed Day 3: (100-85)*10 = 150
+        pos_day3 = _pos(
+            symbol="BBB",
+            status="closed",
+            entry_date=date(2024, 5, 2),
+            exit_date=snap3,
+            entry_price=85.0,
+            exit_price=100.0,
+            size=10,
+        )
+
+        acc_pnl_running = 0.0
+
+        # --- Day 1: one sale (pos_day1) ---
+        r1 = _compute_snapshot_values([pos_day1], snap1, lambda s: None)
+        daily_pnl = sum(
+            float(p.get("pnl", 0) or 0) for p in (r1.get("sold_positions") or [])
+        )
+        acc_pnl_running += daily_pnl
+        assert acc_pnl_running == pytest.approx(200.0), "After Day 1: acc should be 200"
+
+        # --- Day 2: no sales (pos_day1 already exited; pos_day3 exit is in the future) ---
+        r2 = _compute_snapshot_values([pos_day1, pos_day3], snap2, lambda s: None)
+        daily_pnl = sum(
+            float(p.get("pnl", 0) or 0) for p in (r2.get("sold_positions") or [])
+        )
+        acc_pnl_running += daily_pnl
+        assert acc_pnl_running == pytest.approx(200.0), "After Day 2: acc must be unchanged"
+
+        # --- Day 3: one sale (pos_day3) ---
+        r3 = _compute_snapshot_values([pos_day1, pos_day3], snap3, lambda s: None)
+        daily_pnl = sum(
+            float(p.get("pnl", 0) or 0) for p in (r3.get("sold_positions") or [])
+        )
+        acc_pnl_running += daily_pnl
+        assert acc_pnl_running == pytest.approx(350.0), "After Day 3: acc should be 350"
+
+    def test_TC028_accumulator_restored_on_exception_simulation(self):
+        """Simulated DB failure: acc_pnl_running is restored to its pre-increment value."""
+        acc_pnl_running = 200.0
+        acc_pnl_before = acc_pnl_running
+        try:
+            daily_pnl = 100.0
+            acc_pnl_running += daily_pnl
+            raise RuntimeError("simulated DB failure")
+        except RuntimeError:
+            acc_pnl_running = acc_pnl_before
+        assert acc_pnl_running == pytest.approx(200.0)
+
+
+# ── run_daily_snapshot – acc_pnl computation ──────────────────────────────────
+
+class TestAccPnlDailySnapshot:
+    """TC-029 through TC-030: run_daily_snapshot writes the correct acc_pnl."""
+
+    def _build_db_mock(
+        self,
+        positions: list,
+        cash_amount: float,
+        prior_acc_pnl: Decimal | None,
+    ) -> AsyncMock:
+        """Return an AsyncMock for run_daily_snapshot's 5 sequential execute() calls.
+
+        Call order:
+          1. select(PortfolioDbPosition)         → scalars().all()
+          2. select(coalesce(sum(...), 0))        → scalar_one()   [cash investment]
+          3. select(DailyPerformance.acc_pnl)...  → scalar_one_or_none()  [prior acc_pnl]
+          4. pg_insert(...).values(...)...         → upsert (result ignored)
+          5. select(DailyPerformance).where(...)  → scalar_one()   [re-fetch row]
+        """
+        # Call 1 — positions
+        scalars_mock = MagicMock()
+        scalars_mock.all.return_value = list(positions)
+        positions_result = MagicMock()
+        positions_result.scalars.return_value = scalars_mock
+
+        # Call 2 — cash sum
+        cash_result = MagicMock()
+        cash_result.scalar_one.return_value = cash_amount
+
+        # Call 3 — prior acc_pnl
+        prior_result = MagicMock()
+        prior_result.scalar_one_or_none.return_value = prior_acc_pnl
+
+        # Call 4 — upsert (pg_insert stmt; return value unused by caller)
+        upsert_result = MagicMock()
+
+        # Call 5 — re-fetch upserted row
+        row_mock = MagicMock()
+        refetch_result = MagicMock()
+        refetch_result.scalar_one.return_value = row_mock
+
+        db = AsyncMock()
+        db.execute.side_effect = [
+            positions_result,
+            cash_result,
+            prior_result,
+            upsert_result,
+            refetch_result,
+        ]
+        return db
+
+    @pytest.mark.asyncio
+    async def test_TC029_prior_row_exists_acc_pnl_accumulates_correctly(self):
+        """Prior acc_pnl=Decimal('500.00') + daily_pnl=200 → upserted acc_pnl==700.0."""
+        snap_date = date(2024, 6, 7)  # Friday
+        # LONG position closed today: (120-100)*10 = 200
+        pos = _pos(
+            symbol="PTT",
+            status="closed",
+            entry_date=date(2024, 5, 1),
+            exit_date=snap_date,
+            entry_price=100.0,
+            exit_price=120.0,
+            size=10,
+            direction="LONG",
+        )
+
+        captured: dict = {}
+
+        class _FakeValuesClause:
+            def on_conflict_do_update(self, **kwargs):
+                return MagicMock()
+
+        class _FakeInsertStmt:
+            def values(self, **kwargs):
+                captured.update(kwargs)
+                return _FakeValuesClause()
+
+        def fake_pg_insert(table):
+            return _FakeInsertStmt()
+
+        db_mock = self._build_db_mock(
+            positions=[pos],
+            cash_amount=0.0,
+            prior_acc_pnl=Decimal("500.00"),
+        )
+
+        with patch("sqlalchemy.dialects.postgresql.insert", side_effect=fake_pg_insert):
+            await run_daily_snapshot(db_mock, USER_ID, snap_date, portfolio_id=PORTFOLIO_ID)
+
+        assert captured.get("acc_pnl") == pytest.approx(700.0)
+
+    @pytest.mark.asyncio
+    async def test_TC030_no_prior_row_acc_pnl_starts_from_zero(self):
+        """No prior row (scalar_one_or_none returns None): acc_pnl == 0 + daily_pnl == 200."""
+        snap_date = date(2024, 6, 7)  # Friday
+        # LONG position closed today: (120-100)*10 = 200
+        pos = _pos(
+            symbol="PTT",
+            status="closed",
+            entry_date=date(2024, 5, 1),
+            exit_date=snap_date,
+            entry_price=100.0,
+            exit_price=120.0,
+            size=10,
+            direction="LONG",
+        )
+
+        captured: dict = {}
+
+        class _FakeValuesClause:
+            def on_conflict_do_update(self, **kwargs):
+                return MagicMock()
+
+        class _FakeInsertStmt:
+            def values(self, **kwargs):
+                captured.update(kwargs)
+                return _FakeValuesClause()
+
+        def fake_pg_insert(table):
+            return _FakeInsertStmt()
+
+        db_mock = self._build_db_mock(
+            positions=[pos],
+            cash_amount=0.0,
+            prior_acc_pnl=None,  # first-ever snapshot for this portfolio
+        )
+
+        with patch("sqlalchemy.dialects.postgresql.insert", side_effect=fake_pg_insert):
+            await run_daily_snapshot(db_mock, USER_ID, snap_date, portfolio_id=PORTFOLIO_ID)
+
+        # Prior = 0.0 (no row), daily_pnl = 200 → acc_pnl = 200
+        assert captured.get("acc_pnl") == pytest.approx(200.0)

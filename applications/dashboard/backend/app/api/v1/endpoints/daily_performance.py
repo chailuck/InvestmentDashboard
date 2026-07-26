@@ -86,6 +86,7 @@ def _serialize(row: DailyPerformance) -> dict[str, Any]:
         "open_positions": row.open_positions,
         "purchased_positions": row.purchased_positions,
         "sold_positions": row.sold_positions,
+        "acc_pnl": float(row.acc_pnl) if row.acc_pnl is not None else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }

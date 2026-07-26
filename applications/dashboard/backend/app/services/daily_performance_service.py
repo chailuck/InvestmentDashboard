@@ -469,6 +469,36 @@ async def run_daily_snapshot(
         cash_investment=cash_investment,
     )
 
+    # ── 5b. Compute acc_pnl: prior day's value + today's realized P&L ─────────
+    prior_row_result = await db.execute(
+        select(DailyPerformance.acc_pnl)
+        .where(
+            DailyPerformance.portfolio_id == portfolio_uuid,
+            DailyPerformance.date < snapshot_date,
+        )
+        .order_by(DailyPerformance.date.desc())
+        .limit(1)
+    )
+    prior_acc_pnl_raw = prior_row_result.scalar_one_or_none()
+    if prior_acc_pnl_raw is None:
+        # No prior row exists — normal for a portfolio's first ever snapshot.
+        # acc_pnl starts at zero; re-running a full backfill will populate the
+        # accumulated history correctly.
+        prior_acc_pnl = 0.0
+        _log.info(
+            "daily_performance.snapshot_acc_pnl_no_prior_record",
+            portfolio_id=portfolio_id,
+            snapshot_date=snapshot_date.isoformat(),
+        )
+    else:
+        prior_acc_pnl = float(prior_acc_pnl_raw)
+
+    daily_pnl = sum(
+        float(pos.get("pnl", 0) or 0)
+        for pos in (upsert_values.get("sold_positions") or [])
+    )
+    upsert_values["acc_pnl"] = round(prior_acc_pnl + daily_pnl, 4)
+
     # ── 6. Upsert ─────────────────────────────────────────────────────────────
     stmt = (
         pg_insert(DailyPerformance)
@@ -642,6 +672,24 @@ async def run_historical_backfill(
             portfolio_id=portfolio_id,
         )
 
+        # Re-fetch positions and cash transactions after the delete commit.
+        # The commit expires ALL objects loaded in this session via SQLAlchemy's
+        # expire_on_commit=True default.  Accessing expired attributes in an async
+        # session triggers a synchronous lazy-load which raises MissingGreenlet.
+        # We immediately expunge every object from the session so that future
+        # per-day commits cannot expire them again — detached objects retain their
+        # already-loaded column values without any DB round-trip.
+        result2 = await db.execute(
+            select(PortfolioDbPosition).where(
+                PortfolioDbPosition.user_id == user_uuid,
+                PortfolioDbPosition.portfolio_id == portfolio_uuid,
+            )
+        )
+        all_positions_raw = [p for p in result2.scalars().all() if p.entry_date is not None]
+        for pos in all_positions_raw:
+            db.expunge(pos)
+        all_positions = all_positions_raw
+
         # ── 4. Pre-fetch cash transactions for investment computation ──────────
         cash_q = (
             select(InvestmentTransaction)
@@ -649,14 +697,15 @@ async def run_historical_backfill(
             .order_by(InvestmentTransaction.date.asc())
         )
         cash_result = await db.execute(cash_q)
-        cash_txns = cash_result.scalars().all()
-        cash_pairs: list[tuple[date, float]] = [
-            (
+        cash_txns_raw = cash_result.scalars().all()
+        # Expunge cash transactions too — same reason as positions above.
+        cash_pairs: list[tuple[date, float]] = []
+        for tx in cash_txns_raw:
+            cash_pairs.append((
                 tx.date,
                 -float(tx.amount) if tx.action == "CASH_OUT" else float(tx.amount),
-            )
-            for tx in cash_txns
-        ]
+            ))
+            db.expunge(tx)
         _log.info(
             "daily_performance.backfill_cash_transactions_loaded",
             portfolio_id=portfolio_id,
@@ -701,6 +750,7 @@ async def run_historical_backfill(
         skipped = 0
         errors = 0
         current = effective_start
+        acc_pnl_running: float = 0.0
 
         while current <= end_date:
             # Skip weekends — SET market is closed Saturday (5) and Sunday (6)
@@ -720,6 +770,11 @@ async def run_historical_backfill(
                 current += timedelta(days=1)
                 continue
 
+            # Snapshot the accumulator so it can be restored if the DB write fails.
+            # Without this guard a failed commit leaves acc_pnl_running incremented,
+            # causing every subsequent successfully-persisted row to carry a wrong value.
+            acc_pnl_before = acc_pnl_running
+
             try:
                 # Cumulative cash investment up to snapshot_date
                 cash_investment = sum(
@@ -732,6 +787,14 @@ async def run_historical_backfill(
                     _make_price_lookup(snapshot_date),
                     cash_investment=cash_investment,
                 )
+
+                # Accumulate daily realized P&L into acc_pnl_running
+                daily_pnl = sum(
+                    float(pos.get("pnl", 0) or 0)
+                    for pos in (upsert_values.get("sold_positions") or [])
+                )
+                acc_pnl_running += daily_pnl
+                upsert_values["acc_pnl"] = round(acc_pnl_running, 4)
 
                 stmt = (
                     pg_insert(DailyPerformance)
@@ -763,6 +826,8 @@ async def run_historical_backfill(
                     )
 
             except Exception as exc:  # noqa: BLE001
+                # Restore accumulator so subsequent days are not skewed by the failed day.
+                acc_pnl_running = acc_pnl_before
                 errors += 1
                 try:
                     await db.rollback()

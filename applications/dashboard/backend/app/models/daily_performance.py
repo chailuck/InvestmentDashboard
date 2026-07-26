@@ -89,6 +89,10 @@ class DailyPerformance(Base):
     # Schema: [{symbol, buy_price, close_price, pnl, pnl_pct}]
     # close_price = exit_price (the price at which the position was sold).
     sold_positions: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Accumulated realised P&L: running sum of sold-position P&L from the
+    # earliest backfill date through this snapshot date.  Null for rows created
+    # before migration d4e5f6a7b8c9 was applied.
+    acc_pnl: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

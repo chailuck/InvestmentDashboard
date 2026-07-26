@@ -59,6 +59,7 @@ const COLORS = {
   investment: '#3b82f6',
   closedPnl: '#22c55e',
   openPnl: '#a855f7',
+  totalPort: '#f59e0b',
   positive: '#22c55e',
   negative: '#ef4444',
   chipPositiveBg: 'rgba(34,197,94,0.15)',
@@ -109,6 +110,7 @@ interface ChartData {
   investmentPts: Point[]
   closedPnlPts: Point[]
   openPnlPts: Point[]
+  totalPortPts: Point[]
   yTicks: number[]
   xLabels: Array<{ i: number; date: string; x: number }>
 }
@@ -274,7 +276,7 @@ function PositionChipCard({ pos, chipKey, expanded }: { pos: PositionChip; chipK
  * Renders a list of PositionChipCard items with no total row.
  * Replaces both PositionChips and PositionChipsWithTotal.
  */
-function PositionChipsList({ positions, expanded }: { positions: PositionChip[] | null | undefined; expanded: boolean }) {
+function PositionChipsList({ positions, expanded, columns = 5 }: { positions: PositionChip[] | null | undefined; expanded: boolean; columns?: number }) {
   if (!positions || positions.length === 0) {
     return (
       <span style={{ color: 'rgba(128,128,128,0.4)', fontSize: 11 }} aria-label="None">
@@ -283,7 +285,7 @@ function PositionChipsList({ positions, expanded }: { positions: PositionChip[] 
     )
   }
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns}, 90px)`, gap: 4 }}>
       {positions.map((pos, j) => (
         <PositionChipCard key={`${pos.symbol}-${j}`} pos={pos} chipKey={`${pos.symbol}-${j}`} expanded={expanded} />
       ))}
@@ -477,25 +479,6 @@ export default function DailyPerformancePage() {
     fetchData()
   }, [fetchData])
 
-  // ── Accumulated P&L by date (must be defined before sortedRecords) ───────────
-  /**
-   * Running cumulative sum of DAILY realized P&L (sold_positions.pnl sum per day),
-   * sorted date ascending. Uses daily sell P&L — not the cumulative closed_pnl DB
-   * field — to avoid double-counting (closed_pnl is already a cumulative total).
-   * Result: Map<dateString, cumulativeDailyPnl>
-   */
-  const accPnlByDate = useMemo<Map<string, number>>(() => {
-    const map = new Map<string, number>()
-    const sortedByDate = [...records].sort((a, b) => a.date.localeCompare(b.date))
-    let running = 0
-    for (const r of sortedByDate) {
-      const dailyPnl = r.sold_positions?.reduce((s, p) => s + (p.pnl ?? 0), 0) ?? 0
-      running += dailyPnl
-      map.set(r.date, running)
-    }
-    return map
-  }, [records])
-
   // ── Sorted records (for table only; chart always uses chronological order) ───
   const sortedRecords = useMemo<DailyPerformanceRecord[]>(() => {
     return [...records].sort((a, b) => {
@@ -503,9 +486,7 @@ export default function DailyPerformancePage() {
       let bVal: string | number
       switch (sortConfig.column) {
         case 'investment':    aVal = a.investment;    bVal = b.investment;    break
-        case 'acc_pnl':      aVal = accPnlByDate.get(a.date) ?? 0; bVal = accPnlByDate.get(b.date) ?? 0; break
-        case 'closed_pnl':   aVal = a.closed_pnl;    bVal = b.closed_pnl;    break
-        case 'closed_pct':   aVal = a.closed_pnl_pct; bVal = b.closed_pnl_pct; break
+        case 'acc_pnl':      aVal = a.acc_pnl ?? 0; bVal = b.acc_pnl ?? 0; break
         case 'open_pnl':     aVal = a.open_pnl;      bVal = b.open_pnl;      break
         case 'open_pct':     aVal = a.open_pnl_pct;  bVal = b.open_pnl_pct;  break
         default:             aVal = a.date;           bVal = b.date;          break
@@ -514,7 +495,7 @@ export default function DailyPerformancePage() {
       if (aVal > bVal) return sortConfig.dir === 'asc' ? 1 : -1
       return 0
     })
-  }, [records, sortConfig, accPnlByDate])
+  }, [records, sortConfig])
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -683,6 +664,7 @@ export default function DailyPerformancePage() {
     const investmentPts = records.map((r, i) => ({ x: xOf(i), y: yOf(r.investment) }))
     const closedPnlPts = records.map((r, i) => ({ x: xOf(i), y: yOf(r.closed_pnl) }))
     const openPnlPts = records.map((r, i) => ({ x: xOf(i), y: yOf(r.open_pnl) }))
+    const totalPortPts = records.map((r, i) => ({ x: xOf(i), y: yOf(r.investment + r.closed_pnl + r.open_pnl) }))
 
     const tickCount = 5
     const yTicks = Array.from(
@@ -702,7 +684,7 @@ export default function DailyPerformancePage() {
       }
     })
 
-    return { innerW, innerH, baseline, yOf, xOf, investmentPts, closedPnlPts, openPnlPts, yTicks, xLabels }
+    return { innerW, innerH, baseline, yOf, xOf, investmentPts, closedPnlPts, openPnlPts, totalPortPts, yTicks, xLabels }
   }, [records, containerWidth])
 
   // ── SVG hover ────────────────────────────────────────────────────────────────
@@ -895,6 +877,7 @@ export default function DailyPerformancePage() {
                 { label: 'Investment', color: COLORS.investment },
                 { label: 'Closed P&L', color: COLORS.closedPnl },
                 { label: 'Open P&L', color: COLORS.openPnl },
+                { label: 'Total Port', color: COLORS.totalPort },
               ] as const
             ).map(({ label, color }) => (
               <span key={label} className="flex items-center gap-1.5" role="listitem">
@@ -950,9 +933,11 @@ export default function DailyPerformancePage() {
               <path d={buildAreaPath(chartData.investmentPts, chartData.baseline)} fill={COLORS.investment} fillOpacity={0.12} stroke="none" />
               <path d={buildAreaPath(chartData.closedPnlPts, chartData.baseline)} fill={COLORS.closedPnl} fillOpacity={0.18} stroke="none" />
               <path d={buildAreaPath(chartData.openPnlPts, chartData.baseline)} fill={COLORS.openPnl} fillOpacity={0.12} stroke="none" />
+              <path d={buildAreaPath(chartData.totalPortPts, chartData.baseline)} fill={COLORS.totalPort} fillOpacity={0.08} stroke="none" />
               <path d={buildLinePath(chartData.investmentPts)} fill="none" stroke={COLORS.investment} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
               <path d={buildLinePath(chartData.closedPnlPts)} fill="none" stroke={COLORS.closedPnl} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
               <path d={buildLinePath(chartData.openPnlPts)} fill="none" stroke={COLORS.openPnl} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+              <path d={buildLinePath(chartData.totalPortPts)} fill="none" stroke={COLORS.totalPort} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" strokeDasharray="5,3" />
 
               {hoverIndex !== null && hoverIndex >= 0 && hoverIndex < records.length && (() => {
                 const record = records[hoverIndex]
@@ -960,8 +945,9 @@ export default function DailyPerformancePage() {
                 const py_inv = chartData.investmentPts[hoverIndex].y
                 const py_closed = chartData.closedPnlPts[hoverIndex].y
                 const py_open = chartData.openPnlPts[hoverIndex].y
+                const py_total = chartData.totalPortPts[hoverIndex].y
                 const tooltipW = 178
-                const tooltipH = 94
+                const tooltipH = 114
                 const margin = 10
                 const tooltipX = px + tooltipW + margin > containerWidth - CHART_PAD.right ? px - tooltipW - margin : px + margin
                 const tooltipY = CHART_PAD.top + 2
@@ -971,6 +957,7 @@ export default function DailyPerformancePage() {
                     <circle cx={px} cy={py_inv} r={3.5} fill={COLORS.investment} />
                     <circle cx={px} cy={py_closed} r={3.5} fill={COLORS.closedPnl} />
                     <circle cx={px} cy={py_open} r={3.5} fill={COLORS.openPnl} />
+                    <circle cx={px} cy={py_total} r={3.5} fill={COLORS.totalPort} />
                     <rect x={tooltipX} y={tooltipY} width={tooltipW} height={tooltipH} rx={5} ry={5} fill="#1a1d23" fillOpacity={0.97} stroke="currentColor" strokeOpacity={0.12} strokeWidth={1} />
                     <text x={tooltipX + 10} y={tooltipY + 16} fontSize={11} fontWeight={600} fill="currentColor" opacity={0.85}>{record.date}</text>
                     <circle cx={tooltipX + 14} cy={tooltipY + 33} r={3} fill={COLORS.investment} />
@@ -982,6 +969,9 @@ export default function DailyPerformancePage() {
                     <circle cx={tooltipX + 14} cy={tooltipY + 73} r={3} fill={COLORS.openPnl} />
                     <text x={tooltipX + 24} y={tooltipY + 77} fontSize={10} fill={COLORS.openPnl}>{formatNumber(record.open_pnl)}</text>
                     <text x={tooltipX + 100} y={tooltipY + 77} fontSize={10} fill="currentColor" opacity={0.42}>Open P&L</text>
+                    <circle cx={tooltipX + 14} cy={tooltipY + 93} r={3} fill={COLORS.totalPort} />
+                    <text x={tooltipX + 24} y={tooltipY + 97} fontSize={10} fill={COLORS.totalPort}>{formatNumber(record.investment + record.closed_pnl + record.open_pnl)}</text>
+                    <text x={tooltipX + 100} y={tooltipY + 97} fontSize={10} fill="currentColor" opacity={0.42}>Total Port</text>
                   </g>
                 )
               })()}
@@ -1015,10 +1005,14 @@ export default function DailyPerformancePage() {
             >
               <thead>
                 <tr>
-                  <SortTh label="Date" column="date" sortConfig={sortConfig} onSort={toggleSort} />
-                  <SortTh label="Investment" column="investment" sortConfig={sortConfig} onSort={toggleSort} />
                   <SortTh
-                    label={<span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}><span>Acc.</span><span>P&L</span></span>}
+                    label={<span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}><span>Date /</span><span>Investment</span></span>}
+                    column="date"
+                    sortConfig={sortConfig}
+                    onSort={toggleSort}
+                  />
+                  <SortTh
+                    label={<span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}><span>Acc /</span><span>Daily P&L</span></span>}
                     column="acc_pnl"
                     sortConfig={sortConfig}
                     onSort={toggleSort}
@@ -1031,26 +1025,15 @@ export default function DailyPerformancePage() {
                   />
                   <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border">
                     <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
-                      <span>Daily</span><span>P&L</span>
-                    </span>
-                  </th>
-                  <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border">
-                    <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
                       <span>Open</span><span>Positions</span>
                     </span>
                   </th>
                   <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border whitespace-nowrap">
-                    Purchased
+                    Purchased Pos.
                   </th>
                   <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border whitespace-nowrap">
-                    Sold
+                    Sold Pos.
                   </th>
-                  <SortTh
-                    label={<span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}><span>Closed</span><span>P&L</span></span>}
-                    column="closed_pnl"
-                    sortConfig={sortConfig}
-                    onSort={toggleSort}
-                  />
                   <th scope="col" className="py-2 px-3 text-left text-xs font-medium text-ink-muted border-b border-border whitespace-nowrap">
                     Actions
                   </th>
@@ -1063,32 +1046,46 @@ export default function DailyPerformancePage() {
                     className="transition-colors"
                     style={{ borderBottom: '1px solid rgba(128,128,128,0.08)' }}
                   >
-                    {/* Date */}
-                    <td className="py-2.5 px-3 text-ink-secondary whitespace-nowrap font-mono text-xs">
-                      {record.date}
-                    </td>
-
-                    {/* Investment — shows: amount / Portfolio total */}
+                    {/* Date / Investment */}
                     <td className="py-2.5 px-3 tabular-nums">
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <span className="text-ink-primary">
-                          {formatNumber(record.investment)}
+                        <span className="font-mono text-ink-muted" style={{ fontSize: 10 }}>
+                          {record.date}
                         </span>
-                        <span style={{ fontSize: 10, color: '#ffffff' }}>
-                          Port: {formatNumber(record.investment + (accPnlByDate.get(record.date) ?? 0) + record.open_pnl)}
+                        <span style={{ fontSize: 11, color: '#ffffff' }}>
+                          Port: {formatNumber(record.investment + (record.acc_pnl ?? 0) + record.open_pnl)}
+                        </span>
+                        <span style={{ fontSize: 11, color: COLORS.investment }}>
+                          Inv: {formatNumber(record.investment)}
                         </span>
                       </div>
                     </td>
 
-                    {/* Acc. P&L — running cumulative realized P&L */}
+                    {/* Acc / Daily P&L */}
                     {(() => {
-                      const accPnl = accPnlByDate.get(record.date) ?? 0
-                      const sign = accPnl >= 0 ? '+' : ''
+                      const accPnl = record.acc_pnl ?? 0
+                      const accSign = accPnl >= 0 ? '+' : ''
+                      const dailyPnl = record.sold_positions?.reduce((s, p) => s + (p.pnl ?? 0), 0) ?? 0
+                      const dailySign = dailyPnl >= 0 ? '+' : ''
                       return (
                         <td className="py-2.5 px-3 tabular-nums">
-                          <span style={{ color: accPnl >= 0 ? COLORS.positive : COLORS.negative }}>
-                            {sign}{formatNumber(accPnl)}
-                          </span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            <span style={{ fontSize: 12, color: accPnl >= 0 ? COLORS.positive : COLORS.negative }}>
+                              {accSign}{formatNumber(accPnl)}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 10,
+                                color: dailyPnl > 0
+                                  ? COLORS.positive
+                                  : dailyPnl < 0
+                                    ? COLORS.negative
+                                    : 'rgba(128,128,128,0.4)',
+                              }}
+                            >
+                              D: {dailyPnl !== 0 ? `${dailySign}${formatNumber(dailyPnl)}` : '—'}
+                            </span>
+                          </div>
                         </td>
                       )
                     })()}
@@ -1111,86 +1108,25 @@ export default function DailyPerformancePage() {
                       </div>
                     </td>
 
-                    {/* Daily P&L — realized P&L from sells on this specific date */}
-                    <td className="py-2.5 px-3 tabular-nums">
-                      {(() => {
-                        const dailyPnl = record.sold_positions?.reduce((s, p) => s + (p.pnl ?? 0), 0) ?? 0
-                        const sign = dailyPnl >= 0 ? '+' : ''
-                        return (
-                          <span
-                            style={{
-                              color: dailyPnl > 0
-                                ? COLORS.positive
-                                : dailyPnl < 0
-                                  ? COLORS.negative
-                                  : 'rgba(128,128,128,0.4)',
-                            }}
-                          >
-                            {dailyPnl !== 0 ? `${sign}${formatNumber(dailyPnl)}` : '—'}
-                          </span>
-                        )
-                      })()}
-                    </td>
-
                     {/* Open Positions chips */}
-                    <td className="py-2.5 px-3">
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <button
-                          type="button"
-                          onClick={() => toggleChipRow(record.date)}
-                          style={{
-                            alignSelf: 'flex-start',
-                            fontSize: 9,
-                            padding: '1px 5px',
-                            borderRadius: 3,
-                            border: '1px solid rgba(128,128,128,0.2)',
-                            background: 'none',
-                            cursor: 'pointer',
-                            color: 'rgba(160,160,160,0.65)',
-                            lineHeight: 1.5,
-                            userSelect: 'none',
-                          }}
-                          aria-label={expandedChipRows.has(record.date) ? 'Collapse chips' : 'Expand chips'}
-                          aria-expanded={expandedChipRows.has(record.date)}
-                        >
-                          {expandedChipRows.has(record.date) ? '▲' : '▼'}
-                        </button>
-                        <PositionChipsList positions={record.open_positions} expanded={expandedChipRows.has(record.date)} />
-                      </div>
+                    <td className="py-2.5 px-3" style={{ verticalAlign: 'top' }}>
+                      <PositionChipsList positions={record.open_positions} expanded={expandedChipRows.has(record.date)} columns={5} />
                     </td>
 
                     {/* Purchased chips */}
-                    <td className="py-2.5 px-3">
-                      <PositionChipsList positions={record.purchased_positions} expanded={expandedChipRows.has(record.date)} />
+                    <td className="py-2.5 px-3" style={{ verticalAlign: 'top' }}>
+                      <PositionChipsList positions={record.purchased_positions} expanded={expandedChipRows.has(record.date)} columns={3} />
                     </td>
 
                     {/* Sold chips */}
-                    <td className="py-2.5 px-3">
-                      <PositionChipsList positions={record.sold_positions} expanded={expandedChipRows.has(record.date)} />
-                    </td>
-
-                    {/* Closed P&L — value + % stacked (moved: now before Actions) */}
-                    <td className="py-2.5 px-3 tabular-nums">
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <span style={{ color: record.closed_pnl >= 0 ? COLORS.positive : COLORS.negative }}>
-                          {formatNumber(record.closed_pnl)}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 10,
-                            color: record.closed_pnl_pct >= 0 ? COLORS.positive : COLORS.negative,
-                            opacity: 0.7,
-                          }}
-                        >
-                          {formatPct(record.closed_pnl_pct)}
-                        </span>
-                      </div>
+                    <td className="py-2.5 px-3" style={{ verticalAlign: 'top' }}>
+                      <PositionChipsList positions={record.sold_positions} expanded={expandedChipRows.has(record.date)} columns={3} />
                     </td>
 
                     {/* Actions */}
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-2">
-                        {/* Refresh: delete-then-regenerate this row's date */}
+                    <td className="py-2.5 px-3" style={{ verticalAlign: 'top' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                        {/* Top-left: Refresh */}
                         <button
                           type="button"
                           onClick={() => handleRefreshRow(record)}
@@ -1206,6 +1142,7 @@ export default function DailyPerformancePage() {
                             className={`w-3.5 h-3.5 ${refreshingRowDate === record.date ? 'animate-spin' : ''}`}
                           />
                         </button>
+                        {/* Top-right: Edit */}
                         <button
                           type="button"
                           onClick={() => handleOpenEdit(record)}
@@ -1219,6 +1156,7 @@ export default function DailyPerformancePage() {
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
+                        {/* Bottom-left: Delete */}
                         <button
                           type="button"
                           onClick={() => handleDeleteRow(record)}
@@ -1237,6 +1175,26 @@ export default function DailyPerformancePage() {
                           title="Delete record"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                        {/* Bottom-right: Expand/Collapse chips */}
+                        <button
+                          type="button"
+                          onClick={() => toggleChipRow(record.date)}
+                          style={{
+                            fontSize: 9,
+                            padding: '1px 5px',
+                            borderRadius: 3,
+                            border: '1px solid rgba(128,128,128,0.2)',
+                            background: 'none',
+                            cursor: 'pointer',
+                            color: 'rgba(160,160,160,0.65)',
+                            lineHeight: 1.5,
+                            userSelect: 'none',
+                          }}
+                          aria-label={expandedChipRows.has(record.date) ? 'Collapse chips' : 'Expand chips'}
+                          aria-expanded={expandedChipRows.has(record.date)}
+                        >
+                          {expandedChipRows.has(record.date) ? '▲' : '▼'}
                         </button>
                       </div>
                     </td>
