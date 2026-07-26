@@ -19,6 +19,7 @@ import { ScanHeatTileWidget } from '@/components/dashboard/ScanHeatTileWidget'
 import { PnlWaterfallWidget } from '@/components/dashboard/PnlWaterfallWidget'
 import { TradingHistorySummaryWidget } from '@/components/dashboard/TradingHistorySummaryWidget'
 import { InvestmentBalanceWidget } from '@/components/dashboard/InvestmentBalanceWidget'
+import { DailyPerformanceWidget } from '@/components/dashboard/DailyPerformanceWidget'
 import type { WidgetConfig, WidgetType } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -37,7 +38,8 @@ const WIDGET_MAP: Record<WidgetType, React.ComponentType<{ config: WidgetConfig 
   scan_heat_tile:           ScanHeatTileWidget,
   pnl_waterfall:            PnlWaterfallWidget,
   trading_history_summary:  TradingHistorySummaryWidget,
-  investment_balance:       InvestmentBalanceWidget,
+  investment_balance:             InvestmentBalanceWidget,
+  daily_performance_summary:      DailyPerformanceWidget,
 }
 
 function useContainerWidth(ref: React.RefObject<HTMLDivElement>) {
