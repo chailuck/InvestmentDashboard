@@ -206,6 +206,7 @@ export type WidgetType =
   | 'pnl_waterfall'
   | 'trading_history_summary'
   | 'investment_balance'
+  | 'daily_performance_summary'
 
 // ── API ───────────────────────────────────────────────────
 export interface ApiError {

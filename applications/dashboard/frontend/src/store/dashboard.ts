@@ -12,6 +12,7 @@ const DEFAULT_WIDGETS: WidgetConfig[] = [
   { id: 'scan-heat-tile',            type: 'scan_heat_tile',            title: 'Scan Heat Tile',            x: 0, y: 19, w: 6,  h: 5, minW: 4, minH: 3 },
   { id: 'pnl-waterfall',             type: 'pnl_waterfall',             title: 'P&L by Ticker',             x: 6, y: 19, w: 6,  h: 5, minW: 4, minH: 3 },
   { id: 'investment-balance',        type: 'investment_balance',        title: 'Investment Balance',         x: 0, y: 25, w: 8,  h: 6, minW: 4, minH: 4 },
+  { id: 'daily-perf-summary',        type: 'daily_performance_summary', title: 'Daily Performance',          x: 8, y: 25, w: 4,  h: 6, minW: 3, minH: 4 },
 ]
 
 interface DashboardState {
@@ -48,6 +49,6 @@ export const useDashboardStore = create<DashboardState>()(
 
       resetLayout: () => set({ widgets: DEFAULT_WIDGETS }),
     }),
-    { name: 'dashboard-layout-v9' }
+    { name: 'dashboard-layout-v10' }
   )
 )
