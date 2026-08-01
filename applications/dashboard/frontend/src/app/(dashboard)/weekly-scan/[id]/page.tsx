@@ -260,7 +260,7 @@ function StrategyCell({ value, onChange }: { value: string | null; onChange: (v:
   const commitOth = (text: string) => onChange(text.trim() || 'OTHERS')
 
   return (
-    <div className="flex items-center gap-0.5 flex-wrap">
+    <div className="flex items-center gap-0.5 flex-nowrap whitespace-nowrap">
       {SCAN_STRATEGIES.map(s => {
         const meta = STRATEGY_ICONS[s] ?? { icon: s[0], short: s, base: '', active: '' }
         const isActive = s === 'OTHERS' ? isOthers : value === s
@@ -946,7 +946,7 @@ export default function WeeklyScanPage() {
                 <th className="px-3 py-2.5 text-left font-medium w-8">#</th>
                 <th className="px-3 py-2.5 text-left font-medium w-[84px]">Symbol</th>
                 <th className="px-3 py-2.5 text-left font-medium">Color</th>
-                <th className="px-3 py-2.5 text-left font-medium min-w-[220px]">Strategy</th>
+                <th className="px-3 py-2.5 text-left font-medium min-w-[260px]">Strategy</th>
                 <th className="px-3 py-2.5 text-left font-medium w-[110px]">
                   <div className="flex flex-col leading-tight">
                     <span className="text-ink-muted">Prev</span>
