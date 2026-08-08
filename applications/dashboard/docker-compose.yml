@@ -73,6 +73,7 @@ services:
       - uploads_data:/app/uploads
       - "${INVESTMENT_DATA_PATH:-./data/investmentPlan}:/app/investment_data:ro"
       - "${INVESTMENT_AGENT_PATH:-./data/investmentAgent}:/app/investment_agent:ro"
+      - "${VAULT_INVESTMENT_RAW_PATH:-./data/vaultInvestmentRaw}:/app/vault_investment_raw"
       - ./docs:/app/docs:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     # Override the Dockerfile CMD to enforce a single uvicorn worker.

@@ -57,6 +57,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/weekly-scan/scans/{scan_id}/week-prices</code></td><td>Mon open + Fri close for all symbols + DR THB estimates</td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/weekly-scan/symbol-notes/{symbol}</code></td><td>Get saved note for a symbol</td></tr>
   <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/weekly-scan/symbol-notes/{symbol}</code></td><td>Upsert note for a symbol</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/overall-plan/generate</code></td><td>Aggregate a purchase plan, active positions, a scan, and the last-2-weeks review into one markdown report</td></tr>
 </table>
 
 <hr>
@@ -230,6 +231,42 @@ Authorization: Bearer eyJ...
 
 // Response 200
 { "symbol": "GULF", "note": "Watching for breakout above 65.", "updated_at": "2026-06-03T10:00:00+07:00" }</code></pre>
+
+<hr>
+
+<h2>Overall Plan</h2>
+<div class="obj">Triggered by the <strong>Generate Overall Plan</strong> button on the scan detail page (see <code>09-weekly-scan/FUNCTIONAL.html § 3.8</code>). Router lives at <code>app/api/v1/endpoints/overall_plan.py</code>, mounted at prefix <code>/overall-plan</code> (not under <code>/weekly-scan</code>) — listed here because it is launched from, and reads, this module's data. Aggregates four sources — a purchase action plan, the caller's active portfolio-DB positions, the referenced weekly scan, and the last-2-weeks Objective / Portfolio Action Review — into one markdown document, then writes it to disk inside the container. Markdown assembly happens entirely server-side (<code>app/services/overall_plan_markdown.py</code>); no report content is returned in the response body.</div>
+
+<h3>POST /api/v1/overall-plan/generate</h3>
+<pre><code>// Request
+{
+  "action_plan_id": "8f1c1e2a-...",   // must be a plan with plan_type == "purchase"
+  "weekly_scan_id": "3b7d9c4f-..."
+}
+
+// Response 200
+{
+  "filename":          "OVERALL PLAN 20260801.md",
+  "path":              "/app/vault_investment_raw/Weeklyplan/OVERALL PLAN 20260801.md",
+  "written_at":        "2026-08-01T14:32:10+07:00",
+  "action_plan_id":    "8f1c1e2a-...",
+  "action_plan_name":  "August Purchase Plan",
+  "weekly_scan_id":    "3b7d9c4f-...",
+  "weekly_scan_name":  "WEEKLY_SCAN_02_08_2026",
+  "portfolio_id":      "a1b2c3d4-...",
+  "portfolio_name":    "Main Portfolio"
+}</code></pre>
+<ul>
+  <li>There is no <code>portfolio_id</code> field in the request — the caller's default portfolio is resolved server-side via <code>get_default_portfolio()</code>.</li>
+  <li>The filename and <code>written_at</code> timestamp are always derived from the current Bangkok date/time on the server, never from the request body.</li>
+  <li>The file is written atomically (temp file + <code>os.replace</code>) to <code>&lt;VAULT_INVESTMENT_RAW_PATH&gt;/Weeklyplan/</code> inside the backend container. Generating again on the same calendar day overwrites the same file — safe to re-run.</li>
+</ul>
+<div class="err">
+<strong>404 Not Found</strong> — <code>{"detail": "Purchase plan not found"}</code>: <code>action_plan_id</code> does not exist, is not owned by the caller, or is not a purchase-type plan.<br>
+<strong>404 Not Found</strong> — <code>{"detail": "Weekly scan not found"}</code>: <code>weekly_scan_id</code> does not exist or is not owned by the caller.<br>
+<strong>422 Unprocessable Entity</strong> — <code>{"detail": "No default portfolio configured. Create a portfolio before generating an overall plan."}</code><br>
+<strong>500 Internal Server Error</strong> — <code>{"detail": "Failed to write overall plan file"}</code>: disk write failed, or (defense-in-depth check, should be unreachable) the resolved path escaped the vault directory.
+</div>
 
 <hr>
 

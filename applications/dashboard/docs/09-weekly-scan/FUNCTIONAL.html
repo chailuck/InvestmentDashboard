@@ -182,6 +182,16 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <h3>3.7 Mark Portfolio Symbols</h3>
 <p>The <strong>Mark Portfolio</strong> button in the scan toolbar cross-references all active portfolio positions against the scan's symbol list. Matching symbols are automatically marked as PURPLE. If the latest purchase plan contains a strategy for the same symbol, that strategy is also inherited — avoiding manual re-entry for known positions.</p>
 
+<h3>3.8 Generate Overall Plan</h3>
+<p>The <strong>Generate Overall Plan</strong> button in the scan toolbar (labelled with a sparkle icon) opens a confirmation modal that combines four data sources into a single markdown report: a purchase action plan, the caller's active portfolio-DB positions, a weekly scan, and the last two weeks of Objective / Portfolio Action Review entries.</p>
+<ul>
+  <li>The modal offers two dropdowns — <strong>Purchase Action Plan</strong> (defaults to the most recently created purchase plan) and <strong>Weekly Scan</strong> (defaults to the scan currently open on the page). There is no portfolio picker; the caller's default portfolio is resolved automatically server-side.</li>
+  <li>Clicking <strong>Generate</strong> calls <code>POST /api/v1/overall-plan/generate</code>. The backend assembles the markdown and writes it to <code>Weeklyplan/OVERALL PLAN &lt;YYYYMMDD&gt;.md</code> inside the personal knowledge vault mount (see <code>VAULT_INVESTMENT_RAW_PATH</code> in <code>.env.example</code>) — the file is not downloaded to the browser.</li>
+  <li>On success the toolbar button briefly shows a checkmark and "Generated!" (reverting after 2 seconds) and a toast confirms the written filename.</li>
+  <li>If no purchase plans or no weekly scans exist, the corresponding dropdown is replaced with an inline message and the Generate button stays disabled.</li>
+</ul>
+<div class="callout">Re-running this action on the same day overwrites the same dated file (the filename is derived from the current server date, not a request parameter) — running it multiple times per day is safe.</div>
+
 <h2>4. Week price calculation</h2>
 <p>Monday open and Friday close prices are fetched from Yahoo Finance using the date embedded in the scan name (<code>WEEKLY_SCAN_DD_MM_YYYY</code>). Ticker translation by market:</p>
 <table>

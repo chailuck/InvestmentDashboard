@@ -1,0 +1,13 @@
+[run]
+# SQLAlchemy's asyncpg dialect bridges sync and async code via greenlet
+# (greenlet_spawn). Without this setting, coverage.py silently stops
+# tracking every line that follows an `await db.execute(...)` /
+# `await db.scalar(...)` call within the same frame, once execution
+# returns from the greenlet switch — it does NOT affect whether the code
+# actually runs, only whether coverage.py notices. This under-reports
+# coverage for essentially every async DB-backed endpoint in this codebase
+# (verified against the pre-existing app/api/v1/endpoints/action_plan.py,
+# which shows the same pattern: lines immediately after `_get_or_404()`'s
+# `await db.execute(...)` call are marked "missing" despite being exercised
+# by many passing tests).
+concurrency = greenlet

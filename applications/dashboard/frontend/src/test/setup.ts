@@ -31,18 +31,39 @@ vi.mock('echarts-for-react', () => ({
     }),
 }))
 
-// Mock framer-motion to eliminate animation timers that cause act() warnings
+// Mock framer-motion to eliminate animation timers that cause act() warnings.
+//
+// IMPORTANT: the per-tag component returned by the Proxy must be a STABLE
+// reference (cached) and must forward refs. `<motion.div>` in JSX re-evaluates
+// the `motion.div` property access on every render of the consuming component.
+// A Proxy `get` trap that returns a brand-new arrow function each time hands
+// React a different component type on every render, which forces React to
+// unmount + remount the entire subtree under that element (losing focus,
+// local state, and invalidating any DOM node references a test captured
+// earlier via `getByRole`/`getByLabelText`, etc.). Caching by tag name and
+// using forwardRef avoids both that remount churn and "function components
+// cannot be given refs" warnings for components (e.g. modals) that pass a
+// ref through motion.div for focus-trap management.
 vi.mock('framer-motion', async () => {
   const actual = await vi.importActual<typeof import('framer-motion')>('framer-motion')
+  const componentCache = new Map<string, React.ForwardRefExoticComponent<any>>()
   return {
     ...actual,
     AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
     motion: new Proxy(
       {},
       {
-        get: (_target, tag: string) =>
-          ({ children, ...rest }: any) =>
-            React.createElement(tag, rest, children),
+        get: (_target, tag: string) => {
+          let Comp = componentCache.get(tag)
+          if (!Comp) {
+            Comp = React.forwardRef(({ children, ...rest }: any, ref: React.Ref<any>) =>
+              React.createElement(tag, { ...rest, ref }, children),
+            )
+            Comp.displayName = `motion.${tag}`
+            componentCache.set(tag, Comp)
+          }
+          return Comp
+        },
       },
     ),
   }

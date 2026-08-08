@@ -69,12 +69,11 @@ Please show the agent name who works with the task also.
 
 # Mandatory Software Development Lifecycle
 
-All work must follow the lifecycle below.
+All work must follow the lifecycle below at least for the steps which mark as mandatory
 
 No phase may be skipped unless explicitly requested.
 
 ## Phase 1: Requirement Analysis
-**Mandatory agent: `business-analyst`** 
 Perform:
 
 * Requirement review

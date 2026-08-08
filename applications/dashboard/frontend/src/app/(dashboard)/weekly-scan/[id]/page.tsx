@@ -8,6 +8,7 @@ import { format, getISOWeek } from 'date-fns'
 import {
   ScanLine, ArrowLeft, RefreshCw, Plus, Trash2, X, Loader2,
   AlertCircle, ChevronDown, Play, ShoppingCart, Check, Filter, BookmarkCheck, Clipboard, FileDown,
+  Sparkles,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -19,6 +20,7 @@ import {
 import { actionPlanService, type PlanSummary, type PurchaseItem } from '@/services/actionPlan'
 import { portfolioDbService } from '@/services/portfolioDb'
 import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
+import { GenerateOverallPlanModal } from '@/components/weekly-scan/GenerateOverallPlanModal'
 
 // ── Inline editable cell ──────────────────────────────────────────────────────
 
@@ -470,6 +472,8 @@ export default function WeeklyScanPage() {
   const [savingConfig,   setSavingConfig]   = useState<'idle' | 'saving' | 'done'>('idle')
   const [copied,         setCopied]         = useState(false)
   const [exported,       setExported]       = useState(false)
+  const [showGeneratePlan, setShowGeneratePlan] = useState(false)
+  const [planGenerated,    setPlanGenerated]    = useState(false)
   const [addToList,      setAddToList]      = useState<string>('')
   const [headerCollapsed, setHeaderCollapsed] = useState(false)
 
@@ -906,6 +910,19 @@ export default function WeeklyScanPage() {
           {exported ? 'Exported!' : 'Export MD'}
         </button>
 
+        {/* Generate Overall Plan */}
+        <button onClick={() => setShowGeneratePlan(true)}
+          title="Generate a combined Overall Plan from a purchase plan and this weekly scan"
+          className={cn(
+            'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50',
+            planGenerated
+              ? 'border-gain/40 bg-gain/10 text-gain'
+              : 'border-teal-500/30 bg-teal-500/10 text-teal-400 hover:bg-teal-500/20',
+          )}>
+          {planGenerated ? <Check className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+          {planGenerated ? 'Generated!' : 'Generate Overall Plan'}
+        </button>
+
         <form onSubmit={handleAdd} className="flex gap-1.5 flex-1 min-w-0">
           {/* List selector — only when on "All" tab and multiple lists exist */}
           {activeListTab === null && listTabs.length > 0 && (
@@ -1237,6 +1254,17 @@ export default function WeeklyScanPage() {
         )}
         {addToPlan && (
           <AddToPlanModal item={addToPlan} onClose={() => setAddToPlan(null)} />
+        )}
+        {showGeneratePlan && (
+          <GenerateOverallPlanModal
+            scanId={id}
+            onClose={() => setShowGeneratePlan(false)}
+            onSuccess={() => {
+              setShowGeneratePlan(false)
+              setPlanGenerated(true)
+              setTimeout(() => setPlanGenerated(false), 2000)
+            }}
+          />
         )}
         {deleteSymbol && (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setDeleteSymbol(null)}>
