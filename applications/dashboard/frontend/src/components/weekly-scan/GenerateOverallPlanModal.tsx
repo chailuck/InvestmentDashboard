@@ -13,8 +13,13 @@ import { extractApiError } from '@/services/api'
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface GenerateOverallPlanModalProps {
-  /** The weekly scan id currently open on the page — becomes the default scan selection. */
-  scanId: string
+  /**
+   * The weekly scan id currently open on the page — becomes the default scan
+   * selection. Optional: when omitted (e.g. when launched from the Action
+   * Plan page rather than a specific scan's page), the fallback effect below
+   * defaults the selection to the most recent scan.
+   */
+  scanId?: string
   onClose: () => void
   /** Called after a successful generate call, with the full server response. */
   onSuccess: (result: OverallPlanGenerateResponse) => void
@@ -29,13 +34,14 @@ const FOCUSABLE_SELECTOR =
  * that logic lives entirely on the backend (`POST /overall-plan/generate`).
  *
  * Two dropdowns (purchase action plan, weekly scan) default to the most
- * recent plan and the scan currently open on the page, respectively. The
- * portfolio is resolved automatically server-side, so there is no portfolio
- * picker here.
+ * recent plan and the scan currently open on the page, respectively — or to
+ * the most recent scan when no `scanId` is supplied (e.g. when launched from
+ * the Action Plan page). The portfolio is resolved automatically
+ * server-side, so there is no portfolio picker here.
  */
 export function GenerateOverallPlanModal({ scanId, onClose, onSuccess }: GenerateOverallPlanModalProps) {
   const [selectedPlanId, setSelectedPlanId] = useState('')
-  const [selectedScanId, setSelectedScanId] = useState(scanId)
+  const [selectedScanId, setSelectedScanId] = useState(scanId ?? '')
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -68,6 +74,8 @@ export function GenerateOverallPlanModal({ scanId, onClose, onSuccess }: Generat
 
   // If the scan id from the URL isn't among the loaded scans (edge case —
   // e.g. deleted concurrently), fall back to the most recent scan instead.
+  // This also covers the case where no scanId prop was supplied at all
+  // (selectedScanId starts as '', which never matches a loaded scan id).
   useEffect(() => {
     if (scans.length === 0) return
     if (scans.some(s => s.id === selectedScanId)) return

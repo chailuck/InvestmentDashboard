@@ -15,6 +15,9 @@ from zoneinfo import ZoneInfo
 
 from app.services.overall_plan_markdown import (
     build_overall_plan_markdown,
+    _daily_position_rows,
+    _daily_sold_pnl,
+    _section_daily_performance,
     _section_positions,
     _section_purchase_plan,
     _section_review,
@@ -282,8 +285,8 @@ def test_review_section_zero_rows():
 
 # ── Full assembly ────────────────────────────────────────────────────────────
 
-def test_build_overall_plan_markdown_assembles_all_four_sections_in_order():
-    """TC-MD-11: The public entry point stitches the header + all 4 sections
+def test_build_overall_plan_markdown_assembles_all_five_sections_in_order():
+    """TC-MD-11: The public entry point stitches the header + all 5 sections
     with '---' dividers between (but not after) each section, in order."""
     generated_at = datetime(2026, 7, 12, 12, 53, tzinfo=BANGKOK)
     md = build_overall_plan_markdown(
@@ -293,16 +296,18 @@ def test_build_overall_plan_markdown_assembles_all_four_sections_in_order():
         positions=[],
         scan=None,
         review_items=[],
+        daily_performance=[],
     )
     assert md.startswith("# OVERALL PLAN 20260712\n\n**Generated:** 12 Jul 2026 12:53  \n\n---\n\n")
-    # Sections appear in order 1 → 2 → 3 → 4
+    # Sections appear in order 1 → 2 → 3 → 4 → 5
     idx1 = md.index("## 1. Purchase Action Plan")
     idx2 = md.index("## 2. Portfolio DB")
     idx3 = md.index("## 3. Weekly Scan")
     idx4 = md.index("## 4. Portfolio Action Review")
-    assert idx1 < idx2 < idx3 < idx4
-    # Exactly 3 '---' dividers (between sections 1-2, 2-3, 3-4) + the 1 after the header = 4 total
-    assert md.count("\n---\n\n") == 4
+    idx5 = md.index("## 5. Daily Performance")
+    assert idx1 < idx2 < idx3 < idx4 < idx5
+    # Exactly 4 '---' dividers (between sections 1-2, 2-3, 3-4, 4-5) + the 1 after the header = 5 total
+    assert md.count("\n---\n\n") == 5
     # No divider after the final section
     assert not md.rstrip("\n").endswith("---")
 
@@ -489,3 +494,217 @@ def test_normal_values_remain_byte_identical_after_escaping_change():
     ]
     out = _section_positions(positions)
     assert "| **AAA** | ↑ L | 1 Jan 2026 | 10.00 | 9.00 | +100 | +10.00% | 8.00 | 11.00 | note |\n" in out
+
+
+# ── Section 5: Daily Performance (Last 10 Days) ─────────────────────────────
+
+def _open_pos(**overrides) -> dict:
+    base = {
+        "symbol": "AOT", "size": 100, "buy_price": 50.0, "close_price": 52.0,
+        "pnl": 200.0, "pnl_pct": 4.0, "entry_date": "2026-07-01",
+    }
+    base.update(overrides)
+    return base
+
+
+def _sold_pos(**overrides) -> dict:
+    base = {
+        "symbol": "PTT", "size": 200, "buy_price": 30.0, "close_price": 32.0,
+        "pnl": 400.0, "pnl_pct": 6.67, "entry_date": "2026-07-01",
+        "exit_date": "2026-08-05", "exit_price": 32.0,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_daily_sold_pnl_none_when_nothing_sold():
+    """TC-MD-13: sold_positions None or [] both yield None, distinct from a
+    breakeven sell (which would sum to 0)."""
+    assert _daily_sold_pnl(None) is None
+    assert _daily_sold_pnl([]) is None
+
+
+def test_daily_sold_pnl_sums_two_positions():
+    """TC-MD-14: Daily P&L is the sum of sold_positions[].pnl for that day,
+    not closed_pnl/acc_pnl."""
+    sold = [_sold_pos(symbol="PTT", pnl=400.0), _sold_pos(symbol="AOT", pnl=-150.0)]
+    assert _daily_sold_pnl(sold) == 250.0
+
+
+def test_daily_position_rows_all_three_groups_with_correct_close_columns():
+    """TC-MD-15: A record with positions in all 3 groups renders combined rows
+    in Open/Purchased/Sold order with correct Group labels; open/purchased
+    show '—' + close_price, sold shows exit_date + exit_price."""
+    rec = {
+        "open_positions": [_open_pos(symbol="AOT")],
+        "purchased_positions": [_open_pos(symbol="BBL", entry_date="2026-08-05")],
+        "sold_positions": [_sold_pos(symbol="PTT")],
+    }
+    rows = _daily_position_rows(rec)
+    assert len(rows) == 3
+    assert rows[0].startswith("| Open | **AOT** |")
+    assert "| — | 52.00 |" in rows[0]  # open: dash + close_price
+    assert rows[1].startswith("| Purchased | **BBL** |")
+    assert "| — | 52.00 |" in rows[1]  # purchased: dash + close_price
+    assert rows[2].startswith("| Sold | **PTT** |")
+    assert "| 5 Aug 2026 | 32.00 |" in rows[2]  # sold: exit_date + exit_price
+
+
+def test_daily_position_rows_empty_when_no_positions_in_any_group():
+    """TC-MD-16: A record with zero positions across all 3 groups (None or
+    []) yields an empty row list."""
+    assert _daily_position_rows({"open_positions": None, "purchased_positions": [], "sold_positions": None}) == []
+    assert _daily_position_rows({}) == []
+
+
+def test_section_daily_performance_empty_records_shows_empty_state():
+    """TC-MD-17: Empty records list renders the heading plus an empty-state
+    message, no crash."""
+    assert _section_daily_performance([]) == (
+        "## 5. Daily Performance (Last 10 Days)\n\n_No daily performance records available._\n\n"
+    )
+
+
+def test_section_daily_performance_summary_table_and_acc_pnl_none_dash():
+    """TC-MD-18: acc_pnl=None renders as '—' in the summary table; a day with
+    no sold positions renders '—' for Daily P&L (Sold)."""
+    records = [
+        {"date": "2026-08-01", "investment": 100000.0, "acc_pnl": None,
+         "open_pnl": 500.0, "open_pnl_pct": 0.5, "open_positions": None,
+         "purchased_positions": None, "sold_positions": None},
+    ]
+    out = _section_daily_performance(records)
+    assert "| 1 Aug 2026 | 100000.00 | — | +500 | +0.50% | — |\n" in out
+
+
+def test_section_daily_performance_skips_position_subtable_when_no_positions():
+    """TC-MD-19: A record with zero positions across all 3 groups skips its
+    per-day position sub-table entirely but still appears in the summary
+    table."""
+    records = [
+        {"date": "2026-08-01", "investment": 100000.0, "acc_pnl": 1000.0,
+         "open_pnl": 500.0, "open_pnl_pct": 0.5, "open_positions": None,
+         "purchased_positions": None, "sold_positions": None},
+    ]
+    out = _section_daily_performance(records)
+    assert "| 1 Aug 2026 |" in out
+    assert "### 1 Aug 2026" not in out
+
+
+def test_section_daily_performance_renders_position_subtable_when_present():
+    """A record with at least one position across the 3 groups gets a
+    per-day '###' sub-table, and Daily P&L (Sold) sums correctly for a day
+    with 2 sold positions."""
+    records = [
+        {"date": "2026-08-05", "investment": 452300.0, "acc_pnl": 8100.0,
+         "open_pnl": 6600.0, "open_pnl_pct": 7.2,
+         "open_positions": [_open_pos(symbol="AOT")],
+         "purchased_positions": None,
+         "sold_positions": [_sold_pos(symbol="PTT", pnl=400.0), _sold_pos(symbol="BBL", pnl=100.0)]},
+    ]
+    out = _section_daily_performance(records)
+    assert "| 5 Aug 2026 | 452300.00 | +8,100 | +6,600 | +7.20% | +500 |\n" in out
+    assert "### 5 Aug 2026" in out
+    assert "| Open | **AOT** |" in out
+    assert "| Sold | **PTT** |" in out
+    assert "| Sold | **BBL** |" in out
+
+
+def test_section_daily_performance_fewer_than_ten_records_no_padding():
+    """TC-MD-20: Fewer than 10 records (e.g. 3) renders exactly those 3, no
+    padding, no error."""
+    records = [
+        {"date": f"2026-08-0{i}", "investment": 100.0, "acc_pnl": 0.0,
+         "open_pnl": 0.0, "open_pnl_pct": 0.0, "open_positions": None,
+         "purchased_positions": None, "sold_positions": None}
+        for i in (1, 2, 3)
+    ]
+    out = _section_daily_performance(records)
+    assert out.count("| 100.00 |") == 3
+
+
+def test_section_daily_performance_renders_ten_records_in_correct_chronological_order():
+    """TC-MD-23: Exactly 10 distinct-dated records (the count the endpoint's
+    `[-10:]` slice is expected to hand this function) all render — none
+    dropped, none duplicated — in the same ascending order they're given."""
+    records = [
+        {"date": f"2026-07-{day:02d}", "investment": float(day), "acc_pnl": 0.0,
+         "open_pnl": 0.0, "open_pnl_pct": 0.0, "open_positions": None,
+         "purchased_positions": None, "sold_positions": None}
+        for day in range(1, 11)  # 10 ascending dates: 1-10 Jul 2026
+    ]
+    out = _section_daily_performance(records)
+    dates_in_order = [f"{day} Jul 2026" for day in range(1, 11)]
+    found_indices = [out.index(d) for d in dates_in_order]
+    # Chronological order preserved (each date found strictly after the previous)
+    assert found_indices == sorted(found_indices)
+    # All 10 distinct dates present exactly once each
+    assert len(found_indices) == len(set(found_indices))
+    # investment (day number) distinguishes each row, confirming exactly 10
+    # summary rows were rendered (not fewer, not merged/deduped)
+    for day in range(1, 11):
+        assert f"| {float(day):.2f} |" in out
+
+
+def test_section_daily_performance_renders_all_given_records_without_internal_slicing():
+    """TC-MD-24: _section_daily_performance has no built-in "last 10" slicing
+    of its own — that contract is enforced by the endpoint applying
+    `records[-10:]` *before* calling this function (see
+    app.api.v1.endpoints.overall_plan.generate_overall_plan). Passing 12
+    already-ascending-dated records straight through renders all 12, in
+    order, proving this function is a pure renderer that does not silently
+    truncate to 10. The end-to-end proof that the endpoint's slice actually
+    keeps the 10 most recent, in order, lives in
+    test_generate_overall_plan_daily_performance_keeps_last_10_of_12_in_chronological_order
+    in tests/test_overall_plan.py."""
+    records = [
+        {"date": f"2026-07-{day:02d}", "investment": 100.0, "acc_pnl": 0.0,
+         "open_pnl": 0.0, "open_pnl_pct": 0.0, "open_positions": None,
+         "purchased_positions": None, "sold_positions": None}
+        for day in range(1, 13)  # 12 ascending dates: 1-12 Jul 2026
+    ]
+    out = _section_daily_performance(records)
+    # All 12 rows present (no internal truncation to 10)
+    assert out.count("| 100.00 |") == 12
+    # Chronological order preserved for the full set, including the 2 dates
+    # that a [-10:] slice would have dropped (1 Jul, 2 Jul) — proving they
+    # were never touched by this function.
+    indices = [out.index(f"| {day} Jul 2026 |") for day in range(1, 13)]
+    assert indices == sorted(indices)
+
+
+def test_section_daily_performance_symbol_with_pipe_is_escaped():
+    """Security: symbol values go through _md_cell before embedding in a
+    table cell, exactly as every other section in this module."""
+    records = [
+        {"date": "2026-08-05", "investment": 100.0, "acc_pnl": 0.0,
+         "open_pnl": 0.0, "open_pnl_pct": 0.0,
+         "open_positions": [_open_pos(symbol="A|B")],
+         "purchased_positions": None, "sold_positions": None},
+    ]
+    out = _section_daily_performance(records)
+    assert "| Open | **A\\|B** |" in out
+
+
+def test_build_overall_plan_markdown_includes_section_five_after_section_four():
+    """TC-MD-21: Full assembly includes the new section after section 4 with
+    the '---' separator, given a minimal daily_performance list."""
+    generated_at = datetime(2026, 8, 1, 9, 5, tzinfo=BANGKOK)
+    records = [
+        {"date": "2026-08-01", "investment": 100.0, "acc_pnl": 0.0,
+         "open_pnl": 0.0, "open_pnl_pct": 0.0, "open_positions": None,
+         "purchased_positions": None, "sold_positions": None},
+    ]
+    md = build_overall_plan_markdown(
+        date_str="20260801",
+        generated_at=generated_at,
+        plan=None,
+        positions=[],
+        scan=None,
+        review_items=[],
+        daily_performance=records,
+    )
+    idx4 = md.index("## 4. Portfolio Action Review")
+    idx5 = md.index("## 5. Daily Performance")
+    assert idx4 < idx5
+    assert "## 4. Portfolio Action Review (Latest 2 Weeks)\n\n_No entries or exits in the latest 2 weeks._\n\n---\n\n## 5. Daily Performance" in md

@@ -26,6 +26,7 @@ from app.services.daily_performance_service import (
     _compute_snapshot_values,
     _fetch_price_history,
     _get_historical_price,
+    _merge_same_symbol_positions,
     run_daily_snapshot,
     run_historical_backfill,
 )
@@ -147,6 +148,239 @@ class TestComputeSnapshotValues:
         r = _compute_snapshot_values([pos], date(2024, 6, 1), lambda s: 100.0)
         assert r["closed_pnl_pct"] == pytest.approx(0.0)
         assert r["open_pnl_pct"] == pytest.approx(0.0)
+
+
+# ── Partial-sell same-symbol merge (open/purchased/sold_positions) ────────────
+
+class TestMergeSameSymbolPositions:
+    """TC-031 through TC-042: _merge_same_symbol_positions via _compute_snapshot_values.
+
+    Regression coverage for the partial-sell bug: selling part of a position
+    creates a shrunk "active" parent row plus a "closed" child row sharing the
+    same symbol/entry_price/entry_date.  Without merging, both rows show up as
+    separate chips in open_positions/purchased_positions/sold_positions on the
+    same snapshot day even though they represent one logical position.
+    """
+
+    def test_TC031_open_positions_partial_sell_parent_and_child_merge(self):
+        """BJC partial-sell scenario: parent size 1500 + child size 500, both
+        entry_price=15.6 and entry_date=2026-08-11 → ONE merged open_positions
+        entry with size=2000 and pnl = sum of what each would contribute alone."""
+        snap_date = date(2026, 8, 12)  # day after entry, so not "purchased today"
+        entry_date = date(2026, 8, 11)
+        parent = _pos(
+            symbol="BJC", status="active", entry_date=entry_date,
+            entry_price=15.6, size=1500,
+        )
+        child = _pos(
+            symbol="BJC", status="active", entry_date=entry_date,
+            entry_price=15.6, size=500,
+        )
+        cp = 16.0
+        diff = cp - 15.6
+        expected_parent_pnl = round(diff * 1500, 2)
+        expected_child_pnl = round(diff * 500, 2)
+
+        r = _compute_snapshot_values([parent, child], snap_date, lambda s: cp)
+
+        open_positions = r["open_positions"]
+        assert open_positions is not None
+        assert len(open_positions) == 1
+        merged = open_positions[0]
+        assert merged["symbol"] == "BJC"
+        assert merged["size"] == 2000
+        assert merged["pnl"] == pytest.approx(
+            round(expected_parent_pnl + expected_child_pnl, 2)
+        )
+        assert merged["buy_price"] == pytest.approx(15.6)
+        assert merged["entry_date"] == entry_date.isoformat()
+
+    def test_TC032_open_positions_differing_buy_price_not_merged(self):
+        """Same symbol/entry_date but DIFFERENT entry_price → stays as two
+        separate entries; sizes are NOT summed."""
+        d = date(2026, 8, 11)
+        pos1 = _pos(symbol="XYZ", status="active", entry_date=d, entry_price=10.0, size=100)
+        pos2 = _pos(symbol="XYZ", status="active", entry_date=d, entry_price=12.0, size=100)
+
+        r = _compute_snapshot_values(
+            [pos1, pos2], date(2026, 8, 12), lambda s: 15.0
+        )
+
+        open_positions = r["open_positions"]
+        assert len(open_positions) == 2
+        assert {p["size"] for p in open_positions} == {100}
+        assert {p["buy_price"] for p in open_positions} == {10.0, 12.0}
+
+    def test_TC033_open_positions_differing_entry_date_not_merged(self):
+        """Same symbol/entry_price but DIFFERENT entry_date → NOT merged, even
+        though the price coincidentally matches."""
+        pos1 = _pos(
+            symbol="XYZ", status="active", entry_date=date(2026, 8, 1),
+            entry_price=10.0, size=100,
+        )
+        pos2 = _pos(
+            symbol="XYZ", status="active", entry_date=date(2026, 8, 5),
+            entry_price=10.0, size=100,
+        )
+
+        r = _compute_snapshot_values(
+            [pos1, pos2], date(2026, 8, 12), lambda s: 15.0
+        )
+
+        open_positions = r["open_positions"]
+        assert len(open_positions) == 2
+        assert {p["entry_date"] for p in open_positions} == {
+            date(2026, 8, 1).isoformat(),
+            date(2026, 8, 5).isoformat(),
+        }
+
+    def test_TC034_purchased_positions_partial_sell_merges(self):
+        """Same partial-sell scenario but entry_date == snapshot_date (the
+        "purchased today" list) → also merges to one entry with summed size."""
+        snap_date = date(2026, 8, 11)
+        parent = _pos(
+            symbol="BJC", status="active", entry_date=snap_date,
+            entry_price=15.6, size=1500,
+        )
+        child = _pos(
+            symbol="BJC", status="active", entry_date=snap_date,
+            entry_price=15.6, size=500,
+        )
+
+        r = _compute_snapshot_values([parent, child], snap_date, lambda s: 16.0)
+
+        purchased = r["purchased_positions"]
+        assert purchased is not None
+        assert len(purchased) == 1
+        assert purchased[0]["size"] == 2000
+
+    def test_TC035_purchased_positions_differing_buy_price_not_merged(self):
+        """purchased_positions: different entry_price on the same symbol/day
+        stays unmerged."""
+        snap_date = date(2026, 8, 11)
+        pos1 = _pos(symbol="XYZ", status="active", entry_date=snap_date, entry_price=10.0, size=100)
+        pos2 = _pos(symbol="XYZ", status="active", entry_date=snap_date, entry_price=11.0, size=100)
+
+        r = _compute_snapshot_values([pos1, pos2], snap_date, lambda s: 12.0)
+
+        purchased = r["purchased_positions"]
+        assert len(purchased) == 2
+
+    def test_TC036_sold_positions_partial_sell_merges(self):
+        """Two closed rows, same symbol/entry_price/entry_date/exit_price(close_price),
+        both exiting on snapshot_date → merge into one sold_positions entry with
+        summed size and pnl."""
+        snap_date = date(2026, 8, 12)
+        entry_date = date(2026, 8, 11)
+        parent = _pos(
+            symbol="BJC", status="closed", entry_date=entry_date, exit_date=snap_date,
+            entry_price=15.6, exit_price=16.5, size=1500,
+        )
+        child = _pos(
+            symbol="BJC", status="closed", entry_date=entry_date, exit_date=snap_date,
+            entry_price=15.6, exit_price=16.5, size=500,
+        )
+        expected_parent_pnl = round((16.5 - 15.6) * 1500, 2)
+        expected_child_pnl = round((16.5 - 15.6) * 500, 2)
+
+        r = _compute_snapshot_values([parent, child], snap_date, lambda s: None)
+
+        sold = r["sold_positions"]
+        assert sold is not None
+        assert len(sold) == 1
+        merged = sold[0]
+        assert merged["size"] == 2000
+        assert merged["pnl"] == pytest.approx(
+            round(expected_parent_pnl + expected_child_pnl, 2)
+        )
+        assert merged["exit_price"] == pytest.approx(16.5)
+        assert merged["close_price"] == pytest.approx(16.5)
+
+    def test_TC037_sold_positions_differing_close_price_not_merged(self):
+        """Same symbol/entry_price/entry_date but DIFFERENT exit_price → two
+        separate sales, NOT merged (they are economically different fills)."""
+        snap_date = date(2026, 8, 12)
+        entry_date = date(2026, 8, 11)
+        pos1 = _pos(
+            symbol="BJC", status="closed", entry_date=entry_date, exit_date=snap_date,
+            entry_price=15.6, exit_price=16.5, size=1000,
+        )
+        pos2 = _pos(
+            symbol="BJC", status="closed", entry_date=entry_date, exit_date=snap_date,
+            entry_price=15.6, exit_price=17.0, size=1000,
+        )
+
+        r = _compute_snapshot_values([pos1, pos2], snap_date, lambda s: None)
+
+        sold = r["sold_positions"]
+        assert len(sold) == 2
+        assert {p["exit_price"] for p in sold} == {16.5, 17.0}
+
+    def test_TC038_single_entry_passthrough_unaffected(self):
+        """A lone position (no partial-sell sibling) is unaffected by merging —
+        list still has exactly one entry with its original values."""
+        pos = _pos(symbol="PTT", status="active", entry_date=date(2026, 8, 1), entry_price=100.0, size=10)
+        r = _compute_snapshot_values([pos], date(2026, 8, 12), lambda s: 120.0)
+        open_positions = r["open_positions"]
+        assert len(open_positions) == 1
+        assert open_positions[0]["size"] == 10
+
+    def test_TC039_empty_lists_still_yield_none(self):
+        """No positions at all → open/purchased/sold_positions remain None,
+        confirming the `if list else None` conversion still works after the
+        merge step is inserted before it."""
+        r = _compute_snapshot_values([], date(2026, 8, 12), lambda s: 100.0)
+        assert r["open_positions"] is None
+        assert r["purchased_positions"] is None
+        assert r["sold_positions"] is None
+
+    def test_TC040_sold_and_open_same_symbol_same_day_stay_independent(self):
+        """A same-day partial sell: one remainder stays open, one child is sold.
+        Both share symbol/entry_price/entry_date but belong to DIFFERENT lists
+        (open_positions vs sold_positions) and must never merge across lists."""
+        snap_date = date(2026, 8, 12)
+        entry_date = date(2026, 8, 11)
+        remainder = _pos(
+            symbol="BJC", status="active", entry_date=entry_date,
+            entry_price=15.6, size=1000,
+        )
+        sold_child = _pos(
+            symbol="BJC", status="closed", entry_date=entry_date, exit_date=snap_date,
+            entry_price=15.6, exit_price=16.5, size=500,
+        )
+
+        r = _compute_snapshot_values([remainder, sold_child], snap_date, lambda s: 16.0)
+
+        open_positions = r["open_positions"]
+        sold = r["sold_positions"]
+        assert open_positions is not None and len(open_positions) == 1
+        assert open_positions[0]["size"] == 1000
+        assert sold is not None and len(sold) == 1
+        assert sold[0]["size"] == 500
+
+    def test_TC041_merge_helper_direct_group_of_two(self):
+        """Direct unit test of _merge_same_symbol_positions: verifies the exact
+        grouping key (symbol, buy_price, entry_date) and summed fields."""
+        entries = [
+            {
+                "symbol": "BJC", "size": 1500, "buy_price": 15.6, "close_price": 16.0,
+                "pnl": 600.0, "pnl_pct": 2.5641, "entry_date": "2026-08-11",
+            },
+            {
+                "symbol": "BJC", "size": 500, "buy_price": 15.6, "close_price": 16.0,
+                "pnl": 200.0, "pnl_pct": 2.5641, "entry_date": "2026-08-11",
+            },
+        ]
+        merged = _merge_same_symbol_positions(entries)
+        assert len(merged) == 1
+        assert merged[0]["size"] == 2000
+        assert merged[0]["pnl"] == pytest.approx(800.0)
+        assert merged[0]["pnl_pct"] == pytest.approx(2.5641)
+
+    def test_TC042_merge_helper_empty_list_returns_empty_list(self):
+        """_merge_same_symbol_positions([]) → [] (not None, not an error) so
+        the caller's `if list else None` conversion continues to work."""
+        assert _merge_same_symbol_positions([]) == []
 
 
 # ── _get_historical_price ─────────────────────────────────────────────────────

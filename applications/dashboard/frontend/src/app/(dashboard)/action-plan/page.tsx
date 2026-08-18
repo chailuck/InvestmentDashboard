@@ -9,6 +9,7 @@ import {
   ClipboardList, Plus, Edit2, Trash2, Copy, X, Loader2,
   ShoppingCart, Briefcase, AlertCircle, ScanLine, LayoutDashboard,
   BookOpen, TrendingUp, ChevronRight, ArrowRight, CalendarDays, FileDown, Check,
+  Sparkles, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -19,6 +20,9 @@ import { portfolioDbService, type DbPosition } from '@/services/portfolioDb'
 import { objectiveService, type ObjectivePosition } from '@/services/objective'
 import { portfolioService } from '@/services/portfolio'
 import { WeeklyPlanDashboard } from '@/components/action-plan/WeeklyPlanDashboard'
+import { GenerateOverallPlanModal } from '@/components/weekly-scan/GenerateOverallPlanModal'
+import type { OverallPlanGenerateResponse } from '@/services/overallPlan'
+import { useExpandableList } from '@/hooks/useExpandableList'
 
 type ActiveTab = 'plans' | 'weekly-dashboard'
 
@@ -204,6 +208,8 @@ function PlanSection({ type }: { type: PlanType }) {
     staleTime: 30_000,
   })
 
+  const { visibleItems: visiblePlans, isExpanded, toggle, hasMore } = useExpandableList(plans, 5)
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['action-plans', type] })
 
   const openCreate = async () => {
@@ -324,7 +330,7 @@ function PlanSection({ type }: { type: PlanType }) {
               </tr>
             </thead>
             <tbody>
-              {plans.map(plan => (
+              {visiblePlans.map(plan => (
                 <tr
                   key={plan.id}
                   className="border-b border-border/25 hover:bg-surface-elevated/50 transition-colors"
@@ -373,6 +379,19 @@ function PlanSection({ type }: { type: PlanType }) {
           </table>
         )}
       </div>
+
+      {hasMore && (
+        <button
+          onClick={toggle}
+          className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-ink-muted hover:text-brand-400 hover:bg-surface-elevated/50 transition-colors border-t border-border/50"
+        >
+          {isExpanded ? (
+            <>Show less <ChevronUp className="w-3.5 h-3.5" /></>
+          ) : (
+            <>Show all ({plans.length}) <ChevronDown className="w-3.5 h-3.5" /></>
+          )}
+        </button>
+      )}
 
       {/* Modals */}
       <AnimatePresence>
@@ -747,6 +766,8 @@ function WeeklyScanSection() {
     staleTime: 30_000,
   })
 
+  const { visibleItems: visibleScans, isExpanded: scansExpanded, toggle: toggleScans, hasMore: scansHasMore } = useExpandableList(scans, 5)
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['weekly-scans'] })
 
   const openCreate = async () => {
@@ -815,7 +836,7 @@ function WeeklyScanSection() {
               </tr>
             </thead>
             <tbody>
-              {scans.map(scan => (
+              {visibleScans.map(scan => (
                 <tr key={scan.id} className="border-b border-border/25 hover:bg-surface-elevated/50 transition-colors">
                   <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">{fmtDt(scan.created_at)}</td>
                   <td className="px-4 py-2.5">
@@ -867,6 +888,19 @@ function WeeklyScanSection() {
         )}
       </div>
 
+      {scansHasMore && (
+        <button
+          onClick={toggleScans}
+          className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-ink-muted hover:text-brand-400 hover:bg-surface-elevated/50 transition-colors border-t border-border/50"
+        >
+          {scansExpanded ? (
+            <>Show less <ChevronUp className="w-3.5 h-3.5" /></>
+          ) : (
+            <>Show all ({scans.length}) <ChevronDown className="w-3.5 h-3.5" /></>
+          )}
+        </button>
+      )}
+
       <AnimatePresence>
         {createModal && (
           <NameModal
@@ -917,6 +951,8 @@ function ReviewListSection() {
     queryFn: () => reviewListService.list(months),
     staleTime: 30_000,
   })
+
+  const { visibleItems: visibleReviews, isExpanded: reviewsExpanded, toggle: toggleReviews, hasMore: reviewsHasMore } = useExpandableList(reviews, 5)
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['review-list'] })
@@ -1017,7 +1053,7 @@ function ReviewListSection() {
               </tr>
             </thead>
             <tbody>
-              {reviews.map(r => (
+              {visibleReviews.map(r => (
                 <tr
                   key={r.id}
                   className={cn(
@@ -1080,6 +1116,19 @@ function ReviewListSection() {
         )}
       </div>
 
+      {reviewsHasMore && (
+        <button
+          onClick={toggleReviews}
+          className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-ink-muted hover:text-brand-400 hover:bg-surface-elevated/50 transition-colors border-t border-border/50"
+        >
+          {reviewsExpanded ? (
+            <>Show less <ChevronUp className="w-3.5 h-3.5" /></>
+          ) : (
+            <>Show all ({reviews.length}) <ChevronDown className="w-3.5 h-3.5" /></>
+          )}
+        </button>
+      )}
+
       <AnimatePresence>
         {deleteTarget && (
           <DeleteModal
@@ -1108,6 +1157,7 @@ export default function ActionPlanPage() {
     return tab === 'plans' ? 'plans' : 'weekly-dashboard'
   })
   const [showExportAll, setShowExportAll] = useState(false)
+  const [showGeneratePlan, setShowGeneratePlan] = useState(false)
 
   return (
     <div className="space-y-4">
@@ -1119,18 +1169,28 @@ export default function ActionPlanPage() {
             Action Plan
           </h1>
           <p className="text-xs text-ink-muted mt-0.5">
-            Prepare, save, and generate purchase &amp; portfolio trading plans.
+            Prepare, save, and generate purchase trading plans, weekly scans, and reviews.
           </p>
         </div>
         {activeTab === 'plans' && (
-          <button
-            onClick={() => setShowExportAll(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
-            style={{ color: '#2dd4bf', borderColor: '#2dd4bf55', background: 'rgba(45,212,191,0.07)' }}
-          >
-            <FileDown className="w-3.5 h-3.5" />
-            Export All MD
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowGeneratePlan(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
+              style={{ color: '#2dd4bf', borderColor: '#2dd4bf55', background: 'rgba(45,212,191,0.07)' }}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Generate Overall Plan
+            </button>
+            <button
+              onClick={() => setShowExportAll(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
+              style={{ color: '#2dd4bf', borderColor: '#2dd4bf55', background: 'rgba(45,212,191,0.07)' }}
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              Download Overall Plan
+            </button>
+          </div>
         )}
       </div>
 
@@ -1160,9 +1220,10 @@ export default function ActionPlanPage() {
       {/* Tab content */}
       {activeTab === 'plans' && (
         <div className="space-y-6">
-          <PlanSection type="purchase" />
-          <PlanSection type="portfolio" />
           <WeeklyScanSection />
+          <PlanSection type="purchase" />
+          {/* Portfolio Action Plan is intentionally hidden from this page.
+              The route remains fully reachable directly at /action-plan/portfolio/[id]. */}
           <ReviewListSection />
         </div>
       )}
@@ -1172,6 +1233,12 @@ export default function ActionPlanPage() {
       )}
 
       {showExportAll && <ExportAllModal onClose={() => setShowExportAll(false)} />}
+      {showGeneratePlan && (
+        <GenerateOverallPlanModal
+          onClose={() => setShowGeneratePlan(false)}
+          onSuccess={(_result: OverallPlanGenerateResponse) => setShowGeneratePlan(false)}
+        />
+      )}
     </div>
   )
 }

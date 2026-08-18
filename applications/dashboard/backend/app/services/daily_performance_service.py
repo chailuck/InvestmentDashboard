@@ -183,6 +183,69 @@ def _pos_net_pnl(pos: PortfolioDbPosition) -> float:
     return round(diff * sz, 2)
 
 
+def _merge_same_symbol_positions(positions: list[dict]) -> list[dict]:
+    """Collapse same-symbol/same-entry rows produced by partial sells.
+
+    A partial sell splits one DB row into two: a shrunk "active" parent
+    (remaining size) and a "closed" child (sold size) — both sharing the same
+    symbol, entry_price, and entry_date.  Left unmerged, the same position
+    appears twice in a single day's display list, which is mathematically
+    correct (sizes sum) but confusing to render as two separate chips.
+
+    Grouping key: ``(symbol, buy_price, entry_date)`` — plus ``close_price``
+    for ``sold_positions_list`` (equal to ``exit_price`` in that list), since
+    two sales of the same symbol/entry at different exit prices must stay
+    distinct. Equality is exact (no float tolerance) — ``buy_price`` is
+    already a clean float derived from ``entry_price``, and any two rows
+    genuinely produced by the same partial-sell split will match exactly.
+
+    For each group of 2+ entries: ``size`` and ``pnl`` are summed; all other
+    fields (``buy_price``, ``close_price``, ``entry_date``, and for sold
+    positions ``exit_date``/``exit_price``) are copied from any one member,
+    since they are identical by construction of the key. ``pnl_pct`` is
+    identical across the group by construction (same price on both sides) —
+    that invariant is asserted defensively; a violation would mean the
+    grouping key missed a differing field and must be fixed at the source,
+    not papered over.
+
+    Groups of exactly 1 entry pass through unchanged (same dict, not copied).
+    An empty input list returns an empty list (never ``None``) — the
+    caller's existing ``if list else None`` conversion happens afterwards.
+    """
+    groups: dict[tuple, list[dict]] = {}
+    order: list[tuple] = []
+    for entry in positions:
+        key = (entry["symbol"], entry["buy_price"], entry["entry_date"])
+        if "exit_price" in entry:
+            key = key + (entry["close_price"],)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(entry)
+
+    merged: list[dict] = []
+    for key in order:
+        group = groups[key]
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+
+        first = group[0]
+        pnl_pct = first["pnl_pct"]
+        assert all(e["pnl_pct"] == pnl_pct for e in group), (
+            "Same-symbol/entry/exit merge group has divergent pnl_pct — "
+            "grouping key is missing a differentiating field: "
+            f"symbol={first['symbol']!r} key={key!r}"
+        )
+
+        merged_entry = dict(first)
+        merged_entry["size"] = sum(e["size"] for e in group)
+        merged_entry["pnl"] = round(sum(e["pnl"] for e in group), 2)
+        merged.append(merged_entry)
+
+    return merged
+
+
 # ── Shared snapshot computation ────────────────────────────────────────────────
 
 def _compute_snapshot_values(
@@ -346,6 +409,10 @@ def _compute_snapshot_values(
                 "exit_price": xp,
             }
         )
+
+    open_positions_list = _merge_same_symbol_positions(open_positions_list)
+    purchased_positions_list = _merge_same_symbol_positions(purchased_positions_list)
+    sold_positions_list = _merge_same_symbol_positions(sold_positions_list)
 
     return {
         "investment": investment,

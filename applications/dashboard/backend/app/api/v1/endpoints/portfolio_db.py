@@ -609,6 +609,7 @@ async def sell_position(pos_id: uuid.UUID, body: SellIn, user_id: UserId, db: DB
     remaining = pos.position_size - body.quantity
     child = PortfolioDbPosition(
         user_id=uid,
+        portfolio_id=pos.portfolio_id,
         symbol=pos.symbol,
         direction=pos.direction,
         entry_date=pos.entry_date,

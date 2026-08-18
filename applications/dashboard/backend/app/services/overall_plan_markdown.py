@@ -239,6 +239,70 @@ def _section_review(review_items: list[dict[str, Any]]) -> str:
     return md
 
 
+# ── Section 5: Daily Performance (Last 10 Days) ─────────────────────────────
+
+_DAILY_PERF_GROUPS = [("open_positions", "Open"), ("purchased_positions", "Purchased"), ("sold_positions", "Sold")]
+
+
+def _daily_sold_pnl(sold_positions: list[dict[str, Any]] | None) -> float | None:
+    """Sum of realised P&L for positions sold on this specific day. None (renders '—')
+    when nothing was sold that day — distinct from a breakeven sell which sums to 0."""
+    if not sold_positions:
+        return None
+    return sum(float(p.get("pnl") or 0) for p in sold_positions)
+
+
+def _daily_position_rows(rec: dict[str, Any]) -> list[str]:
+    """One markdown table row per position across all 3 groups, in Open/Purchased/Sold order."""
+    rows: list[str] = []
+    for key, label in _DAILY_PERF_GROUPS:
+        for pos in (rec.get(key) or []):
+            entry_date = _parse_date(pos.get("entry_date"))
+            exit_date_raw = pos.get("exit_date")
+            if exit_date_raw is not None:
+                close_date_str = _fmt_date(_parse_date(exit_date_raw))
+                close_price_str = _fmt_n(pos.get("exit_price"))
+            else:
+                close_date_str = "—"
+                close_price_str = _fmt_n(pos.get("close_price"))
+            rows.append(
+                f"| {label} | **{_md_cell(pos.get('symbol'))}** | {_or_dash(pos.get('size'))} | "
+                f"{_fmt_date(entry_date)} | {_fmt_n(pos.get('buy_price'))} | "
+                f"{close_date_str} | {close_price_str} | "
+                f"{_fmt_pnl(pos.get('pnl'))} | {_fmt_pct(pos.get('pnl_pct'))} |\n"
+            )
+    return rows
+
+
+def _section_daily_performance(records: list[dict[str, Any]]) -> str:
+    md = "## 5. Daily Performance (Last 10 Days)\n\n"
+    if not records:
+        return md + "_No daily performance records available._\n\n"
+
+    md += "| Date | Investment | Acc P&L | Open P&L | Open P&L% | Daily P&L (Sold) |\n"
+    md += "|------|-----------|---------|----------|-----------|-------------------|\n"
+    for rec in records:
+        d = _parse_date(rec.get("date"))
+        daily_pnl = _daily_sold_pnl(rec.get("sold_positions"))
+        md += (
+            f"| {_fmt_date(d)} | {_fmt_n(rec.get('investment'))} | {_fmt_pnl(rec.get('acc_pnl'))} | "
+            f"{_fmt_pnl(rec.get('open_pnl'))} | {_fmt_pct(rec.get('open_pnl_pct'))} | {_fmt_pnl(daily_pnl)} |\n"
+        )
+    md += "\n"
+
+    for rec in records:
+        rows = _daily_position_rows(rec)
+        if not rows:
+            continue
+        d = _parse_date(rec.get("date"))
+        md += f"### {_fmt_date(d)}\n\n"
+        md += "| Group | Symbol | Size | Entry Date | Buy Price | Close/Exit Date | Close/Exit Price | P&L | P&L% |\n"
+        md += "|-------|--------|------|------------|-----------|------------------|-------------------|-----|------|\n"
+        md += "".join(rows)
+        md += "\n"
+    return md
+
+
 # ── Public entry point ───────────────────────────────────────────────────────
 
 def build_overall_plan_markdown(
@@ -249,6 +313,7 @@ def build_overall_plan_markdown(
     positions: list[dict[str, Any]],
     scan: dict[str, Any] | None,
     review_items: list[dict[str, Any]],
+    daily_performance: list[dict[str, Any]],
 ) -> str:
     """Assemble the full Overall Plan markdown report from already-fetched data.
 
@@ -276,6 +341,14 @@ def build_overall_plan_markdown(
         (symbol, direction, status, entry_date, entry_price, exit_date,
         exit_price, position_size, tp, sl, reason, feel, sell_reason,
         remarks).
+    daily_performance:
+        List of dicts shaped like ``list_daily_performance()``'s serialized
+        output, ordered ascending by date (date, investment, closed_pnl,
+        closed_pnl_pct, open_pnl, open_pnl_pct, open_positions,
+        purchased_positions, sold_positions, acc_pnl). Each position dict in
+        open_positions/purchased_positions has {symbol, size, buy_price,
+        close_price, pnl, pnl_pct, entry_date}; sold_positions additionally
+        has {exit_date, exit_price} with close_price == exit_price.
     """
     md = f"# OVERALL PLAN {date_str}\n\n"
     md += f"**Generated:** {_fmt_generated_at(generated_at)}  \n\n"
@@ -287,4 +360,6 @@ def build_overall_plan_markdown(
     md += _section_weekly_scan(scan)
     md += "---\n\n"
     md += _section_review(review_items)
+    md += "---\n\n"
+    md += _section_daily_performance(daily_performance)
     return md

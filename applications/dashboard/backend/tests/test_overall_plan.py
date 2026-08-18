@@ -20,6 +20,8 @@ Test isolation
 
 from __future__ import annotations
 
+import calendar
+import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -36,6 +38,7 @@ from sqlalchemy import update as sa_update
 import app.api.v1.endpoints.overall_plan as overall_plan_module
 from app.auth.jwt import create_access_token
 from app.database.session import get_db
+from app.models.daily_performance import DailyPerformance
 from app.models.portfolio import Portfolio
 from app.models.portfolio_db import PortfolioDbPosition
 from app.models.user import User
@@ -186,6 +189,38 @@ async def _create_weekly_scan(
     return scan
 
 
+async def _create_daily_performance(
+    db: AsyncSession, user_id: uuid.UUID, portfolio_id: uuid.UUID, *,
+    snapshot_date: date | None = None, symbol: str = "AOT",
+) -> DailyPerformance:
+    """Insert a DailyPerformance snapshot row directly, matching the same
+    direct-ORM-insert pattern used by _ensure_default_portfolio /
+    _create_active_position / _create_weekly_scan in this file."""
+    if snapshot_date is None:
+        snapshot_date = date.today()
+    rec = DailyPerformance(
+        user_id=user_id,
+        portfolio_id=portfolio_id,
+        date=snapshot_date,
+        investment=100000.0,
+        closed_pnl=0.0,
+        closed_pnl_pct=0.0,
+        open_pnl=1500.0,
+        open_pnl_pct=1.5,
+        open_positions=[
+            {"symbol": symbol, "size": 100, "buy_price": 50.0, "close_price": 65.0,
+             "pnl": 1500.0, "pnl_pct": 30.0, "entry_date": (snapshot_date - timedelta(days=5)).isoformat()},
+        ],
+        purchased_positions=None,
+        sold_positions=None,
+        acc_pnl=1500.0,
+    )
+    db.add(rec)
+    await db.commit()
+    await db.refresh(rec)
+    return rec
+
+
 async def _get_user_id_by_email(db: AsyncSession, email: str) -> uuid.UUID:
     """Look up a user's id directly via the DB.
 
@@ -213,6 +248,7 @@ async def test_generate_overall_plan_returns_200_and_expected_fields(
     portfolio = await _ensure_default_portfolio(db_session, uid)
     await _create_active_position(db_session, uid, portfolio.id)
     scan = await _create_weekly_scan(db_session, uid)
+    await _create_daily_performance(db_session, uid, portfolio.id, symbol="XYZ")
 
     resp = await auth_client.post(
         "/api/v1/overall-plan/generate",
@@ -244,6 +280,83 @@ async def test_generate_overall_plan_returns_200_and_expected_fields(
     assert plan["name"] in content
     assert "AOT" in content
     assert scan.name in content
+    # Section 5 (Daily Performance) is present and includes the seeded snapshot
+    assert "## 5. Daily Performance" in content
+    assert "XYZ" in content
+
+
+def _fmt_date_like_markdown_module(d: date) -> str:
+    """Reproduce overall_plan_markdown._fmt_date()'s output (day not
+    zero-padded, 3-letter month, 4-digit year) without importing a private
+    function across modules — e.g. date(2026, 8, 1) -> '1 Aug 2026'."""
+    return f"{d.day} {calendar.month_abbr[d.month]} {d.year}"
+
+
+async def test_generate_overall_plan_daily_performance_keeps_last_10_of_12_in_chronological_order(
+    auth_client: AsyncClient, db_session: AsyncSession, tmp_path,
+):
+    """TC-OP-13: Seeds 12 DailyPerformance rows with 12 distinct ascending
+    dates (more than the endpoint's `[-10:]` slice keeps). Verifies, through
+    the real endpoint code path (list_daily_performance -> `[-10:]` ->
+    _section_daily_performance), that Section 5's day-level summary table
+    ends up with exactly the 10 most recent dates, the 2 oldest seeded dates
+    are absent, and the surviving 10 appear in ascending chronological order.
+
+    This is the QA-flagged P2 gap: no prior test constructed >=10 daily
+    performance records, so the "10 most recent, chronological order"
+    contract of Section 5 / the endpoint's [-10:] slice was previously
+    unverified.
+    """
+    uid = await _get_user_id_by_email(db_session, AUTH_CLIENT_EMAIL)
+    plan = await _create_purchase_plan(auth_client)
+    portfolio = await _ensure_default_portfolio(db_session, uid)
+    scan = await _create_weekly_scan(db_session, uid)
+
+    # 12 distinct ascending dates ending today: today-11 (oldest) .. today (newest).
+    all_dates = [date.today() - timedelta(days=(11 - i)) for i in range(12)]
+    for i, d in enumerate(all_dates):
+        await _create_daily_performance(db_session, uid, portfolio.id, snapshot_date=d, symbol=f"SYM{i}")
+
+    dropped_dates = all_dates[:2]  # the 2 oldest — must NOT survive the [-10:] slice
+    kept_dates = all_dates[2:]  # the 10 most recent — must survive, in ascending order
+
+    resp = await auth_client.post(
+        "/api/v1/overall-plan/generate",
+        json={"action_plan_id": plan["id"], "weekly_scan_id": str(scan.id)},
+    )
+    assert resp.status_code == 200, resp.text
+
+    written_files = list(tmp_path.glob("OVERALL PLAN *.md"))
+    assert len(written_files) == 1
+    content = written_files[0].read_text(encoding="utf-8")
+
+    section5 = content[content.index("## 5. Daily Performance"):]
+    # Restrict to the day-level *summary* table (before any per-day "### "
+    # sub-tables), which is the table whose row count/order is under test.
+    summary_table = section5.split("\n### ", 1)[0]
+
+    # (a) Exactly 10 date rows in the summary table — not 12, not fewer.
+    date_row_pattern = re.compile(r"^\| \d{1,2} \w{3} \d{4} \|", re.MULTILINE)
+    matched_rows = date_row_pattern.findall(summary_table)
+    assert len(matched_rows) == 10, (
+        f"Expected exactly 10 date rows in the summary table, found {len(matched_rows)}:\n{summary_table}"
+    )
+
+    # (b) The 2 oldest seeded dates are absent.
+    for d in dropped_dates:
+        date_str = _fmt_date_like_markdown_module(d)
+        assert f"| {date_str} |" not in summary_table, (
+            f"Oldest date {date_str} should have been dropped by the [-10:] slice but is present"
+        )
+
+    # (b continued) The 10 most recent dates are all present...
+    # (c) ...and appear in ascending chronological order.
+    found_indices = []
+    for d in kept_dates:
+        date_str = _fmt_date_like_markdown_module(d)
+        idx = summary_table.index(f"| {date_str} |")
+        found_indices.append(idx)
+    assert found_indices == sorted(found_indices), "Kept dates are not in ascending chronological order"
 
 
 async def test_generate_overall_plan_written_at_has_bangkok_offset(

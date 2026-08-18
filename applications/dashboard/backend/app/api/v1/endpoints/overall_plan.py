@@ -2,10 +2,11 @@
 
 Endpoints
 ---------
-POST /overall-plan/generate → aggregate 4 existing data domains (purchase
-action plan, active portfolio-DB positions, a referenced weekly scan, and
-the last-2-weeks Objective/Portfolio Action Review) into a single markdown
-report and write it to a file inside the container.
+POST /overall-plan/generate → aggregate 5 existing data domains (purchase
+action plan, active portfolio-DB positions, a referenced weekly scan, the
+last-2-weeks Objective/Portfolio Action Review, and the last 10 daily
+performance snapshots) into a single markdown report and write it to a file
+inside the container.
 
 The portfolio used for sections 2 and 4 is always the caller's default
 portfolio (resolved server-side) — there is no portfolio_id in the request.
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
@@ -26,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.v1.endpoints.daily_performance import list_daily_performance
 from app.api.v1.endpoints.objective import list_objective_positions
 from app.api.v1.endpoints.portfolio_db import list_positions_db
 from app.api.v1.endpoints.portfolios import get_default_portfolio
@@ -174,6 +176,8 @@ async def generate_overall_plan(
     The filename and generation timestamp are always server-derived from the
     current Bangkok date/time — never taken from the request body.
     """
+    now_bkk = datetime.now(BANGKOK)
+
     plan = await _get_purchase_plan_or_404(body.action_plan_id, user_id, db)
     scan = await _get_weekly_scan_or_404(body.weekly_scan_id, user_id, db)
 
@@ -190,8 +194,12 @@ async def generate_overall_plan(
     objective_result = await list_objective_positions(
         user_id=user_id, db=db, portfolio_id=str(portfolio.id), week2=True
     )
+    daily_performance_records = await list_daily_performance(
+        user_id, db, date_from=now_bkk.date() - timedelta(days=60), date_to=now_bkk.date(),
+        portfolio_id=portfolio.id,
+    )
+    daily_performance_last10 = daily_performance_records[-10:]
 
-    now_bkk = datetime.now(BANGKOK)
     date_str = now_bkk.strftime("%Y%m%d")
 
     md = build_overall_plan_markdown(
@@ -201,6 +209,7 @@ async def generate_overall_plan(
         positions=positions_result["positions"],
         scan=_scan_to_dict(scan),
         review_items=[item.model_dump() for item in objective_result.items],
+        daily_performance=daily_performance_last10,
     )
 
     filename = f"OVERALL PLAN {date_str}.md"
