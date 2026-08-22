@@ -128,6 +128,8 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <h3>5.2 Open Positions column</h3>
 <p>If a snapshot has a non-empty <code>open_positions</code> array, each entry is rendered as a colour-coded chip: green background and value for positive P&amp;L, red for negative. The chip label is <code>SYMBOL (+999)</code>. Hovering shows the percentage. If the array is null or empty, an em dash is shown.</p>
 
+<p>Positions that were partially sold are consolidated into a single chip with the summed size and P&amp;L, rather than appearing as duplicate chips for the same symbol.</p>
+
 <div class="callout warn">TD-DP-08: When a portfolio has no active positions at snapshot time, <code>open_positions</code> is stored as <code>NULL</code> rather than an empty array <code>[]</code>. Both values render identically as an em dash in the UI.</div>
 
 <hr>

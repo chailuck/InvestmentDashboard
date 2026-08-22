@@ -34,7 +34,9 @@
       "Bash(npx tsc *)",
       "PowerShell(docker exec inv_frontend *)",
       "Bash(curl -s -X POST \"http://localhost:8000/api/v1/auth/login\" -H \"Content-Type: application/json\" -d '{\"email\":\"admin@demo.com\",\"password\":\"Test@1234\"}')",
-      "Bash(python3 -c \"import sys,json; plans=json.load\\(sys.stdin\\); print\\('Plans:', len\\(plans\\)\\); [print\\(' -', p.get\\('name'\\), '| symbols:', p.get\\('symbols',''\\)[:60]\\) for p in plans[:3]]\")"
+      "Bash(python3 -c \"import sys,json; plans=json.load\\(sys.stdin\\); print\\('Plans:', len\\(plans\\)\\); [print\\(' -', p.get\\('name'\\), '| symbols:', p.get\\('symbols',''\\)[:60]\\) for p in plans[:3]]\")",
+      "Bash(python -m pytest tests/test_daily_performance_backfill.py -v)",
+      "Bash(/c/msys64/ucrt64/bin/python.exe -m pytest --version)"
     ]
   }
 }

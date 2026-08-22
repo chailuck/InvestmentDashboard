@@ -199,14 +199,23 @@ def _merge_same_symbol_positions(positions: list[dict]) -> list[dict]:
     already a clean float derived from ``entry_price``, and any two rows
     genuinely produced by the same partial-sell split will match exactly.
 
+    ``entry_date`` is nullable (``portfolio_db.py`` allows a blank "Entry
+    Date" on Excel import) so an entry with ``entry_date is None`` is never
+    merged with anything — not even another entry that also has
+    ``entry_date=None`` and the same symbol/buy_price — because a missing
+    entry_date means the "same partial-sell split" invariant that justifies
+    merging cannot be verified. Such entries always form their own singleton
+    group.
+
     For each group of 2+ entries: ``size`` and ``pnl`` are summed; all other
     fields (``buy_price``, ``close_price``, ``entry_date``, and for sold
     positions ``exit_date``/``exit_price``) are copied from any one member,
     since they are identical by construction of the key. ``pnl_pct`` is
     identical across the group by construction (same price on both sides) —
-    that invariant is asserted defensively; a violation would mean the
-    grouping key missed a differing field and must be fixed at the source,
-    not papered over.
+    that invariant is checked defensively (raises ``ValueError``, not
+    ``assert``, so it can never be stripped under ``-O``); a violation would
+    mean the grouping key missed a differing field and must be fixed at the
+    source, not papered over.
 
     Groups of exactly 1 entry pass through unchanged (same dict, not copied).
     An empty input list returns an empty list (never ``None``) — the
@@ -215,9 +224,16 @@ def _merge_same_symbol_positions(positions: list[dict]) -> list[dict]:
     groups: dict[tuple, list[dict]] = {}
     order: list[tuple] = []
     for entry in positions:
-        key = (entry["symbol"], entry["buy_price"], entry["entry_date"])
-        if "exit_price" in entry:
-            key = key + (entry["close_price"],)
+        if entry["entry_date"] is None:
+            # entry_date is nullable (blank "Entry Date" on Excel import in
+            # portfolio_db.py) — without a real entry_date we cannot verify the
+            # "same partial-sell split" invariant, so key on id(entry) to force
+            # a unique, unmergeable singleton group for every such row.
+            key = (id(entry),)
+        else:
+            key = (entry["symbol"], entry["buy_price"], entry["entry_date"])
+            if "exit_price" in entry:
+                key = key + (entry["close_price"],)
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -232,11 +248,15 @@ def _merge_same_symbol_positions(positions: list[dict]) -> list[dict]:
 
         first = group[0]
         pnl_pct = first["pnl_pct"]
-        assert all(e["pnl_pct"] == pnl_pct for e in group), (
-            "Same-symbol/entry/exit merge group has divergent pnl_pct — "
-            "grouping key is missing a differentiating field: "
-            f"symbol={first['symbol']!r} key={key!r}"
-        )
+        if not all(e["pnl_pct"] == pnl_pct for e in group):
+            # Not an assert: asserts can be stripped under -O, and letting this
+            # invariant violation through would silently misreport financial
+            # P&L to the end user instead of failing loudly.
+            raise ValueError(
+                "Same-symbol/entry/exit merge group has divergent pnl_pct — "
+                "grouping key is missing a differentiating field: "
+                f"symbol={first['symbol']!r} key={key!r}"
+            )
 
         merged_entry = dict(first)
         merged_entry["size"] = sum(e["size"] for e in group)

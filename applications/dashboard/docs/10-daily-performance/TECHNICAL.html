@@ -130,6 +130,8 @@ frontend/src/app/(dashboard)/analytics/daily-performance/page.tsx
   <li>Re-query and return the upserted row.</li>
 </ol>
 
+<p><code>open_positions</code>, <code>purchased_positions</code>, and <code>sold_positions</code> are each passed through <code>_merge_same_symbol_positions()</code> before being returned, which collapses same-symbol/same-price/same-entry_date duplicates produced by partial sells (a shrunk active row plus its closed remainder); merging never crosses list boundaries and never applies to entries with a null <code>entry_date</code>.</p>
+
 <p>Price-fetch failures are caught per-symbol; the symbol's P&amp;L contribution is treated as 0.0 and a warning is logged. The snapshot always completes even if all price fetches fail.</p>
 
 <h3>run_snapshot_for_all_portfolios</h3>

@@ -382,6 +382,31 @@ class TestMergeSameSymbolPositions:
         the caller's `if list else None` conversion continues to work."""
         assert _merge_same_symbol_positions([]) == []
 
+    def test_TC043_null_entry_date_same_symbol_never_merged(self):
+        """Two DISTINCT, unrelated positions that both have entry_date=None and
+        both lack entry_price (so buy_price computes to 0.0 via `float(pos.entry_price
+        or 0)`) and share the same symbol would collide on the grouping key
+        (symbol, 0.0, None) if entry_date were treated like any other field.
+        Since a missing entry_date means the "same partial-sell split" invariant
+        cannot be verified, these must NEVER be merged — even into each other —
+        and must remain two separate entries with sizes NOT summed."""
+        pos1 = _pos(
+            symbol="XYZ", status="active", entry_price=None, size=100,
+            null_entry=True,
+        )
+        pos2 = _pos(
+            symbol="XYZ", status="active", entry_price=None, size=250,
+            null_entry=True,
+        )
+
+        r = _compute_snapshot_values([pos1, pos2], date(2026, 8, 12), lambda s: 15.0)
+
+        open_positions = r["open_positions"]
+        assert open_positions is not None
+        assert len(open_positions) == 2
+        assert {p["size"] for p in open_positions} == {100, 250}
+        assert all(p["entry_date"] is None for p in open_positions)
+
 
 # ── _get_historical_price ─────────────────────────────────────────────────────
 
