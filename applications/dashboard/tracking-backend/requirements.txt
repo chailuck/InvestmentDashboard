@@ -1,0 +1,47 @@
+# ──────────────────────────────────────────────
+# FastAPI + ASGI
+# ──────────────────────────────────────────────
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+httpx==0.27.2
+
+# ──────────────────────────────────────────────
+# Database
+# ──────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.32
+asyncpg==0.29.0
+alembic==1.13.2
+psycopg2-binary==2.9.9     # for alembic env
+
+# ──────────────────────────────────────────────
+# Redis  (redis 5+ includes async support — aioredis not needed)
+# ──────────────────────────────────────────────
+redis[hiredis]==5.0.8
+
+# ──────────────────────────────────────────────
+# Auth / Security
+# NOTE: this service only VERIFIES JWTs issued by applications/dashboard/backend.
+# It never issues tokens, so passlib/bcrypt (password hashing) are intentionally
+# NOT included here — this service never touches passwords.
+# ──────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+cryptography==43.0.0
+
+# ──────────────────────────────────────────────
+# Config / Validation
+# ──────────────────────────────────────────────
+pydantic==2.8.2
+pydantic-settings==2.4.0
+python-dotenv==1.0.1
+
+# ──────────────────────────────────────────────
+# Observability
+# ──────────────────────────────────────────────
+structlog==24.4.0
+
+# ──────────────────────────────────────────────
+# Testing
+# ──────────────────────────────────────────────
+pytest==8.3.2
+pytest-asyncio==0.23.8
+pytest-cov==5.0.0

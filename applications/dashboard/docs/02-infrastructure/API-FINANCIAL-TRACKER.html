@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Financial Tracker — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:960px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — Financial Tracker</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, and Initial Investment Ledger entries. Served by the independent <code>tracking-backend</code> microservice (Phase 1: CRUD only — no "Update Tracking List" or "Dashboard" endpoints exist yet). All routes are mounted under <code>/api/v1/tracking</code>.
+</div>
+
+<div class="err">
+<strong>Deployment note:</strong> the Next.js proxy (<code>frontend/src/app/api/proxy/[...path]/route.ts</code>) does not currently route <code>/api/v1/tracking/*</code> requests to this service — see <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §7.1 / §9 (TD-FT-01). The endpoints below are accurate to the running <code>tracking-backend</code> service reachable directly on port 8001; the browser-facing path through the frontend proxy is not yet wired to it.
+</div>
+
+<h4>Authentication</h4>
+<p>All endpoints except <code>/health/*</code> require <code>Authorization: Bearer &lt;access_token&gt;</code>, where the token was issued by the <strong>main backend</strong>'s login endpoint. tracking-backend only verifies the token (shared <code>APP_SECRET_KEY</code>, same Redis blacklist) — it never issues tokens itself. See TECHNICAL.html §2 for the full verification flow.</p>
+
+<h2>Endpoints at a Glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/health/live</code></td><td>Liveness probe — no auth, no dependency checks</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/health/ready</code></td><td>Readiness probe — checks Postgres + Redis — no auth</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/sets</code></td><td>Create a Tracking Set (HTTP 201)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets</code></td><td>List the caller's Tracking Sets</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{id}</code></td><td>Get one Tracking Set</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/sets/{id}</code></td><td>Rename / update description</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/sets/{id}</code></td><td>Delete (cascades) (HTTP 204)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/sets/{id}/categories</code></td><td>Create a Category under this set (HTTP 201)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{id}/categories</code></td><td>List Categories, ordered</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/sets/{id}/categories/reorder</code></td><td>Persist a new Category order</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/categories/{id}</code></td><td>Get one Category</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/categories/{id}</code></td><td>Update a Category</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/categories/{id}</code></td><td>Delete (cascades) (HTTP 204)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/categories/{id}/sub-categories</code></td><td>Create a Sub-category (HTTP 201)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/categories/{id}/sub-categories</code></td><td>List Sub-categories, ordered</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/categories/{id}/sub-categories/reorder</code></td><td>Persist a new Sub-category order</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sub-categories/{id}</code></td><td>Get one Sub-category</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/sub-categories/{id}</code></td><td>Update a Sub-category</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/sub-categories/{id}</code></td><td>Delete (cascades) (HTTP 204)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/sub-categories/{id}/items</code></td><td>Create a Tracking Item (HTTP 201)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sub-categories/{id}/items</code></td><td>List Tracking Items, ordered</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/sub-categories/{id}/items/reorder</code></td><td>Persist a new Item order</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Get one Tracking Item</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Partial update of a Tracking Item</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Delete (cascades to ledger entries) (HTTP 204)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>Add a ledger entry (HTTP 201)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>List ledger entries, chronological</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/running-total</code></td><td>Ledger entries with a cumulative running total</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Get one ledger entry</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Update a ledger entry</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Delete a ledger entry (HTTP 204)</td></tr>
+</table>
+
+<hr>
+
+<h2>Health</h2>
+
+<h3>GET /api/v1/tracking/health/live</h3>
+<p>No auth. Never touches the database or Redis — always returns fast so an orchestrator cannot mistake a transient dependency blip for a dead process.</p>
+<pre><code>{ "status": "ok" }</code></pre>
+
+<h3>GET /api/v1/tracking/health/ready</h3>
+<p>No auth. Checks Postgres (<code>SELECT 1</code>) and Redis (<code>PING</code>).</p>
+<pre><code>// 200 OK — both dependencies healthy
+{ "status": "ok", "checks": { "database": "ok", "redis": "ok" } }
+
+// 503 Service Unavailable — one dependency down
+{ "status": "unavailable", "checks": { "database": "ok", "redis": "error: Connection refused" } }</code></pre>
+
+<hr>
+
+<h2>Tracking Sets</h2>
+
+<h3>POST /api/v1/tracking/sets</h3>
+<pre><code>// Request
+{ "name": "My Personal Finances", "description": "Household budget and net worth" }
+
+// Response 201
+{
+  "id":          "b1a2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "name":        "My Personal Finances",
+  "description": "Household budget and net worth",
+  "createdAt":   "2026-08-23T09:15:00+00:00",
+  "updatedAt":   "2026-08-23T09:15:00+00:00"
+}</code></pre>
+<div class="obj">Creating a set also creates its default category/sub-category skeleton (Assets / Liabilities and their default sub-categories) in the <strong>same transaction</strong> — see TECHNICAL.html §6. The response body reflects only the created set itself; fetch <code>GET /sets/{id}/categories</code> afterward to see the defaults.</div>
+<div class="err"><strong>409 Conflict</strong> — a set with this name already exists for this user: <code>{"detail": "A tracking set with this name already exists"}</code></div>
+
+<h3>GET /api/v1/tracking/sets</h3>
+<p>Returns the caller's Tracking Sets, ordered by <code>createdAt</code> ascending.</p>
+<pre><code>[
+  { "id": "...", "name": "My Personal Finances", "description": null, "createdAt": "...", "updatedAt": "..." },
+  { "id": "...", "name": "Family Trust",          "description": null, "createdAt": "...", "updatedAt": "..." }
+]</code></pre>
+
+<h3>GET /api/v1/tracking/sets/{id}</h3>
+<div class="err"><strong>404 Not Found</strong> — set does not exist or belongs to another user: <code>{"detail": "Tracking set not found"}</code></div>
+
+<h3>PUT /api/v1/tracking/sets/{id}</h3>
+<pre><code>// Request — both fields optional; only provided fields are updated
+{ "name": "My Finances (2026)", "description": null }
+
+// Response 200 — updated set</code></pre>
+<div class="err">
+<strong>404 Not Found</strong> — set not found.<br>
+<strong>409 Conflict</strong> — the new name collides with another of your sets.
+</div>
+
+<h3>DELETE /api/v1/tracking/sets/{id}</h3>
+<p>Hard delete. Cascades to every category, sub-category, tracking item, and ledger entry beneath the set. Returns HTTP 204 No Content.</p>
+<div class="err"><strong>404 Not Found</strong> — set not found.</div>
+
+<hr>
+
+<h2>Categories</h2>
+
+<h3>POST /api/v1/tracking/sets/{setId}/categories</h3>
+<pre><code>// Request — order is optional; omit to append at the end
+{ "name": "Investments", "description": null, "order": 3 }
+
+// Response 201
+{
+  "id":             "c2b3d4e5-...",
+  "trackingSetId":  "b1a2c3d4-...",
+  "name":           "Investments",
+  "description":    null,
+  "order":          3,
+  "createdAt":      "2026-08-23T09:20:00+00:00",
+  "updatedAt":      "2026-08-23T09:20:00+00:00"
+}</code></pre>
+<div class="err"><strong>404 Not Found</strong> — parent tracking set not found.</div>
+
+<h3>GET /api/v1/tracking/sets/{setId}/categories</h3>
+<p>Ordered by <code>order</code> ascending.</p>
+<div class="err"><strong>404 Not Found</strong> — parent tracking set not found.</div>
+
+<h3>PUT /api/v1/tracking/sets/{setId}/categories/reorder</h3>
+<pre><code>// Request — the complete, newly-ordered list of category ids for this set
+{ "items": [
+  { "id": "cat-id-2", "order": 1 },
+  { "id": "cat-id-1", "order": 2 }
+] }
+
+// Response 200
+{ "status": "ok" }</code></pre>
+<div class="err">
+<strong>400 Bad Request</strong> — one or more ids do not belong to this tracking set: <code>{"detail": "All ids must belong to the given tracking set"}</code><br>
+<strong>404 Not Found</strong> — parent tracking set not found.
+</div>
+
+<h3>GET /api/v1/tracking/categories/{id}</h3>
+<div class="err"><strong>404 Not Found</strong> — category not found.</div>
+
+<h3>PUT /api/v1/tracking/categories/{id}</h3>
+<pre><code>// Request — name, description, order all optional
+{ "name": "Assets & Investments" }
+
+// Response 200 — updated category</code></pre>
+<div class="err"><strong>404 Not Found</strong> — category not found.</div>
+
+<h3>DELETE /api/v1/tracking/categories/{id}</h3>
+<p>Cascades to every sub-category, tracking item, and ledger entry beneath it. HTTP 204.</p>
+<div class="err"><strong>404 Not Found</strong> — category not found.</div>
+
+<hr>
+
+<h2>Sub-categories</h2>
+
+<h3>POST /api/v1/tracking/categories/{categoryId}/sub-categories</h3>
+<pre><code>// Request
+{ "name": "Long-term Investment", "description": null }
+
+// Response 201
+{
+  "id":          "d3c4e5f6-...",
+  "categoryId":  "c2b3d4e5-...",
+  "name":        "Long-term Investment",
+  "description": null,
+  "order":       1,
+  "createdAt":   "...",
+  "updatedAt":   "..."
+}</code></pre>
+<div class="err"><strong>404 Not Found</strong> — parent category not found.</div>
+
+<h3>GET /api/v1/tracking/categories/{categoryId}/sub-categories</h3>
+<div class="err"><strong>404 Not Found</strong> — parent category not found.</div>
+
+<h3>PUT /api/v1/tracking/categories/{categoryId}/sub-categories/reorder</h3>
+<p>Same shape as the category reorder endpoint. <code>400</code> if any id does not belong to this category; <code>404</code> if the category itself is not found.</p>
+
+<h3>GET /api/v1/tracking/sub-categories/{id}</h3>
+<div class="err"><strong>404 Not Found</strong> — sub-category not found.</div>
+
+<h3>PUT /api/v1/tracking/sub-categories/{id}</h3>
+<div class="err"><strong>404 Not Found</strong> — sub-category not found.</div>
+
+<h3>DELETE /api/v1/tracking/sub-categories/{id}</h3>
+<p>Cascades to every tracking item and ledger entry beneath it. HTTP 204.</p>
+<div class="err"><strong>404 Not Found</strong> — sub-category not found.</div>
+
+<hr>
+
+<h2>Tracking Items</h2>
+
+<h4>Tracking Item response shape</h4>
+<pre><code>{
+  "id":                         "e4d5f6a7-...",
+  "subCategoryId":              "d3c4e5f6-...",
+  "name":                       "SCB Savings Account",
+  "type":                       "Bank account",
+  "initialInvestmentTracking":  true,
+  "exclusive":                  false,
+  "order":                      1,
+  "description":                null,
+  "accountName":                "xxx-x-xxxxx-x",
+  "remark":                     null,
+  "createdAt":                  "2026-08-23T09:25:00+00:00",
+  "updatedAt":                  "2026-08-23T09:25:00+00:00"
+}</code></pre>
+<p><code>type</code> must be one of: <code>Bank account</code>, <code>Property</code>, <code>Investment Account</code>, <code>TaxSaving</code>, <code>Materials</code>, <code>Insurance</code>.</p>
+
+<h3>POST /api/v1/tracking/sub-categories/{subCategoryId}/items</h3>
+<pre><code>// Request — name and type are required; the rest default as shown
+{
+  "name":                       "SCB Savings Account",
+  "type":                       "Bank account",
+  "initialInvestmentTracking":  false,
+  "exclusive":                  false
+}
+
+// Response 201 — full item object</code></pre>
+<div class="err">
+<strong>404 Not Found</strong> — parent sub-category not found.<br>
+<strong>422 Unprocessable Entity</strong> — <code>type</code> is not one of the 6 allowed values.
+</div>
+
+<h3>GET /api/v1/tracking/sub-categories/{subCategoryId}/items</h3>
+<div class="err"><strong>404 Not Found</strong> — parent sub-category not found.</div>
+
+<h3>PUT /api/v1/tracking/sub-categories/{subCategoryId}/items/reorder</h3>
+<p>Same shape as the category reorder endpoint. <code>400</code> if any id does not belong to this sub-category; <code>404</code> if the sub-category itself is not found.</p>
+
+<h3>GET /api/v1/tracking/items/{id}</h3>
+<div class="err"><strong>404 Not Found</strong> — item not found.</div>
+
+<h3>PUT /api/v1/tracking/items/{id}</h3>
+<pre><code>// Request — every field optional; only provided fields are updated
+{
+  "initialInvestmentTracking": true,
+  "accountName":               "xxx-x-xxxxx-x",
+  "remark":                    "Emergency fund"
+}
+
+// Response 200 — full updated item object</code></pre>
+<div class="err">
+<strong>404 Not Found</strong> — item not found.<br>
+<strong>422 Unprocessable Entity</strong> — <code>type</code> provided but not one of the 6 allowed values.
+</div>
+
+<h3>DELETE /api/v1/tracking/items/{id}</h3>
+<p>Cascades to every ledger entry recorded against this item. HTTP 204.</p>
+<div class="err"><strong>404 Not Found</strong> — item not found.</div>
+
+<hr>
+
+<h2>Initial Investment Ledger</h2>
+
+<div class="obj">
+Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total</code>) are gated at the application layer: the target Tracking Item's <code>initialInvestmentTracking</code> flag must already be <code>true</code>, or these endpoints reject the call with <code>400</code> — even though the underlying <code>ft_initial_investment_entry</code> table has no DB-level constraint tying it to the flag.
+</div>
+
+<h3>POST /api/v1/tracking/items/{itemId}/entries</h3>
+<pre><code>// Request — amount must be non-zero; positive = increase, negative = decrease
+{ "amount": 50000.00, "entryDate": "2026-01-15" }
+
+// Response 201
+{
+  "id":              "f5a6b7c8-...",
+  "trackingItemId":  "e4d5f6a7-...",
+  "amount":          50000.00,
+  "entryDate":       "2026-01-15",
+  "createdAt":       "2026-08-23T09:30:00+00:00",
+  "updatedAt":       "2026-08-23T09:30:00+00:00"
+}</code></pre>
+<div class="err">
+<strong>400 Bad Request</strong> — item does not have <code>initialInvestmentTracking</code> enabled: <code>{"detail": "This tracking item does not have initial_investment_tracking enabled; enable it before adding ledger entries"}</code><br>
+<strong>404 Not Found</strong> — item not found.<br>
+<strong>422 Unprocessable Entity</strong> — <code>amount</code> is zero: <code>"amount must not be zero (positive = increase, negative = decrease)"</code>
+</div>
+
+<h3>GET /api/v1/tracking/items/{itemId}/entries</h3>
+<p>Ordered by <code>entryDate</code> ascending, then <code>createdAt</code> ascending for same-day entries.</p>
+<div class="err"><strong>404 Not Found</strong> — item not found.</div>
+
+<h3>GET /api/v1/tracking/items/{itemId}/running-total</h3>
+<pre><code>// Response 200
+{
+  "itemId":       "e4d5f6a7-...",
+  "currentTotal": 45000.00,
+  "entries": [
+    { "id": "...", "entryDate": "2026-01-15", "amount": 50000.00, "runningTotal": 50000.00 },
+    { "id": "...", "entryDate": "2026-03-01", "amount": -5000.00, "runningTotal": 45000.00 }
+  ]
+}</code></pre>
+<div class="err">
+<strong>400 Bad Request</strong> — item does not have <code>initialInvestmentTracking</code> enabled.<br>
+<strong>404 Not Found</strong> — item not found.
+</div>
+
+<h3>GET /api/v1/tracking/entries/{id}</h3>
+<div class="err"><strong>404 Not Found</strong> — entry not found.</div>
+
+<h3>PUT /api/v1/tracking/entries/{id}</h3>
+<pre><code>// Request — amount and/or entryDate; amount must remain non-zero if provided
+{ "amount": 55000.00 }
+
+// Response 200 — updated entry</code></pre>
+<div class="err">
+<strong>404 Not Found</strong> — entry not found.<br>
+<strong>422 Unprocessable Entity</strong> — <code>amount</code> provided as zero.
+</div>
+
+<h3>DELETE /api/v1/tracking/entries/{id}</h3>
+<p>Hard delete. HTTP 204.</p>
+<div class="err"><strong>404 Not Found</strong> — entry not found.</div>
+
+<hr>
+
+<h2>Common Error Handling</h2>
+<table>
+  <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
+  <tr><td>400</td><td>Reorder ids not belonging to the parent; ledger action on an item with <code>initialInvestmentTracking=false</code></td><td>Specific message per case</td></tr>
+  <tr><td>401</td><td>Missing/invalid/expired Bearer token, missing <code>jti</code> claim, or token revoked (blacklisted)</td><td>"Missing authentication credentials" / "Invalid token: ..." / "Token missing jti claim" / "Token has been revoked"</td></tr>
+  <tr><td>404</td><td>Resource UUID not found, or belongs to another user (ownership check never distinguishes the two — see TECHNICAL.html §5.1)</td><td>"&lt;Resource&gt; not found"</td></tr>
+  <tr><td>409</td><td>Duplicate Tracking Set name for the same user</td><td>"A tracking set with this name already exists"</td></tr>
+  <tr><td>422</td><td>Missing required field, wrong type, invalid <code>type</code> enum value, or zero-amount ledger entry</td><td>Pydantic validation error array</td></tr>
+  <tr><td>503</td><td>Redis unreachable while checking the token blacklist (fails closed, not open)</td><td>"Authentication service temporarily unavailable"</td></tr>
+</table>
+
+</body>
+</html>

@@ -9,7 +9,7 @@ import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings, SlidersHorizontal,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
   ShoppingCart, Briefcase, ArrowUpRight, FlaskConical, HardDriveDownload, GitBranch, ScanLine, Search,
-  RefreshCw, Activity,
+  RefreshCw, Activity, Wallet, FolderTree,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
@@ -746,6 +746,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
 
   const [settingsOpen,  setSettingsOpen]  = useState(inSettingsSection)
   const [analyticsOpen, setAnalyticsOpen] = useState(pathname.startsWith('/analytics'))
+  const [trackingOpen,  setTrackingOpen]  = useState(pathname.startsWith('/tracking'))
 
   const { data: modeData } = useQuery({
     queryKey: ['portfolio-mode'],
@@ -867,6 +868,14 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
         <NavLink href="/portfolio" label="Portfolio" icon={TrendingUp} />
 
         <NavLink href="/action-plan" label="Action Plan" icon={ClipboardList} />
+        <AccordionGroup
+          label="Tracking" icon={Wallet}
+          active={pathname.startsWith('/tracking')}
+          open={trackingOpen}
+          onToggle={() => setTrackingOpen(o => !o)}
+        >
+          <SubLink href="/tracking/category" label="Category" icon={FolderTree} />
+        </AccordionGroup>
         <AccordionGroup
           label="Analytics" icon={BarChart3}
           active={pathname.startsWith('/analytics')}

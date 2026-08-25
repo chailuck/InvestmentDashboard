@@ -67,6 +67,7 @@ services:
       CORS_ORIGINS: '["*"]'
       LOG_LEVEL: INFO
     env_file:
+      - .env.shared
       - backend/.env
     volumes:
       - ./backend:/app:cached
@@ -98,6 +99,40 @@ services:
       retries: 3
       start_period: 30s
 
+  # ── Tracking Backend (Financial Tracker microservice) ────
+  tracking-backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tracking-backend
+    container_name: inv_tracking_backend
+    restart: unless-stopped
+    networks: [dashboard-net]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      API_PREFIX: /api/v1/tracking
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/investment_db
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: '["*"]'
+      LOG_LEVEL: INFO
+    env_file:
+      - .env.shared
+      - tracking-backend/.env
+    volumes:
+      - ./tracking-backend:/app:cached
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/v1/tracking/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   # ── Frontend ────────────────────────────────────────────
   frontend:
     build:
@@ -109,11 +144,18 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      tracking-backend:
+        condition: service_healthy
     environment:
       # BACKEND_URL: internal Docker hostname for the Next.js proxy route handler.
       # Browser never calls the backend directly — it calls /api/proxy/... on the
       # same origin, so this works behind any tunnel without rebuilding.
       BACKEND_URL: http://backend:8000
+      # TRACKING_BACKEND_URL: the Financial Tracker microservice — routed to
+      # separately by the proxy for api/v1/tracking/* paths (see
+      # frontend/src/app/api/proxy/[...path]/route.ts) so it can be restarted
+      # independently of the main backend.
+      TRACKING_BACKEND_URL: http://tracking-backend:8001
       NODE_ENV: production
     ports:
       - "3000:3000"

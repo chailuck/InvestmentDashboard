@@ -36,7 +36,8 @@
             { "id": "api-analytics",         "label": "Analytics",         "file": "02-infrastructure/API-ANALYTICS.html"         },
             { "id": "api-portfolio-db",      "label": "Portfolio DB",      "file": "02-infrastructure/API-PORTFOLIO-DB.html"      },
             { "id": "api-objective",         "label": "Objective Tab",     "file": "02-infrastructure/API-OBJECTIVE.html"         },
-            { "id": "api-dr-mappings",       "label": "DR Mappings",       "file": "02-infrastructure/API-DR-MAPPINGS.html"       }
+            { "id": "api-dr-mappings",       "label": "DR Mappings",       "file": "02-infrastructure/API-DR-MAPPINGS.html"       },
+            { "id": "api-financial-tracker", "label": "Financial Tracker", "file": "02-infrastructure/API-FINANCIAL-TRACKER.html" }
           ]
         }
       ]
@@ -114,6 +115,15 @@
         { "id": "wr-functional", "label": "Functional Spec",  "file": "17-weekly-review/FUNCTIONAL.html" },
         { "id": "wr-technical",  "label": "Technical Design", "file": "17-weekly-review/TECHNICAL.html"  },
         { "id": "wr-api",        "label": "API Reference",    "file": "02-infrastructure/API-REVIEW-LIST.html" }
+      ]
+    },
+    {
+      "id": "financial-tracker",
+      "label": "Financial Tracker",
+      "children": [
+        { "id": "ft-functional", "label": "Functional Spec",  "file": "18-financial-tracker/FUNCTIONAL.html" },
+        { "id": "ft-technical",  "label": "Technical Design", "file": "18-financial-tracker/TECHNICAL.html"  },
+        { "id": "ft-api",        "label": "API Reference",    "file": "02-infrastructure/API-FINANCIAL-TRACKER.html" }
       ]
     },
     {

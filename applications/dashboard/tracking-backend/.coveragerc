@@ -1,0 +1,10 @@
+[run]
+# Without this, coverage.py's line tracer intermittently fails to record hits
+# for statements that resume in a coroutine frame after an `await` on real
+# asyncpg I/O — confirmed independently by two reviewers on both Windows and
+# the Linux Docker container (same ~74% figure both times), and confirmed
+# fixed by setting this. SQLAlchemy's asyncio extra already depends on
+# `greenlet` (see requirements.txt: sqlalchemy[asyncio]) so no new dependency
+# is introduced.
+concurrency = greenlet
+source = app

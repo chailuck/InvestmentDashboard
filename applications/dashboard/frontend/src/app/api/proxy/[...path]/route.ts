@@ -8,11 +8,19 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
 const BACKEND = (process.env.BACKEND_URL ?? 'http://backend:8000').replace(/\/$/, '')
+// The Financial Tracker module runs as its own container (tracking-backend)
+// so it can be restarted/redeployed independently of the main backend. Its
+// routes all live under api/v1/tracking/... — route those to the separate
+// service, everything else goes to the main backend.
+const TRACKING_BACKEND = (process.env.TRACKING_BACKEND_URL ?? 'http://tracking-backend:8001').replace(/\/$/, '')
 
 async function proxy(req: NextRequest, { params }: { params: { path: string[] } }) {
   const tail = params.path.join('/')
   const qs   = req.nextUrl.search          // includes leading '?'
-  const url  = `${BACKEND}/${tail}${qs}`
+  const target = tail.startsWith('api/v1/tracking/') || tail === 'api/v1/tracking'
+    ? TRACKING_BACKEND
+    : BACKEND
+  const url  = `${target}/${tail}${qs}`
 
   // Forward relevant headers, strip host so the backend sees its own hostname
   const fwdHeaders = new Headers()

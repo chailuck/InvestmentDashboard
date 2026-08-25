@@ -266,7 +266,7 @@ CREATE INDEX ix_weekly_reviews_user_id ON weekly_reviews (user_id);</code></pre>
 
 <h3>weekly_review_items</h3>
 <p>One row per position within a weekly review. Supports two item types: <code>TRADE</code> (positions with buy/sell activity this week) and <code>HOLD</code> (open positions with no activity). Both legs (buy and sell) are independently nullable — a trade item may be entry-only (still open at week end) or exit-only (position entered in a prior week).</p>
-<div class="callout warn">This table went through three migrations between 2026-06-13 and 2026-06-14. The schema below reflects the current final state after migration <code>d4f8c2e73b1a</code>. See section 6 for the full migration history.</div>
+<div class="callout warn">This table went through three migrations between 2026-06-13 and 2026-06-14. The schema below reflects the current final state after migration <code>d4f8c2e73b1a</code>. See section 7 for the full migration history.</div>
 <pre><code>CREATE TABLE weekly_review_items (
     id                  UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
     review_id           UUID         NOT NULL REFERENCES weekly_reviews(id) ON DELETE CASCADE,
@@ -356,7 +356,11 @@ async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)</code></pre>
 <div class="callout tip">The <code># noqa: F401</code> comment suppresses the "imported but unused" linter warning. These imports are intentional side effects and should not be removed.</div>
 
-<h2>6. Migration history</h2>
+<h2>6. Financial Tracker tables (separate bounded context)</h2>
+<p>The <code>ft_tracking_set</code>, <code>ft_category</code>, <code>ft_sub_category</code>, <code>ft_tracking_item</code>, and <code>ft_initial_investment_entry</code> tables live in this <strong>same physical Postgres database</strong> but are owned and migrated by the independent <code>tracking-backend</code> microservice, not by this <code>backend</code> service. They are intentionally excluded from the table inventory above (as, for the same reason, are the standalone-module tables from other backend features covered by their own Technical Design docs, e.g. <code>daily_performance</code>): they carry <strong>no foreign keys</strong> to <code>users</code> or any table in this section, and are managed by a separate Alembic chain with its own <code>ft_alembic_version</code> bookkeeping table — running this service's migrations does not create, alter, or affect them in any way.</p>
+<p>Full schema, indexes, constraints, and entity relationships: <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §3–4.</p>
+
+<h2>7. Migration history</h2>
 <p>All Alembic migrations in chronological order. Run <code>alembic upgrade head</code> to apply all pending migrations. Migration files live in <code>backend/alembic/versions/</code>.</p>
 <table>
   <thead><tr><th>Migration ID</th><th>Date</th><th>Description</th></tr></thead>

@@ -1,0 +1,45 @@
+# ── Stage 1: Builder ──────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+# Install build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev curl && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies (layer-cached)
+COPY tracking-backend/requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# ── Stage 2: Runtime ──────────────────────────────────────
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+# Runtime OS deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 curl && rm -rf /var/lib/apt/lists/*
+
+# Non-root user — uid/gid 1002 to avoid colliding with the main backend's
+# appuser/appgroup (1001) when both images run on the same host.
+RUN addgroup --gid 1002 ftgroup && \
+    adduser --uid 1002 --gid 1002 --disabled-password --no-create-home ftuser
+
+# Copy installed packages from builder
+COPY --from=builder /root/.local /home/ftuser/.local
+ENV PATH="/home/ftuser/.local/bin:$PATH"
+
+# Copy application source
+COPY tracking-backend/ .
+
+# Ownership
+RUN chown -R ftuser:ftgroup /app
+USER ftuser
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD curl -f http://localhost:8001/api/v1/tracking/health/live || exit 1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", \
+     "--workers", "1", "--loop", "uvloop", "--http", "httptools"]

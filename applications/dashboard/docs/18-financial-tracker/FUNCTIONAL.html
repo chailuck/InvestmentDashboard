@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financial Tracker — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Financial Tracker — Functional Specification</h1>
+
+<p><strong>Version:</strong> 1.0 (Phase 1) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-23 &nbsp;|&nbsp; <strong>Route:</strong> <code>/tracking/category</code></p>
+
+<hr>
+
+<h2>1. Overview</h2>
+<p>The Financial Tracker ("Tracking" in the sidebar) is a personal financial planning module that lets each user record and organise their own financial holdings — bank accounts, property, investment accounts, tax-saving products, materials (e.g. gold, collectibles), and insurance — in a hierarchy they define themselves.</p>
+
+<p>The hierarchy has four levels:</p>
+<pre><code>Tracking Set
+  └─ Category               (e.g. "Assets", "Liabilities")
+       └─ Sub-category      (e.g. "Current Assets", "Property")
+            └─ Tracking Item        (e.g. "SCB Savings Account")
+                 └─ Initial Investment Ledger   (optional — see §7)</code></pre>
+
+<p>A user can maintain multiple independent Tracking Sets — for example, a personal set and a family set — each with its own category tree. A tracking set belongs to exactly one user; it is never shared or visible to other users.</p>
+
+<div class="callout">This document describes <strong>Phase 1</strong> only: creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger. The "Update Tracking List" and "Dashboard" sub-features described in the original requirements are <strong>future phases and have not been built yet</strong> — see §11.</div>
+
+<hr>
+
+<h2>2. Navigation</h2>
+<p>The sidebar shows a <strong>Tracking</strong> accordion group (positioned directly below Action Plan, above Analytics) that expands to reveal one sub-link:</p>
+<table>
+  <thead><tr><th>Sub-link</th><th>Route</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>Category</td><td><code>/tracking/category</code></td><td>Manage Tracking Sets, Categories, Sub-categories, and Tracking Items</td></tr>
+  </tbody>
+</table>
+<div class="callout warn">Only the "Category" sub-link currently exists under Tracking. There is no "Update" or "Dashboard" sub-link yet — those are planned for a later phase (§11).</div>
+
+<hr>
+
+<h2>3. Tracking Sets</h2>
+<p>The Category page opens with a Tracking Set selector. If the user has no tracking sets yet, a prompt invites them to create the first one. Creating a set requires only a <strong>name</strong> (required) and an optional <strong>description</strong>.</p>
+<ul>
+  <li>Tracking set names must be unique <em>per user</em> — creating a second set with a name you already used is rejected with an error message.</li>
+  <li>A tracking set can be renamed or deleted at any time. Deleting a tracking set permanently removes every category, sub-category, tracking item, and ledger entry beneath it — this cascade happens automatically when the record is deleted.</li>
+  <li>Switching the selected tracking set in the dropdown immediately loads that set's category tree.</li>
+</ul>
+
+<h3>3.1 Auto-created default structure</h3>
+<p>When a new Tracking Set is created, the system automatically creates a starter structure of categories and sub-categories in the same operation, so the user is never left with an empty tree:</p>
+<pre><code>Assets
+  ├─ Current Assets
+  ├─ Long-term Investment
+  └─ Property
+Liabilities
+  ├─ Current Liabilities
+  └─ Long-term Liabilities</code></pre>
+<div class="callout tip">These auto-created rows are <strong>not</strong> special or protected in any way — the user can rename, reorder, or delete any of them immediately, exactly as if they had created them by hand. There is no "default" flag anywhere in the UI or data.</div>
+
+<hr>
+
+<h2>4. Categories</h2>
+<p>Within a Tracking Set, the Category page shows each Category as an expandable card. A category has a <strong>Name</strong>, an optional <strong>Description</strong>, and a display <strong>Order</strong>.</p>
+<ul>
+  <li><strong>Add Category</strong> creates a new category at the end of the current list.</li>
+  <li>Each category card offers up/down arrow buttons to reorder it relative to its siblings, plus rename and delete actions.</li>
+  <li>Deleting a category shows a confirmation dialog warning that all sub-categories and tracking items beneath it will also be deleted.</li>
+</ul>
+
+<hr>
+
+<h2>5. Sub-categories</h2>
+<p>Expanding a category reveals its Sub-categories, each with the same Name / Description / Order fields and the same add / reorder / rename / delete controls as categories, scoped to sub-categories within that one category.</p>
+<p>Deleting a sub-category warns that all tracking items beneath it will also be deleted.</p>
+
+<hr>
+
+<h2>6. Tracking Items</h2>
+<p>Expanding a sub-category reveals its Tracking Items. Creating an item only requires a <strong>Name</strong> and a <strong>Type</strong> up front — the remaining fields are filled in afterwards on the item's own detail page (opened by clicking the item, or via the external-link icon next to it).</p>
+
+<h3>6.1 Fields</h3>
+<table>
+  <thead><tr><th>Field</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>Name</td><td>Required, free text</td></tr>
+    <tr><td>Type</td><td>One of: Bank account, Property, Investment Account, TaxSaving, Materials, Insurance. Fixed list — see §6.2.</td></tr>
+    <tr><td>Initial Investment Tracking</td><td>Yes / No toggle. When Yes, the Initial Investment Ledger becomes available on the item's detail page (§7). Default: No.</td></tr>
+    <tr><td>Exclusive</td><td>Yes / No toggle. Default: No. See §8 — has no visible effect in this phase.</td></tr>
+    <tr><td>Order</td><td>Numeric display order among sibling items; changed via the up/down arrow buttons on the Category page, not on the item detail page.</td></tr>
+    <tr><td>Description</td><td>Optional free text</td></tr>
+    <tr><td>Account name</td><td>Optional free text, e.g. the bank account number or nickname</td></tr>
+    <tr><td>Remark</td><td>Optional free text</td></tr>
+  </tbody>
+</table>
+
+<h3>6.2 Fixed type list</h3>
+<p>The six item types are a closed list — an item cannot be given a type outside this set, and the constraint is enforced consistently whether the request comes from the UI, a script, or a direct API call:</p>
+<ul>
+  <li>Bank account</li>
+  <li>Property</li>
+  <li>Investment Account</li>
+  <li>TaxSaving</li>
+  <li>Materials</li>
+  <li>Insurance</li>
+</ul>
+
+<h3>6.3 Item detail page</h3>
+<p>Clicking a tracking item navigates to its own page where every field except Order can be edited and saved with a single "Save Changes" action. The page shows a breadcrumb back to the Category page and the item's current Order (informational — reordering itself is done from the Category page).</p>
+
+<h3>6.4 Reordering and deleting</h3>
+<p>Items can be moved up or down among their siblings from the Category page's tree view. Deleting an item shows a confirmation dialog; deleting it also removes any Initial Investment Ledger entries recorded against it.</p>
+
+<hr>
+
+<h2>7. Initial Investment Ledger</h2>
+<p>When a tracking item's <strong>Initial Investment Tracking</strong> flag is set to Yes, its detail page gains an "Initial Investment Ledger" section beneath the main form. This is a running log of changes to the item's original invested amount over time — separate from any later balance updates.</p>
+
+<h3>7.1 Adding entries</h3>
+<p>Each ledger entry has a <strong>Date</strong> and a signed <strong>Amount</strong>:</p>
+<ul>
+  <li>A positive amount records an increase to the invested total (e.g. an additional deposit).</li>
+  <li>A negative amount records a decrease (e.g. a partial withdrawal).</li>
+  <li>An amount of exactly zero is rejected — a zero-value entry carries no meaning in a ledger.</li>
+</ul>
+
+<h3>7.2 Running total</h3>
+<p>The ledger table lists every entry in date order together with a <strong>Running Total</strong> column — the cumulative sum of all entries up to and including that row — plus a headline "Current total" figure above the table (the sum of all entries).</p>
+
+<h3>7.3 Editing and deleting entries</h3>
+<p>Any entry can be edited (date and/or amount) or deleted from the ledger table. Editing recomputes the running total for every row from that point forward the next time the ledger is loaded.</p>
+
+<div class="callout warn">The ledger section — and the ability to add or view entries — is only available once <strong>Initial Investment Tracking</strong> has actually been saved as Yes on the item. Toggling the switch on the item's edit form does not reveal the ledger until "Save Changes" is clicked; this prevents the page from querying a ledger that the backend would still reject.</div>
+
+<hr>
+
+<h2>8. The Exclusive flag</h2>
+<p>Every tracking item has an <strong>Exclusive</strong> Yes/No toggle, defaulting to No. In this phase, the flag is <strong>reserved for future rollup reporting</strong> (for example, letting a future dashboard or net-worth summary exclude marked items from a total). It currently has no visible or functional effect anywhere in the application — it is purely stored for later use.</p>
+
+<hr>
+
+<h2>9. Ownership and privacy</h2>
+<p>Tracking Sets, Categories, Sub-categories, Tracking Items, and Ledger entries are always scoped to the user who created them. There is no sharing, no admin visibility, and no cross-user access — a user only ever sees their own tracking data.</p>
+
+<hr>
+
+<h2>10. Business rules summary</h2>
+<table>
+  <thead><tr><th>Rule</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td>Tracking set name uniqueness</td><td>Unique per user; duplicate name on create/rename is rejected</td></tr>
+    <tr><td>Cascade delete</td><td>Deleting a set/category/sub-category/item deletes everything beneath it</td></tr>
+    <tr><td>Item type</td><td>Must be one of the 6 fixed values</td></tr>
+    <tr><td>Ledger entry amount</td><td>Must be non-zero; positive = increase, negative = decrease</td></tr>
+    <tr><td>Ledger availability</td><td>Only available on items with Initial Investment Tracking = Yes (persisted, not a pending edit)</td></tr>
+    <tr><td>Exclusive flag</td><td>Stored only; no functional effect yet</td></tr>
+    <tr><td>Auto-default structure</td><td>Created once, atomically, when a Tracking Set is created; fully editable afterward</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>11. Not yet built — future phases</h2>
+<p>The original requirements for this feature also described two additional sub-menus under Tracking. Neither exists in the product today; they are noted here only so readers of this spec know they are intentionally out of scope for Phase 1, not an oversight:</p>
+<ul>
+  <li><strong>"Update" sub-menu</strong> — a planned feature to periodically record the latest balance of each tracking item (e.g. per quarter) against a tracking set, and show the increase/decrease versus the previous period.</li>
+  <li><strong>"Dashboard" sub-menu</strong> — a planned reporting view to show balances rolled up by category/sub-category/item across quarters and years.</li>
+</ul>
+<div class="callout warn">No schema, API, or UI for these two future features exists anywhere in the current codebase. Do not treat any table, endpoint, or component name in this documentation set as an implementation of them.</div>
+
+</body>
+</html>

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financial Tracker — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Financial Tracker — Technical Design</h1>
+
+<p><strong>Version:</strong> 1.0 (Phase 1) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-23</p>
+
+<hr>
+
+<h2>1. Architecture</h2>
+
+<p>The Financial Tracker is implemented as a <strong>genuinely separate FastAPI microservice</strong> — <code>tracking-backend</code> — rather than a module inside the existing <code>backend</code> service. It has its own codebase, its own Docker image, its own process, and its own Alembic migration chain. It shares only two things with the rest of the application: the same physical PostgreSQL instance/database, and the same Next.js frontend.</p>
+
+<pre><code>applications/dashboard/
+├── backend/                    ← existing main API service (unchanged)
+├── tracking-backend/           ← NEW, independent microservice
+│   ├── main.py                 ← FastAPI app factory, own middleware, own CORS
+│   ├── app/
+│   │   ├── core/config.py      ← own Pydantic Settings (Financial Tracker API)
+│   │   ├── core/logging.py     ← own structlog setup (service_name="tracking-backend")
+│   │   ├── auth/jwt.py         ← JWT VERIFICATION ONLY (duplicated, not imported)
+│   │   ├── auth/dependencies.py← get_current_user_id (duplicated, not imported)
+│   │   ├── database/session.py ← own async SQLAlchemy engine/session/Base
+│   │   ├── database/redis.py   ← own Redis client (blacklist check only)
+│   │   ├── models/              (5 ORM models — see §3)
+│   │   ├── schemas/              (Pydantic v2, camelCase — see §5)
+│   │   ├── services/cascade.py ← default category/sub-category creation
+│   │   └── api/v1/
+│   │       ├── router.py       ← assembles all sub-routers
+│   │       └── endpoints/      ← health, tracking_sets, categories,
+│   │                              sub_categories, tracking_items, entries
+│   ├── alembic/                ← OWN migration chain (see §4)
+│   └── tests/
+├── docker/Dockerfile.tracking-backend
+└── frontend/                   ← SHARED — new pages/components/service added
+    └── src/
+        ├── services/tracking.ts
+        ├── components/tracking/  (CategoryTree, CreateItemModal,
+        │                          NameDescriptionModal, ConfirmDeleteModal)
+        └── app/(dashboard)/tracking/
+            ├── category/page.tsx
+            └── items/[itemId]/page.tsx</code></pre>
+
+<h3>1.1 Why a separate service (ADR summary)</h3>
+<p><strong>Decision:</strong> Build the Financial Tracker as an independently deployable FastAPI service rather than extending <code>backend</code>, driven by the explicit technical requirement to add this feature "so that we can restart this pod without impacting the current functionalities" (see <code>docs/REQUIREMENTS FINANCIAL TRACKER.md</code>, §2).</p>
+<table>
+  <thead><tr><th>Trade-off</th><th>Accepted consequence</th></tr></thead>
+  <tbody>
+    <tr><td>JWT verification logic duplicated</td><td><code>tracking-backend/app/auth/jwt.py</code> and <code>dependencies.py</code> are a deliberately duplicated subset of the main backend's auth code, not imported. A future change to token shape/claims (e.g. adding a new claim, changing the blacklist key prefix) must be applied to <strong>both</strong> services by hand, or they will silently diverge on which tokens they accept.</td></tr>
+    <tr><td>RBAC / role-scoping deferred</td><td>This service has no concept of roles (<code>admin</code>/<code>analyst</code>/<code>viewer</code>) and no FK to the <code>users</code> table — see §2.2. Every endpoint is available to any authenticated user for their own data only. If role-based restrictions are ever required for this feature, they must be added as a new capability, not inherited from the main backend.</td></tr>
+    <tr><td>Independent Alembic chain</td><td>Own <code>version_table="ft_alembic_version"</code> in the same database (§4) — deploying this service requires its own separate <code>alembic upgrade head</code> step; it is not covered by the main backend's migration run.</td></tr>
+    <tr><td>Shared secret file operational burden</td><td><code>.env.shared</code> (§2.1) must exist and be kept identical for both services in every environment; a missed copy causes 100% of tracking-backend requests to fail with 401 with no config-level error to point at the cause.</td></tr>
+  </tbody>
+</table>
+<p><strong>Alternatives considered:</strong></p>
+<ul>
+  <li><strong>Add a new router/module inside the existing <code>backend</code> service.</strong> Rejected — the explicit requirement was independent restart/deploy without touching the main backend's running process, which a shared FastAPI app cannot provide.</li>
+  <li><strong>Separate service with its own database.</strong> Rejected for Phase 1 — the requirement asked to "share the same... DB", presumably to avoid provisioning and operating a second Postgres instance for what is currently a small table set.</li>
+</ul>
+
+<hr>
+
+<h2>2. Authentication</h2>
+
+<h3>2.1 Shared secret</h3>
+<p>Both <code>backend</code> and <code>tracking-backend</code> load <code>APP_SECRET_KEY</code> from a shared, untracked <code>.env.shared</code> file at the repo root (template: <code>applications/dashboard/.env.shared.example</code>), wired into both services via <code>env_file</code> in <code>docker-compose.yml</code>. <code>tracking-backend</code> never issues tokens — it only verifies signatures on tokens the main backend already issued, using the identical key and <code>HS256</code> algorithm.</p>
+<div class="callout warn">If the two services' <code>APP_SECRET_KEY</code> values ever diverge (e.g. one environment's <code>.env.shared</code> is stale), every tracking-backend request fails with a generic 401 — there is no diagnostic pointing at a key mismatch specifically.</div>
+
+<h3>2.2 Verification-only, no RBAC</h3>
+<p><code>app/auth/jwt.py</code> and <code>app/auth/dependencies.py</code> are intentionally a duplicated subset of the main backend's equivalent files — not imported — to keep the two codebases fully independent. <code>get_current_user_id</code> reproduces the main backend's rules exactly so both services accept/reject the same tokens identically:</p>
+<ol>
+  <li>Missing <code>Authorization</code> header → 401</li>
+  <li>Invalid signature / expired / wrong token type → 401</li>
+  <li>Token missing the <code>jti</code> claim → 401</li>
+  <li><strong>Redis unreachable while checking the blacklist → 503 (fails CLOSED, not open)</strong></li>
+  <li>Token's <code>jti</code> present under <code>blacklist:&lt;jti&gt;</code> in Redis → 401 (revoked)</li>
+  <li>Otherwise → returns <code>payload["sub"]</code> as an opaque user-id string</li>
+</ol>
+<p>This service has <strong>no</strong> <code>get_current_user</code>, no role checks, and no foreign key into the main backend's <code>users</code> table. It only ever knows the caller as an opaque user-id string and enforces per-row ownership via bare <code>user_id</code> columns on its own tables (§3).</p>
+
+<h3>2.3 Redis blacklist</h3>
+<p>Shares the same Redis instance/db as the main backend, reading the same <code>blacklist:&lt;jti&gt;</code> key pattern the main backend's logout endpoint writes to (see <code>docs/02-infrastructure/DATABASE.html</code> §4). A logout on the main backend therefore also revokes that token's access to tracking-backend — there is no separate logout needed.</p>
+
+<hr>
+
+<h2>3. Data model</h2>
+
+<p>All 5 tables live in the <strong>same physical Postgres database</strong> as the main application (<code>investment_db</code>), but are prefixed <code>ft_</code> and carry <strong>no foreign keys</strong> into any table owned by <code>backend</code> (e.g. no FK to <code>users</code>). Ownership is enforced purely at the application layer via a bare <code>user_id</code> UUID column on every table. This is deliberate bounded-context isolation — the two services could point at physically separate databases in the future with no schema change on this side.</p>
+
+<h3>ft_tracking_set</h3>
+<p>ORM: <code>app/models/tracking_set.py — class TrackingSet</code></p>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>No</td><td>PK, <code>uuid_generate_v4()</code></td></tr>
+    <tr><td><code>user_id</code></td><td>UUID</td><td>No</td><td>Bare column, no FK. Indexed.</td></tr>
+    <tr><td><code>name</code></td><td>VARCHAR(255)</td><td>No</td><td>—</td></tr>
+    <tr><td><code>description</code></td><td>TEXT</td><td>Yes</td><td>—</td></tr>
+    <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td><code>server_default=now()</code>; <code>updated_at</code> also has <code>onupdate=now()</code></td></tr>
+  </tbody>
+</table>
+<p><strong>Constraint:</strong> <code>uq_ft_tracking_set_user_id_name</code> — UNIQUE <code>(user_id, name)</code>. Enforces per-user name uniqueness at the database level; violations surface as HTTP 409 (see API reference).</p>
+
+<h3>ft_category</h3>
+<p>ORM: <code>app/models/category.py — class Category</code></p>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>No</td><td>PK</td></tr>
+    <tr><td><code>user_id</code></td><td>UUID</td><td>No</td><td>Bare column, no FK. Indexed.</td></tr>
+    <tr><td><code>tracking_set_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_tracking_set.id</code> ON DELETE CASCADE. Indexed.</td></tr>
+    <tr><td><code>name</code></td><td>VARCHAR(255)</td><td>No</td><td>—</td></tr>
+    <tr><td><code>description</code></td><td>TEXT</td><td>Yes</td><td>—</td></tr>
+    <tr><td><code>order_index</code></td><td>INTEGER</td><td>No</td><td>Default 0. Column named <code>order_index</code> (not <code>order</code>, a reserved SQL word); serialised to the API as <code>order</code>.</td></tr>
+    <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td>—</td></tr>
+  </tbody>
+</table>
+<p><strong>Index:</strong> <code>ix_ft_category_set_order</code> on <code>(tracking_set_id, order_index)</code> — supports the ordered-list query used by <code>GET /sets/{id}/categories</code>.</p>
+
+<h3>ft_sub_category</h3>
+<p>ORM: <code>app/models/sub_category.py — class SubCategory</code>. Same column shape as <code>ft_category</code>, one level down.</p>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>No</td><td>PK</td></tr>
+    <tr><td><code>user_id</code></td><td>UUID</td><td>No</td><td>Bare column, no FK. Indexed.</td></tr>
+    <tr><td><code>category_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_category.id</code> ON DELETE CASCADE. Indexed.</td></tr>
+    <tr><td><code>name</code></td><td>VARCHAR(255)</td><td>No</td><td>—</td></tr>
+    <tr><td><code>description</code></td><td>TEXT</td><td>Yes</td><td>—</td></tr>
+    <tr><td><code>order_index</code></td><td>INTEGER</td><td>No</td><td>Default 0</td></tr>
+    <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td>—</td></tr>
+  </tbody>
+</table>
+<p><strong>Index:</strong> <code>ix_ft_sub_category_cat_order</code> on <code>(category_id, order_index)</code>.</p>
+
+<h3>ft_tracking_item</h3>
+<p>ORM: <code>app/models/tracking_item.py — class TrackingItem</code></p>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>No</td><td>PK</td></tr>
+    <tr><td><code>user_id</code></td><td>UUID</td><td>No</td><td>Bare column, no FK. Indexed.</td></tr>
+    <tr><td><code>sub_category_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_sub_category.id</code> ON DELETE CASCADE. Indexed.</td></tr>
+    <tr><td><code>name</code></td><td>VARCHAR(255)</td><td>No</td><td>—</td></tr>
+    <tr><td><code>type</code></td><td>VARCHAR(30)</td><td>No</td><td>One of the 6 fixed values (see below). Enforced by a DB CHECK constraint AND a Pydantic validator.</td></tr>
+    <tr><td><code>initial_investment_tracking</code></td><td>BOOLEAN</td><td>No</td><td>Default <code>false</code></td></tr>
+    <tr><td><code>exclusive</code></td><td>BOOLEAN</td><td>No</td><td>Default <code>false</code>. Reserved for future rollup reporting — read but not acted on anywhere in Phase 1.</td></tr>
+    <tr><td><code>order_index</code></td><td>INTEGER</td><td>No</td><td>Default 0</td></tr>
+    <tr><td><code>description</code></td><td>TEXT</td><td>Yes</td><td>—</td></tr>
+    <tr><td><code>account_name</code></td><td>VARCHAR(255)</td><td>Yes</td><td>—</td></tr>
+    <tr><td><code>remark</code></td><td>TEXT</td><td>Yes</td><td>—</td></tr>
+    <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td>—</td></tr>
+  </tbody>
+</table>
+<p><strong>Constraint:</strong> <code>ck_ft_tracking_item_type</code> — <code>CHECK (type IN ('Bank account','Property','Investment Account','TaxSaving','Materials','Insurance'))</code>. Source comment marks this list "FINAL, verbatim — do not alter"; it is duplicated in <code>app/models/tracking_item.py</code>'s <code>TRACKING_ITEM_TYPES</code> tuple (used by the Pydantic validator) and must be changed in both places together if it ever changes.</p>
+<p><strong>Index:</strong> <code>ix_ft_tracking_item_subcat_order</code> on <code>(sub_category_id, order_index)</code>.</p>
+
+<h3>ft_initial_investment_entry</h3>
+<p>ORM: <code>app/models/initial_investment_entry.py — class InitialInvestmentEntry</code>. A signed ledger entry against one Tracking Item.</p>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>No</td><td>PK</td></tr>
+    <tr><td><code>user_id</code></td><td>UUID</td><td>No</td><td>Bare column, no FK. <strong>Not indexed</strong> on this table (see note below).</td></tr>
+    <tr><td><code>tracking_item_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_tracking_item.id</code> ON DELETE CASCADE.</td></tr>
+    <tr><td><code>amount</code></td><td>NUMERIC(19,4)</td><td>No</td><td>Signed. Positive = increase, negative = decrease. Zero is rejected.</td></tr>
+    <tr><td><code>entry_date</code></td><td>DATE</td><td>No</td><td>—</td></tr>
+    <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td>—</td></tr>
+  </tbody>
+</table>
+<p><strong>Constraint:</strong> <code>ck_ft_entry_amount_nonzero</code> — <code>CHECK (amount &lt;&gt; 0)</code>.</p>
+<p><strong>Indexes:</strong> <code>ix_ft_entry_tracking_item_id</code> on <code>(tracking_item_id)</code>; <code>ix_ft_entry_item_date</code> on <code>(tracking_item_id, entry_date)</code> — supports the running-total query's chronological ordering.</p>
+<div class="callout">The model docstring explicitly notes that the FK column intentionally omits SQLAlchemy's <code>index=True</code> shortcut here: the approved design calls for the shorter, explicit index names <code>ix_ft_entry_*</code> rather than the longer name SQLAlchemy would auto-generate (<code>ix_ft_initial_investment_entry_tracking_item_id</code>), so both indexes are declared explicitly in <code>__table_args__</code> instead.</div>
+
+<h3>Entity relationships</h3>
+<pre><code>ft_tracking_set (1)
+  └─ ft_category (N)             [tracking_set_id → ft_tracking_set.id  ON DELETE CASCADE]
+       └─ ft_sub_category (N)    [category_id → ft_category.id  ON DELETE CASCADE]
+            └─ ft_tracking_item (N)  [sub_category_id → ft_sub_category.id  ON DELETE CASCADE]
+                 └─ ft_initial_investment_entry (N)  [tracking_item_id → ft_tracking_item.id  ON DELETE CASCADE]
+
+No table in this chain has a foreign key to `users` or any other main-backend table.
+user_id on every table is a bare UUID column checked at the application layer only.</code></pre>
+
+<hr>
+
+<h2>4. Alembic migration chain</h2>
+<p>tracking-backend owns its schema via its own, completely independent Alembic chain — <strong>not</strong> the main backend's chain, even though both write to the same physical database.</p>
+<table>
+  <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>Config location</td><td><code>tracking-backend/alembic.ini</code>, <code>tracking-backend/alembic/env.py</code></td></tr>
+    <tr><td><code>version_table</code></td><td><strong><code>ft_alembic_version</code></strong> — distinct from the main backend's default <code>alembic_version</code> table, so neither service's <code>alembic upgrade head</code> can stamp or read the other's current revision</td></tr>
+    <tr><td>Current head</td><td><code>f1a2b3c4d5e6</code> — <code>create_ft_tables</code> (2026-08-22) — creates all 5 tables in one migration; <code>down_revision = None</code> (first migration in the chain)</td></tr>
+    <tr><td>Startup behaviour</td><td>Unlike the main backend, this service does <strong>not</strong> call <code>Base.metadata.create_all</code> at startup as a dev convenience. Migrations must be applied out-of-band (<code>alembic upgrade head</code>) before the service starts.</td></tr>
+  </tbody>
+</table>
+<div class="callout warn">Deploying tracking-backend requires running its own <code>alembic upgrade head</code> from the <code>tracking-backend/</code> directory. Running only the main backend's migration step does not create or update the <code>ft_*</code> tables.</div>
+
+<hr>
+
+<h2>5. API surface</h2>
+<p>Full endpoint-by-endpoint reference (request/response shapes, error codes, examples) lives in <a href="../02-infrastructure/API-FINANCIAL-TRACKER.html"><code>docs/02-infrastructure/API-FINANCIAL-TRACKER.html</code></a>. Summary:</p>
+<table>
+  <thead><tr><th>Router</th><th>Prefix</th><th>Resource</th></tr></thead>
+  <tbody>
+    <tr><td><code>health.py</code></td><td><code>/health</code></td><td>Liveness / readiness — no auth</td></tr>
+    <tr><td><code>tracking_sets.py</code></td><td><code>/sets</code></td><td>Tracking Set CRUD + nested Category create/list/reorder</td></tr>
+    <tr><td><code>categories.py</code></td><td><code>/categories</code></td><td>Category CRUD by id + nested Sub-category create/list/reorder</td></tr>
+    <tr><td><code>sub_categories.py</code></td><td><code>/sub-categories</code></td><td>Sub-category CRUD by id + nested Tracking Item create/list/reorder</td></tr>
+    <tr><td><code>tracking_items.py</code></td><td><code>/items</code></td><td>Tracking Item CRUD by id + nested Ledger Entry create/list + running-total</td></tr>
+    <tr><td><code>entries.py</code></td><td><code>/entries</code></td><td>Ledger Entry CRUD by id</td></tr>
+  </tbody>
+</table>
+<p>All routers are mounted under the app-level prefix <code>settings.api_prefix = "/api/v1/tracking"</code> (set in <code>main.py</code> via <code>app.include_router(v1_router, prefix=settings.api_prefix)</code>), so the full external path for, e.g., listing sets is <code>GET /api/v1/tracking/sets</code>.</p>
+
+<h3>5.1 Ownership pattern</h3>
+<p>Every single-resource endpoint (get/update/delete by id, and every nested "belongs to" check) goes through a per-router <code>_get_or_404(id, user_id, db)</code> helper that filters by <strong>both</strong> <code>id</code> AND <code>user_id</code> in the same query, and raises HTTP 404 — never 403 — when no row matches. This means a cross-user access attempt is indistinguishable from a nonexistent resource; the API never confirms or denies that a given id exists for another user. This mirrors <code>applications/dashboard/backend/app/api/v1/endpoints/portfolio_db.py</code>'s identical pattern.</p>
+
+<h3>5.2 Auto-numbering of <code>order</code></h3>
+<p>On create, if the client omits <code>order</code>, the endpoint queries the current maximum <code>order_index</code> among siblings and assigns <code>max + 1</code> (or <code>1</code> if there are no siblings yet). Reordering is always an explicit, full replacement via the <code>PUT .../reorder</code> endpoints — there is no "move by one position" endpoint.</p>
+
+<hr>
+
+<h2>6. Cascade creation service</h2>
+<p>Source: <code>app/services/cascade.py — create_tracking_set_with_defaults()</code></p>
+<p>Creating a Tracking Set and its default category/sub-category skeleton (§ FUNCTIONAL.html §3.1) happens as <strong>8 inserts in a single database transaction</strong> — 1 tracking set + 2 categories + 5 sub-categories:</p>
+<ol>
+  <li>Insert the <code>TrackingSet</code> row, then <code>db.flush()</code> (assigns its <code>id</code> without committing).</li>
+  <li>For each of the two default categories (<code>Assets</code>, <code>Liabilities</code>): insert the <code>Category</code> row, then <code>flush()</code> to obtain its <code>id</code>.</li>
+  <li>For each category's default sub-category names, insert the <code>SubCategory</code> rows.</li>
+  <li>A final <code>flush()</code>; the endpoint layer (via the <code>get_db</code> dependency) performs the actual <code>commit()</code> after the handler returns normally.</li>
+</ol>
+<p>If any insert fails mid-cascade — most likely a duplicate tracking-set name violating <code>uq_ft_tracking_set_user_id_name</code> on flush — the entire session rolls back and nothing is persisted. There is no possible state where a Tracking Set exists without its default categories, or vice versa.</p>
+<p>The default rows are ordinary rows: nothing marks them as system-created versus user-created, so they are immediately and fully editable/deletable through the same CRUD endpoints as anything else.</p>
+
+<hr>
+
+<h2>7. Frontend integration</h2>
+
+<h3>7.1 Proxy routing</h3>
+<p>The browser never talks to either backend directly — every API call from the frontend goes through the existing Next.js catch-all proxy route <code>frontend/src/app/api/proxy/[...path]/route.ts</code>, which the app already used for the main backend. <code>trackingService</code> (in <code>frontend/src/services/tracking.ts</code>) builds paths as <code>/tracking/&lt;resource&gt;</code>, which the shared <code>apiClient</code> (baseURL <code>/api/proxy/api/v1</code>) turns into a browser request to <code>/api/proxy/api/v1/tracking/&lt;resource&gt;</code>.</p>
+<div class="callout warn">
+<strong>Known gap — proxy does not yet route to tracking-backend.</strong> As implemented today, <code>route.ts</code> forwards <em>every</em> request it receives — regardless of path — to a single <code>BACKEND_URL</code> environment variable (default <code>http://backend:8000</code>, the main backend). There is no branch on the <code>/api/v1/tracking/</code> prefix, and no <code>TRACKING_BACKEND_URL</code> variable exists anywhere in the codebase (checked: not in <code>route.ts</code>, not in <code>docker-compose.yml</code>, not in any <code>.env*</code> file). <code>docker-compose.yml</code> does run <code>tracking-backend</code> as its own container on port 8001, but nothing in the frontend currently points at it. In the current wiring, every <code>/api/proxy/api/v1/tracking/...</code> call is forwarded to the <strong>main</strong> backend, which does not mount these routes and will return 404. This must be fixed — e.g. by branching in <code>route.ts</code> on <code>params.path[0..2] === ['api','v1','tracking']</code> and forwarding to a new <code>TRACKING_BACKEND_URL</code> env var pointing at <code>http://tracking-backend:8001</code> — before this feature works end-to-end in the Docker Compose deployment. Track as a release blocker, not a cosmetic doc gap.
+</div>
+
+<h3>7.2 Frontend service layer</h3>
+<p>Source: <code>frontend/src/services/tracking.ts</code>. All types and payloads use <strong>camelCase</strong> field names (<code>trackingSetId</code>, <code>orderIndex</code> serialised as <code>order</code>, <code>entryDate</code>, etc.) to match what the tracking-backend API returns — unlike the legacy snake_case services elsewhere in this frontend for the main backend.</p>
+<p>The three <code>reorder*</code> methods (<code>reorderCategories</code>, <code>reorderSubCategories</code>, <code>reorderItems</code>) are confirmed against the actual backend implementation: they are <code>PUT</code> requests with a body of <code>{ items: [{ id, order }, ...] }</code>, built by a local <code>toOrderItems()</code> helper that converts a flat, newly-ordered id array into 1-indexed <code>{id, order}</code> pairs.</p>
+
+<h3>7.3 Pages and components</h3>
+<table>
+  <thead><tr><th>File</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>app/(dashboard)/tracking/category/page.tsx</code></td><td>Top-level page: Tracking Set selector + "New Tracking Set" action, renders <code>CategoryTree</code> for the selected set</td></tr>
+    <tr><td><code>app/(dashboard)/tracking/items/[itemId]/page.tsx</code></td><td>Item detail page: full edit form (name, type, both Yes/No toggles, account name, description, remark) + conditionally-rendered <code>LedgerSection</code></td></tr>
+    <tr><td><code>components/tracking/CategoryTree.tsx</code></td><td>Recursive tree: Category cards → Sub-category nodes → Item rows, each level with its own add/rename/delete/reorder controls and React Query cache (<code>['tracking-categories', setId]</code>, <code>['tracking-subcategories', categoryId]</code>, <code>['tracking-items', subCategoryId]</code>)</td></tr>
+    <tr><td><code>components/tracking/CreateItemModal.tsx</code></td><td>Minimal create dialog — Name + Type only; other fields are edited afterward on the item detail page</td></tr>
+    <tr><td><code>components/tracking/NameDescriptionModal.tsx</code></td><td>Shared create/rename dialog for Tracking Sets, Categories, and Sub-categories (Name + Description)</td></tr>
+    <tr><td><code>components/tracking/ConfirmDeleteModal.tsx</code></td><td>Shared delete confirmation, optionally showing a <code>cascadeWarning</code> string describing what else will be deleted</td></tr>
+  </tbody>
+</table>
+
+<h3>7.4 Sidebar entry</h3>
+<p>Source: <code>frontend/src/components/layouts/Sidebar.tsx</code>. A <code>Tracking</code> <code>AccordionGroup</code> (icon: <code>Wallet</code>) is registered directly after the <code>Action Plan</code> <code>NavLink</code> and before the <code>Analytics</code> <code>AccordionGroup</code>. Its expanded/collapsed state is tracked in local component state (<code>trackingOpen</code>, initialised from <code>pathname.startsWith('/tracking')</code>), and it currently contains exactly one <code>SubLink</code>:</p>
+<pre><code>&lt;AccordionGroup label="Tracking" icon={Wallet} ...&gt;
+  &lt;SubLink href="/tracking/category" label="Category" icon={FolderTree} /&gt;
+&lt;/AccordionGroup&gt;</code></pre>
+<p>There is no second <code>SubLink</code> for "Update" or "Dashboard" — confirming those remain unbuilt (see FUNCTIONAL.html §11).</p>
+
+<h3>7.5 Item detail page — gating nuance</h3>
+<p>The Initial Investment Ledger section on the item detail page is gated on <code>item.initialInvestmentTracking</code> — the persisted value from the React Query cache — <strong>not</strong> the local, possibly-unsaved <code>form.initialInvestmentTracking</code> pending edit. This is intentional: the backend 400s both <code>GET .../running-total</code> and <code>POST .../entries</code> until the item's persisted flag is <code>true</code>, so gating on the pending form value would fire a doomed query the instant the user flips the toggle but before clicking Save. The Yes/No toggle control itself still reflects the pending form value so the user sees their in-progress change.</p>
+
+<hr>
+
+<h2>8. Deployment</h2>
+
+<h3>8.1 Containers</h3>
+<table>
+  <thead><tr><th>Service</th><th>Image</th><th>Internal port</th><th>Host port</th></tr></thead>
+  <tbody>
+    <tr><td><code>tracking-backend</code></td><td><code>docker/Dockerfile.tracking-backend</code> — Python 3.12-slim, multi-stage, non-root user <code>ftuser</code> (uid/gid 1002 — deliberately different from the main backend's <code>appuser</code> at 1001, to avoid collisions when both run on the same host)</td><td>8001</td><td>8001</td></tr>
+  </tbody>
+</table>
+<p>Run command (from the Dockerfile): <code>uvicorn main:app --host 0.0.0.0 --port 8001 --workers 1 --loop uvloop --http httptools</code>. Single worker in Phase 1 — no distributed-lock or multi-worker concern currently applies to this service (it has no in-process concurrency guard equivalent to the main backend's daily-performance backfill lock, but has not been load-tested for >1 worker either).</p>
+
+<h3>8.2 Environment variables</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Set where</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>APP_SECRET_KEY</code></td><td><code>.env.shared</code> (shared with <code>backend</code>)</td><td>Required, min 32 chars. Service refuses to start without it.</td></tr>
+    <tr><td><code>API_PREFIX</code></td><td><code>docker-compose.yml</code> environment block</td><td><code>/api/v1/tracking</code></td></tr>
+    <tr><td><code>DATABASE_URL</code></td><td><code>docker-compose.yml</code></td><td>Same Postgres instance/db as <code>backend</code>, separate connection pool (size 10, max overflow 5)</td></tr>
+    <tr><td><code>REDIS_URL</code></td><td><code>docker-compose.yml</code></td><td>Same Redis instance/db as <code>backend</code> — required for the blacklist check</td></tr>
+    <tr><td><code>CORS_ORIGINS</code></td><td><code>docker-compose.yml</code></td><td><code>["*"]</code> in dev — browser never calls this service directly, only through the Next.js proxy (see §7.1 gap)</td></tr>
+    <tr><td><code>LOG_LEVEL</code></td><td><code>docker-compose.yml</code></td><td><code>INFO</code></td></tr>
+  </tbody>
+</table>
+
+<h3>8.3 Health checks</h3>
+<p><code>GET /api/v1/tracking/health/live</code> — pure liveness, never touches the DB or Redis, always returns <code>{"status": "ok"}</code> so Kubernetes/Docker cannot kill a healthy process during a transient dependency blip.</p>
+<p><code>GET /api/v1/tracking/health/ready</code> — checks both Postgres (<code>SELECT 1</code>) and Redis (<code>PING</code>); returns HTTP 503 with a per-dependency <code>checks</code> object if either fails.</p>
+
+<h3>8.4 Observability</h3>
+<p>Structured JSON logging via <code>structlog</code> (mirrors the main backend's setup, duplicated rather than imported). Every log line carries <code>service_name="tracking-backend"</code> so aggregated logs can be filtered to this service specifically. <code>RequestContextMiddleware</code> binds <code>request_id</code>/<code>correlation_id</code> (from incoming <code>X-Request-ID</code>/<code>X-Correlation-ID</code> headers, or newly generated) into structlog's contextvars for the duration of each request, and echoes both back as response headers. <code>SecurityHeadersMiddleware</code> sets <code>X-Content-Type-Options</code>, <code>X-Frame-Options: DENY</code>, <code>Referrer-Policy</code>, and a restrictive <code>Content-Security-Policy</code> on every response.</p>
+
+<hr>
+
+<h2>9. Known gaps and technical debt</h2>
+<table>
+  <thead><tr><th>ID</th><th>Description</th><th>Impact</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="badge red">TD-FT-01</span></td>
+      <td>The Next.js proxy does not route <code>/api/v1/tracking/*</code> requests to <code>tracking-backend</code> — see §7.1. No <code>TRACKING_BACKEND_URL</code> exists anywhere.</td>
+      <td>Every tracking API call in the Docker Compose deployment currently 404s against the main backend. Release blocker.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-02</span></td>
+      <td>Error responses use FastAPI's plain <code>{"detail": "..."}</code> shape rather than this org's generic <code>{"error": {code, message, request_id}}</code> envelope (documented explicitly in <code>app/schemas/common.py</code> as a deliberate, reviewed gap shared with the main backend).</td>
+      <td>Inconsistent with the org-wide API standard; adopting the envelope is scoped as a separate, cross-service follow-up, not part of this feature.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-03</span></td>
+      <td><code>ft_initial_investment_entry.user_id</code> has no index (unlike every other table's <code>user_id</code> column, which is indexed).</td>
+      <td>No current query filters entries by <code>user_id</code> alone (all lookups go via <code>tracking_item_id</code>, which is indexed), so no measured impact yet — flagged for awareness if a future "all my ledger entries across items" query is added.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-04</span></td>
+      <td>JWT verification and blacklist-check logic is duplicated, not shared, between <code>backend</code> and <code>tracking-backend</code> (§1.1, §2.2) — an accepted trade-off of the service-split decision, not an oversight.</td>
+      <td>A future change to token claims or the blacklist key scheme must be applied to both codebases by hand or the services will diverge on which tokens they accept.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-05</span></td>
+      <td>No role-based access control in this service (§1.1) — any authenticated user has full CRUD on their own data with no tiering.</td>
+      <td>Acceptable for a personal-use feature in Phase 1; would need explicit design work if this ever needs admin/analyst/viewer distinctions.</td>
+    </tr>
+  </tbody>
+</table>
+
+</body>
+</html>
