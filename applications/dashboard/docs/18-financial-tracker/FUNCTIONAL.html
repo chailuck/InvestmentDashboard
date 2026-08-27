@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Functional Specification</h1>
 
-<p><strong>Version:</strong> 1.0 (Phase 1) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-23 &nbsp;|&nbsp; <strong>Route:</strong> <code>/tracking/category</code></p>
+<p><strong>Version:</strong> 2.0 (Phase 1 + Phase 2) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-25 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code></p>
 
 <hr>
 
@@ -48,19 +48,20 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 
 <p>A user can maintain multiple independent Tracking Sets — for example, a personal set and a family set — each with its own category tree. A tracking set belongs to exactly one user; it is never shared or visible to other users.</p>
 
-<div class="callout">This document describes <strong>Phase 1</strong> only: creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger. The "Update Tracking List" and "Dashboard" sub-features described in the original requirements are <strong>future phases and have not been built yet</strong> — see §11.</div>
+<div class="callout">This document covers <strong>Phase 1</strong> (creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger — §3–§9) and <strong>Phase 2</strong> (the "Updates" sub-menu — periodic balance snapshots against a tracking set's hierarchy — §11). The "Dashboard" sub-feature described in the original requirements is <strong>still a future phase and has not been built yet</strong> — see §12.</div>
 
 <hr>
 
 <h2>2. Navigation</h2>
-<p>The sidebar shows a <strong>Tracking</strong> accordion group (positioned directly below Action Plan, above Analytics) that expands to reveal one sub-link:</p>
+<p>The sidebar shows a <strong>Tracking</strong> accordion group (positioned directly below Action Plan, above Analytics) that expands to reveal two sub-links:</p>
 <table>
   <thead><tr><th>Sub-link</th><th>Route</th><th>Purpose</th></tr></thead>
   <tbody>
     <tr><td>Category</td><td><code>/tracking/category</code></td><td>Manage Tracking Sets, Categories, Sub-categories, and Tracking Items</td></tr>
+    <tr><td>Updates</td><td><code>/tracking/updates</code></td><td>Record and review periodic balance snapshots ("Update Tracking Lists") — see §11</td></tr>
   </tbody>
 </table>
-<div class="callout warn">Only the "Category" sub-link currently exists under Tracking. There is no "Update" or "Dashboard" sub-link yet — those are planned for a later phase (§11).</div>
+<div class="callout warn">There is no "Dashboard" sub-link yet — the quarterly/annual rollup reporting view is planned for a later phase (§12).</div>
 
 <hr>
 
@@ -180,18 +181,84 @@ Liabilities
     <tr><td>Ledger availability</td><td>Only available on items with Initial Investment Tracking = Yes (persisted, not a pending edit)</td></tr>
     <tr><td>Exclusive flag</td><td>Stored only; no functional effect yet</td></tr>
     <tr><td>Auto-default structure</td><td>Created once, atomically, when a Tracking Set is created; fully editable afterward</td></tr>
+    <tr><td>Update Tracking List date uniqueness</td><td>None — duplicate Transaction Dates within the same tracking set are allowed by design (§11.1)</td></tr>
+    <tr><td>Update Tracking List detail hierarchy</td><td>Always reflects the CURRENT category/sub-category/item structure, never a point-in-time snapshot (§11.5)</td></tr>
+    <tr><td>Update Tracking List balance value</td><td>Frozen once saved; only changes if a user manually edits it</td></tr>
+    <tr><td>Update Tracking List balance save</td><td>All-or-nothing per Save All click; every submitted tracking item id must belong to the list's own tracking set</td></tr>
+    <tr><td>Delta calculation</td><td>Computed fresh on every page load against the chronologically previous list in the same set; never stored</td></tr>
+    <tr><td>Delta with zero previous balance</td><td>Amount shown; percent suppressed (undefined), never displayed as a misleading 0%</td></tr>
   </tbody>
 </table>
 
 <hr>
 
-<h2>11. Not yet built — future phases</h2>
-<p>The original requirements for this feature also described two additional sub-menus under Tracking. Neither exists in the product today; they are noted here only so readers of this spec know they are intentionally out of scope for Phase 1, not an oversight:</p>
+<h2>11. Update Tracking Lists ("Updates" sub-menu) — Phase 2</h2>
+<p>The <strong>Updates</strong> sub-link lets a user periodically capture a dated snapshot of the latest balance for every tracking item in one of their Tracking Sets — for example, once a quarter — and see how each item's balance changed versus the previous snapshot. Each snapshot is called an <strong>Update Tracking List</strong>.</p>
+
+<h3>11.1 Updates list page (<code>/tracking/updates</code>)</h3>
+<p>The page opens with the same kind of Tracking Set selector used on the Category page. Once a set is selected, the page shows a table of that set's existing Update Tracking Lists — one row per snapshot — with two columns:</p>
 <ul>
-  <li><strong>"Update" sub-menu</strong> — a planned feature to periodically record the latest balance of each tracking item (e.g. per quarter) against a tracking set, and show the increase/decrease versus the previous period.</li>
-  <li><strong>"Dashboard" sub-menu</strong> — a planned reporting view to show balances rolled up by category/sub-category/item across quarters and years.</li>
+  <li><strong>Transaction Date</strong> — the as-of date the snapshot represents (not necessarily the date it was entered).</li>
+  <li><strong>Quarter/Year</strong> — an optional free-text label (e.g. <code>"Q3 2026"</code>) the user can attach to the snapshot for their own reference; shown as a dash if left blank.</li>
 </ul>
-<div class="callout warn">No schema, API, or UI for these two future features exists anywhere in the current codebase. Do not treat any table, endpoint, or component name in this documentation set as an implementation of them.</div>
+<p>Rows are listed most-recent Transaction Date first. Clicking a row opens that list's detail page. A <strong>Create New List</strong> button opens a small modal asking for the Transaction Date (required, pre-filled with today's date) and an optional Quarter/Year label; confirming creates the header and navigates straight to its detail page so the user can start entering balances.</p>
+<div class="callout">There is no restriction against creating two Update Tracking Lists with the same Transaction Date for the same tracking set — for example, to re-record a snapshot rather than editing the original. Both rows are kept and both are independently visible in the list.</div>
+
+<h3>11.2 Update Tracking List detail page (<code>/tracking/updates/[listId]</code>)</h3>
+<p>The detail page shows the same Category → Sub-category → Tracking Item hierarchy as the Category page, but as a read-oriented table rather than an editable tree. For every tracking item in the set's current hierarchy, the row shows:</p>
+<table>
+  <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>Item / Type</td><td>The tracking item's name and its fixed type badge (Bank account, Property, etc.)</td></tr>
+    <tr><td>Latest Balance</td><td>An editable numeric field — the balance recorded for this item on <em>this</em> snapshot. Blank if no balance has been saved for this item on this list yet.</td></tr>
+    <tr><td>Delta</td><td>The change versus this item's balance on the chronologically previous Update Tracking List for the same tracking set — see §11.4.</td></tr>
+  </tbody>
+</table>
+<p>The Transaction Date and Quarter/Year label shown at the top of the page can be edited independently of the balances, via a small pencil-icon edit control that reveals inline date/text fields with its own Save/Cancel.</p>
+<p>If the tracking set has no items yet (nothing under any category/sub-category), the page shows a message directing the user back to the Category page to add items first, since there is nothing to record a balance against.</p>
+
+<h3>11.3 Editing balances — "Save All" pattern</h3>
+<p>Balances are entered directly into the Latest Balance field for each item. Edits are <strong>not</strong> saved automatically as the user types or moves between fields. Instead, a single <strong>Save All</strong> button at the bottom of the page commits every changed field in one action; the button is disabled and shows "All changes saved" when there is nothing pending. This mirrors the same edit-then-explicit-save pattern used on the Tracking Item detail page (§6.3) rather than saving each field the moment it loses focus.</p>
+<ul>
+  <li>Clearing a field back to empty and saving records "no balance" for that item on this list (distinct from a balance of zero, which is a real recorded value).</li>
+  <li>A non-numeric value in a Latest Balance field blocks the Save All action with an inline error until corrected.</li>
+  <li>Saving is all-or-nothing for the batch of changed fields in that click — either every change in the click is recorded, or none are (see TECHNICAL.html §5 for the underlying validation guarantee).</li>
+</ul>
+
+<h3>11.4 How the balance change ("Delta") is calculated</h3>
+<p>For each item, the Delta column compares its Latest Balance on <em>this</em> list against its balance on the closest earlier Update Tracking List in the same tracking set (ordered by Transaction Date, and by creation time for same-date lists). It shows both the signed amount change and, where a meaningful percentage exists, the percent change in parentheses, colour-coded green for an increase and red for a decrease.</p>
+<table>
+  <thead><tr><th>Situation</th><th>What the user sees</th></tr></thead>
+  <tbody>
+    <tr><td>A previous list exists and both balances are recorded</td><td>Signed amount and signed percent, e.g. <code>+1,500.00 (+3.00%)</code></td></tr>
+    <tr><td>A previous list exists, both balances recorded, but the previous balance was exactly zero</td><td>Signed amount only — percent change from zero is undefined and is never shown as a misleading <code>0%</code> or an error</td></tr>
+    <tr><td>This is the first Update Tracking List for the set, or the item had no recorded balance on the previous list</td><td>"No prior data" — shown instead of a fabricated zero, so the user is never misled into thinking a balance went from 0 to its current value</td></tr>
+  </tbody>
+</table>
+<div class="callout tip">The delta is always calculated fresh when the page is loaded — it is never a stored, cached value. If the user goes back and edits an <em>older</em> list's balance for an item, every newer list's Delta for that same item updates automatically the next time its detail page is viewed, with no extra action required.</div>
+<p>A "View previous update list" link appears on the detail page whenever a previous list exists, for quick navigation to compare the two snapshots directly.</p>
+
+<h3>11.5 Important design decision: the hierarchy shown is always the CURRENT one, not a snapshot</h3>
+<p>An Update Tracking List snapshot freezes the <strong>balance values</strong> the user enters for it — those numbers do not change unless a user manually edits them. It does <strong>not</strong> freeze the shape of the category/sub-category/item hierarchy itself. Every time an Update Tracking List's detail page is opened, it is built fresh from whatever the tracking set's category/sub-category/item structure looks like <em>right now</em>.</p>
+<p>In plain terms, this means:</p>
+<ul>
+  <li>If a tracking item is added to the set today, it will retroactively appear (with a blank Latest Balance and "No prior data" for its Delta) on the detail page of every Update Tracking List ever created for that set, including ones from months or years ago — because opening any of those old lists re-reads the hierarchy as it exists today.</li>
+  <li>If a tracking item, category, or sub-category is later renamed, the old list's detail page shows the <strong>current</strong> name, not whatever name was in use when that snapshot was originally recorded.</li>
+  <li>If a tracking item is deleted, it (and any balance ever recorded against it) disappears from every Update Tracking List's detail view, past and present, because the deletion cascades to its balance rows and it is no longer part of the current hierarchy being displayed.</li>
+</ul>
+<div class="callout warn">This was a deliberate simplicity trade-off, reviewed and approved for Phase 2, rather than an oversight. The application currently has no requirement for point-in-time historical accuracy of the hierarchy's <em>shape</em> — only of the balance <em>values</em>, which are preserved exactly. If a future requirement needs old snapshots to show the category/item structure exactly as it existed at the time, that would require capturing a structural snapshot per list (a bigger redesign) and is not covered by anything in Phase 2.</div>
+
+<h3>11.6 Ownership and privacy</h3>
+<p>Update Tracking Lists and their balance rows follow the same ownership rule as every other Financial Tracker entity (§9): they are scoped to the user who owns the parent Tracking Set, with no sharing or cross-user visibility.</p>
+
+<hr>
+
+<h2>12. Not yet built — future phase</h2>
+<p>The original requirements for this feature also described a "Dashboard" sub-menu. It does not exist in the product today; noted here only so readers of this spec know it is intentionally out of scope for Phase 1 and Phase 2, not an oversight:</p>
+<ul>
+  <li><strong>"Dashboard" sub-menu</strong> — a planned reporting view to show balances rolled up by category/sub-category/item across quarters and years, using the data captured by the Update Tracking Lists described in §11.</li>
+</ul>
+<div class="callout warn">No schema, API, or UI for this future feature exists anywhere in the current codebase. Do not treat any table, endpoint, or component name in this documentation set as an implementation of it.</div>
 
 </body>
 </html>

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, String, func, text
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,7 +43,8 @@ class UpdateTrackingList(Base):
         index=True,
     )
     transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
-    quarter_year_label: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    quarter: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

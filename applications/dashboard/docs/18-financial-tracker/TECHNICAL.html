@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Technical Design</h1>
 
-<p><strong>Version:</strong> 1.0 (Phase 1) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-23</p>
+<p><strong>Version:</strong> 2.0 (Phase 1 + Phase 2) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-25</p>
 
 <hr>
 
@@ -51,24 +51,32 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 │   │   ├── auth/dependencies.py← get_current_user_id (duplicated, not imported)
 │   │   ├── database/session.py ← own async SQLAlchemy engine/session/Base
 │   │   ├── database/redis.py   ← own Redis client (blacklist check only)
-│   │   ├── models/              (5 ORM models — see §3)
+│   │   ├── models/              (7 ORM models — 5 from Phase 1 + 2 from
+│   │   │                          Phase 2 — see §3)
 │   │   ├── schemas/              (Pydantic v2, camelCase — see §5)
 │   │   ├── services/cascade.py ← default category/sub-category creation
+│   │   ├── services/update_tracking.py ← Phase 2: read-time delta computation
 │   │   └── api/v1/
 │   │       ├── router.py       ← assembles all sub-routers
 │   │       └── endpoints/      ← health, tracking_sets, categories,
-│   │                              sub_categories, tracking_items, entries
+│   │                              sub_categories, tracking_items, entries,
+│   │                              update_tracking_lists (Phase 2)
 │   ├── alembic/                ← OWN migration chain (see §4)
 │   └── tests/
 ├── docker/Dockerfile.tracking-backend
 └── frontend/                   ← SHARED — new pages/components/service added
     └── src/
-        ├── services/tracking.ts
+        ├── services/tracking.ts          ← Phase 1 entities
+        ├── services/updateTracking.ts    ← Phase 2: Update Tracking Lists + Balances
         ├── components/tracking/  (CategoryTree, CreateItemModal,
-        │                          NameDescriptionModal, ConfirmDeleteModal)
+        │                          NameDescriptionModal, ConfirmDeleteModal,
+        │                          CreateUpdateListModal — Phase 2)
         └── app/(dashboard)/tracking/
             ├── category/page.tsx
-            └── items/[itemId]/page.tsx</code></pre>
+            ├── items/[itemId]/page.tsx
+            └── updates/                  ← Phase 2
+                ├── page.tsx               (list + tracking-set selector + create modal)
+                └── [listId]/page.tsx      (detail: hierarchy, editable balances, deltas)</code></pre>
 
 <h3>1.1 Why a separate service (ADR summary)</h3>
 <p><strong>Decision:</strong> Build the Financial Tracker as an independently deployable FastAPI service rather than extending <code>backend</code>, driven by the explicit technical requirement to add this feature "so that we can restart this pod without impacting the current functionalities" (see <code>docs/REQUIREMENTS FINANCIAL TRACKER.md</code>, §2).</p>
@@ -114,7 +122,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 
 <h2>3. Data model</h2>
 
-<p>All 5 tables live in the <strong>same physical Postgres database</strong> as the main application (<code>investment_db</code>), but are prefixed <code>ft_</code> and carry <strong>no foreign keys</strong> into any table owned by <code>backend</code> (e.g. no FK to <code>users</code>). Ownership is enforced purely at the application layer via a bare <code>user_id</code> UUID column on every table. This is deliberate bounded-context isolation — the two services could point at physically separate databases in the future with no schema change on this side.</p>
+<p>All 7 tables (5 from Phase 1, 2 from Phase 2) live in the <strong>same physical Postgres database</strong> as the main application (<code>investment_db</code>), but are prefixed <code>ft_</code> and carry <strong>no foreign keys</strong> into any table owned by <code>backend</code> (e.g. no FK to <code>users</code>). Ownership is enforced purely at the application layer via a bare <code>user_id</code> UUID column on every table. This is deliberate bounded-context isolation — the two services could point at physically separate databases in the future with no schema change on this side.</p>
 
 <h3>ft_tracking_set</h3>
 <p>ORM: <code>app/models/tracking_set.py — class TrackingSet</code></p>
@@ -201,15 +209,55 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <p><strong>Indexes:</strong> <code>ix_ft_entry_tracking_item_id</code> on <code>(tracking_item_id)</code>; <code>ix_ft_entry_item_date</code> on <code>(tracking_item_id, entry_date)</code> — supports the running-total query's chronological ordering.</p>
 <div class="callout">The model docstring explicitly notes that the FK column intentionally omits SQLAlchemy's <code>index=True</code> shortcut here: the approved design calls for the shorter, explicit index names <code>ix_ft_entry_*</code> rather than the longer name SQLAlchemy would auto-generate (<code>ix_ft_initial_investment_entry_tracking_item_id</code>), so both indexes are declared explicitly in <code>__table_args__</code> instead.</div>
 
+<h3>ft_update_tracking_list (Phase 2)</h3>
+<p>ORM: <code>app/models/update_tracking_list.py — class UpdateTrackingList</code>. A dated balance-snapshot header against one Tracking Set — one row per "Update Tracking List" shown on the Updates page (FUNCTIONAL.html §11).</p>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>No</td><td>PK, <code>uuid_generate_v4()</code></td></tr>
+    <tr><td><code>user_id</code></td><td>UUID</td><td>No</td><td>Bare column, no FK. Indexed (<code>ix_ft_update_tracking_list_user_id</code>).</td></tr>
+    <tr><td><code>tracking_set_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_tracking_set.id</code> ON DELETE CASCADE. Indexed (<code>ix_ft_update_tracking_list_tracking_set_id</code>).</td></tr>
+    <tr><td><code>transaction_date</code></td><td>DATE</td><td>No</td><td>The snapshot's as-of date. Not necessarily the date the row was created.</td></tr>
+    <tr><td><code>quarter</code></td><td>INTEGER</td><td>Yes</td><td>1-4. Independent of <code>year</code> — either may be set or cleared without touching the other. Not validated against <code>transaction_date</code>.</td></tr>
+    <tr><td><code>year</code></td><td>INTEGER</td><td>Yes</td><td>e.g. 2026. Independent of <code>quarter</code>. Not validated against <code>transaction_date</code>.</td></tr>
+    <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td><code>server_default=now()</code>; <code>updated_at</code> also has <code>onupdate=now()</code></td></tr>
+  </tbody>
+</table>
+<p><strong>Index:</strong> <code>ix_ft_update_tracking_list_set_date</code> — composite <code>(tracking_set_id, transaction_date)</code> — supports the "list headers for a set, ordered by date" query used by <code>GET /sets/{set_id}/update-lists</code>.</p>
+<div class="callout warn"><strong>No uniqueness constraint</strong> on <code>(tracking_set_id, transaction_date)</code> — this is deliberate, not an oversight: duplicate Transaction Dates within the same tracking set are allowed (e.g. re-recording a snapshot for a date rather than editing the original). Where two lists share the same date (or even the same date <em>and</em> <code>created_at</code>), the "find the previous list" lookup in <code>app/services/update_tracking.py</code> deterministically tie-breaks on <code>created_at</code> then <code>id</code> — see §6.1.</div>
+
+<h3>ft_update_tracking_list_balance (Phase 2)</h3>
+<p>ORM: <code>app/models/update_tracking_list_balance.py — class UpdateTrackingListBalance</code>. One balance line item for one Tracking Item within one Update Tracking List.</p>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>No</td><td>PK</td></tr>
+    <tr><td><code>user_id</code></td><td>UUID</td><td>No</td><td>Bare column, no FK. Indexed (<code>ix_ft_update_tracking_list_balance_user_id</code>).</td></tr>
+    <tr><td><code>update_tracking_list_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_update_tracking_list.id</code> ON DELETE CASCADE. Indexed.</td></tr>
+    <tr><td><code>tracking_item_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_tracking_item.id</code> ON DELETE CASCADE. Indexed.</td></tr>
+    <tr><td><code>balance</code></td><td>NUMERIC(19,4)</td><td>Yes</td><td><strong>Nullable by design</strong> — a row only exists once a balance has actually been saved for that item+list pairing. Rows are never pre-created for every item in the set when the list header is created.</td></tr>
+    <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td>—</td></tr>
+  </tbody>
+</table>
+<p><strong>Constraint:</strong> <code>uq_ft_update_tracking_list_balance_list_item</code> — UNIQUE <code>(update_tracking_list_id, tracking_item_id)</code>. Enforces exactly one balance row per (list, item) pairing; the bulk-upsert endpoint updates the existing row in place if one is present, otherwise inserts a new one.</p>
+<div class="callout">Row-absence and <code>balance IS NULL</code> are treated identically as "no data" everywhere this table is read (both the detail view and the previous-list delta lookup) — there is no behavioral difference between "no row was ever written for this item" and "a row exists but its balance was cleared back to null" (e.g. by clearing the Latest Balance field and clicking Save All).</div>
+
 <h3>Entity relationships</h3>
 <pre><code>ft_tracking_set (1)
-  └─ ft_category (N)             [tracking_set_id → ft_tracking_set.id  ON DELETE CASCADE]
-       └─ ft_sub_category (N)    [category_id → ft_category.id  ON DELETE CASCADE]
-            └─ ft_tracking_item (N)  [sub_category_id → ft_sub_category.id  ON DELETE CASCADE]
-                 └─ ft_initial_investment_entry (N)  [tracking_item_id → ft_tracking_item.id  ON DELETE CASCADE]
+  ├─ ft_category (N)             [tracking_set_id → ft_tracking_set.id  ON DELETE CASCADE]
+  │    └─ ft_sub_category (N)    [category_id → ft_category.id  ON DELETE CASCADE]
+  │         └─ ft_tracking_item (N)  [sub_category_id → ft_sub_category.id  ON DELETE CASCADE]
+  │              ├─ ft_initial_investment_entry (N)  [tracking_item_id → ft_tracking_item.id  ON DELETE CASCADE]
+  │              └─ ft_update_tracking_list_balance (N)  [tracking_item_id → ft_tracking_item.id  ON DELETE CASCADE]  (Phase 2)
+  └─ ft_update_tracking_list (N)  [tracking_set_id → ft_tracking_set.id  ON DELETE CASCADE]  (Phase 2)
+       └─ ft_update_tracking_list_balance (N)  [update_tracking_list_id → ft_update_tracking_list.id  ON DELETE CASCADE]
 
 No table in this chain has a foreign key to `users` or any other main-backend table.
-user_id on every table is a bare UUID column checked at the application layer only.</code></pre>
+user_id on every table is a bare UUID column checked at the application layer only.
+
+Note: ft_update_tracking_list_balance has TWO parent FKs (its own list, and the
+tracking item it prices) — deleting either the list or the underlying tracking
+item cascades to remove the balance row.</code></pre>
 
 <hr>
 
@@ -220,7 +268,8 @@ user_id on every table is a bare UUID column checked at the application layer on
   <tbody>
     <tr><td>Config location</td><td><code>tracking-backend/alembic.ini</code>, <code>tracking-backend/alembic/env.py</code></td></tr>
     <tr><td><code>version_table</code></td><td><strong><code>ft_alembic_version</code></strong> — distinct from the main backend's default <code>alembic_version</code> table, so neither service's <code>alembic upgrade head</code> can stamp or read the other's current revision</td></tr>
-    <tr><td>Current head</td><td><code>f1a2b3c4d5e6</code> — <code>create_ft_tables</code> (2026-08-22) — creates all 5 tables in one migration; <code>down_revision = None</code> (first migration in the chain)</td></tr>
+    <tr><td>Current head</td><td><code>20260827_1000_d112fa78e9c2</code> — <code>split_quarter_year_label_into_quarter_and_year</code> (2026-08-27) — drops <code>ft_update_tracking_list.quarter_year_label</code> (VARCHAR(50)) and replaces it with two independent nullable <code>INTEGER</code> columns, <code>quarter</code> and <code>year</code>; <code>down_revision = c001eb66b381</code></td></tr>
+    <tr><td>Chain</td><td><code>f1a2b3c4d5e6</code> — <code>create_ft_tables</code> (2026-08-22) — creates all 5 Phase 1 tables in one migration; <code>down_revision = None</code> (first migration in the chain) → <code>c001eb66b381</code> — <code>create_ft_update_tracking_list_tables</code> (2026-08-25) — creates the 2 Phase 2 tables → <code>20260827_1000_d112fa78e9c2</code> (head, above)</td></tr>
     <tr><td>Startup behaviour</td><td>Unlike the main backend, this service does <strong>not</strong> call <code>Base.metadata.create_all</code> at startup as a dev convenience. Migrations must be applied out-of-band (<code>alembic upgrade head</code>) before the service starts.</td></tr>
   </tbody>
 </table>
@@ -239,8 +288,10 @@ user_id on every table is a bare UUID column checked at the application layer on
     <tr><td><code>sub_categories.py</code></td><td><code>/sub-categories</code></td><td>Sub-category CRUD by id + nested Tracking Item create/list/reorder</td></tr>
     <tr><td><code>tracking_items.py</code></td><td><code>/items</code></td><td>Tracking Item CRUD by id + nested Ledger Entry create/list + running-total</td></tr>
     <tr><td><code>entries.py</code></td><td><code>/entries</code></td><td>Ledger Entry CRUD by id</td></tr>
+    <tr><td><code>update_tracking_lists.py</code> <em>(Phase 2)</em></td><td><code>/sets/{id}/update-lists</code> + <code>/update-lists</code></td><td>Update Tracking List header CRUD, hierarchy+delta detail view, bulk balance upsert — see §7</td></tr>
   </tbody>
 </table>
+<div class="callout">Unlike every other router in this table, <code>update_tracking_lists.py</code> declares no single fixed <code>prefix=</code> on its <code>APIRouter</code> — it spans two URL families (<code>/sets/{set_id}/update-lists</code> for header create/list, and standalone <code>/update-lists/{list_id}...</code> for everything else), so each route spells out its full path explicitly. This mirrors how <code>tracking_sets.py</code> already nests <code>/sets/{set_id}/categories</code> alongside its own <code>/sets</code> CRUD.</div>
 <p>All routers are mounted under the app-level prefix <code>settings.api_prefix = "/api/v1/tracking"</code> (set in <code>main.py</code> via <code>app.include_router(v1_router, prefix=settings.api_prefix)</code>), so the full external path for, e.g., listing sets is <code>GET /api/v1/tracking/sets</code>.</p>
 
 <h3>5.1 Ownership pattern</h3>
@@ -265,19 +316,79 @@ user_id on every table is a bare UUID column checked at the application layer on
 
 <hr>
 
-<h2>7. Frontend integration</h2>
+<h2>7. Update Tracking List service (Phase 2)</h2>
+<p>Source: <code>app/services/update_tracking.py — get_update_list_detail()</code>, consumed by exactly one endpoint (<code>GET /update-lists/{list_id}/detail</code>). Kept out of the endpoints file for the same reason as <code>cascade.py</code> (§6): assembling the previous-list lookup, the full current hierarchy, and the per-item delta math is business logic, not request/response wiring.</p>
 
-<h3>7.1 Proxy routing</h3>
+<h3>7.1 Detail assembly algorithm</h3>
+<p><code>get_update_list_detail(db, list_id, user_id)</code> returns <code>None</code> (never raises) when the list doesn't exist or isn't owned by <code>user_id</code>; the endpoint converts that into a bare 404, consistent with every other resource in this service. When found, it performs, in order:</p>
+<ol>
+  <li>Load the <code>UpdateTrackingList</code> header, confirming <code>id</code> + <code>user_id</code> match in the same query.</li>
+  <li>Find the chronologically previous list in the same tracking set — see §7.2.</li>
+  <li>Load that previous list's balance rows (if a previous list was found) into a <code>{tracking_item_id: balance}</code> dict. Row-absence and <code>balance IS NULL</code> both collapse to "no previous data" via a plain dict <code>.get()</code> returning <code>None</code>.</li>
+  <li>Load the tracking set's <strong>current</strong> Category → SubCategory → TrackingItem hierarchy in full — <em>not</em> anything frozen at list-creation time (see FUNCTIONAL.html §11.5 for the user-facing implication). Every item currently in the hierarchy appears, even one added to the set after this list was created.</li>
+  <li>Load the <strong>current</strong> list's own balance rows into a second <code>{tracking_item_id: balance}</code> dict.</li>
+  <li>Walk the hierarchy and compute one <code>ItemDelta</code> per tracking item (§7.3), assembling the nested <code>CategoryDetail</code> → <code>SubCategoryDetail</code> → <code>ItemDelta</code> dataclasses the endpoint serialises into the response.</li>
+</ol>
+<p>All balance and hierarchy data is fetched with a small, fixed number of queries (one per level/table), not one query per item — no N+1 pattern.</p>
+
+<h3>7.2 Previous-list lookup — deterministic tie-break</h3>
+<p><code>_find_previous_list()</code> selects the row in the same <code>tracking_set_id</code> with the greatest <code>(transaction_date, created_at, id)</code> tuple that is <strong>strictly less than</strong> the current list's own tuple, expressed as an explicit <code>OR</code>-of-<code>AND</code>s (transaction_date &lt; current, OR transaction_date = current AND created_at &lt; current, OR transaction_date = current AND created_at = current AND id &lt; current) rather than SQLAlchemy's <code>tuple_()</code> row-comparison helper, to avoid relying on composite <code>ROW()</code> comparison semantics that could vary across dialects/drivers. This guarantees a single, deterministic "previous" list even when two lists share the same Transaction Date (allowed — §3) or, in the further edge case, the same <code>created_at</code> timestamp too.</p>
+
+<h3>7.3 Delta computation</h3>
+<p><code>_compute_item_delta()</code> is pure and stateless — given one item plus the two balance dicts from §7.1, it returns:</p>
+<table>
+  <thead><tr><th>Field</th><th>Rule</th></tr></thead>
+  <tbody>
+    <tr><td><code>has_previous_data</code></td><td><code>previous_balance is not None</code></td></tr>
+    <tr><td><code>delta_amount</code></td><td><code>balance - previous_balance</code>, only when <strong>both</strong> are non-null; otherwise <code>None</code></td></tr>
+    <tr><td><code>delta_percent</code></td><td><code>(delta_amount / previous_balance) * 100</code>, only when <code>delta_amount</code> is computable <strong>and</strong> <code>previous_balance != 0</code> — the explicit non-zero guard avoids <code>ZeroDivisionError</code> and, per FUNCTIONAL.html §11.4, deliberately shows the amount without a misleading percentage when the previous balance was exactly zero</td></tr>
+  </tbody>
+</table>
+<div class="callout warn">Nothing computed here is ever written back to the database. Every field is recomputed on every call to <code>GET /update-lists/{list_id}/detail</code>, so editing an older list's balance immediately and correctly changes what a newer list's detail reports the next time it is fetched — there is no cache invalidation step because there is no cache.</div>
+
+<h3>7.4 Bulk balance upsert — validation and write pattern</h3>
+<p>Source: <code>PUT /update-lists/{list_id}/balances</code> in <code>app/api/v1/endpoints/update_tracking_lists.py</code> (this logic is small enough to live in the endpoint rather than a service module, unlike the detail assembly above).</p>
+<ol>
+  <li>Resolve the list via <code>_get_list_or_404</code> (id + user_id).</li>
+  <li>Collect the distinct <code>trackingItemId</code>s from the request body.</li>
+  <li>Run one query joining <code>TrackingItem → SubCategory → Category</code> to confirm every requested id belongs to a tracking item owned by this user <strong>and</strong> whose category's <code>tracking_set_id</code> equals this list's own <code>tracking_set_id</code> — i.e. the item must belong to the <em>same tracking set as the list</em>, not merely the same user's account.</li>
+  <li>If any requested id fails that check, the entire request is rejected with <code>400</code> before any row is written — an all-or-nothing guarantee at the request level.</li>
+  <li>For the validated ids, load any existing <code>UpdateTrackingListBalance</code> rows for this <code>(list, item)</code> pairing, then update-in-place or insert a new row per requested item, and <code>commit()</code> exactly once for the whole batch.</li>
+</ol>
+<div class="callout tip">Explicit <code>null</code> for a <code>balance</code> in the request clears an existing value (records "no balance" — distinct from a real zero); omitting the field from an item's JSON object entirely is treated identically, both resulting in <code>balance=None</code> being written.</div>
+
+<hr>
+
+<h2>8. Frontend integration</h2>
+
+<h3>8.1 Proxy routing</h3>
 <p>The browser never talks to either backend directly — every API call from the frontend goes through the existing Next.js catch-all proxy route <code>frontend/src/app/api/proxy/[...path]/route.ts</code>, which the app already used for the main backend. <code>trackingService</code> (in <code>frontend/src/services/tracking.ts</code>) builds paths as <code>/tracking/&lt;resource&gt;</code>, which the shared <code>apiClient</code> (baseURL <code>/api/proxy/api/v1</code>) turns into a browser request to <code>/api/proxy/api/v1/tracking/&lt;resource&gt;</code>.</p>
 <div class="callout warn">
 <strong>Known gap — proxy does not yet route to tracking-backend.</strong> As implemented today, <code>route.ts</code> forwards <em>every</em> request it receives — regardless of path — to a single <code>BACKEND_URL</code> environment variable (default <code>http://backend:8000</code>, the main backend). There is no branch on the <code>/api/v1/tracking/</code> prefix, and no <code>TRACKING_BACKEND_URL</code> variable exists anywhere in the codebase (checked: not in <code>route.ts</code>, not in <code>docker-compose.yml</code>, not in any <code>.env*</code> file). <code>docker-compose.yml</code> does run <code>tracking-backend</code> as its own container on port 8001, but nothing in the frontend currently points at it. In the current wiring, every <code>/api/proxy/api/v1/tracking/...</code> call is forwarded to the <strong>main</strong> backend, which does not mount these routes and will return 404. This must be fixed — e.g. by branching in <code>route.ts</code> on <code>params.path[0..2] === ['api','v1','tracking']</code> and forwarding to a new <code>TRACKING_BACKEND_URL</code> env var pointing at <code>http://tracking-backend:8001</code> — before this feature works end-to-end in the Docker Compose deployment. Track as a release blocker, not a cosmetic doc gap.
 </div>
 
-<h3>7.2 Frontend service layer</h3>
+<h3>8.2 Frontend service layer</h3>
 <p>Source: <code>frontend/src/services/tracking.ts</code>. All types and payloads use <strong>camelCase</strong> field names (<code>trackingSetId</code>, <code>orderIndex</code> serialised as <code>order</code>, <code>entryDate</code>, etc.) to match what the tracking-backend API returns — unlike the legacy snake_case services elsewhere in this frontend for the main backend.</p>
 <p>The three <code>reorder*</code> methods (<code>reorderCategories</code>, <code>reorderSubCategories</code>, <code>reorderItems</code>) are confirmed against the actual backend implementation: they are <code>PUT</code> requests with a body of <code>{ items: [{ id, order }, ...] }</code>, built by a local <code>toOrderItems()</code> helper that converts a flat, newly-ordered id array into 1-indexed <code>{id, order}</code> pairs.</p>
 
-<h3>7.3 Pages and components</h3>
+<h3>8.2.1 Update Tracking List service layer (Phase 2)</h3>
+<p>Source: <code>frontend/src/services/updateTracking.ts</code>. Kept as a <strong>separate sibling file</strong> to <code>tracking.ts</code> rather than folded into it — this is a distinct entity family (Update Tracking Lists and their per-item Balances) reached through its own nested routes, and keeping it separate avoids growing one already-large service file. It follows the same conventions documented in <code>tracking.ts</code>'s header comment: camelCase field names, calls through the shared <code>apiClient</code>, and errors surfaced via <code>extractApiError</code>.</p>
+<table>
+  <thead><tr><th>Method</th><th>Request</th><th>Backend route</th></tr></thead>
+  <tbody>
+    <tr><td><code>listUpdateLists(setId)</code></td><td>GET</td><td><code>/sets/{setId}/update-lists</code></td></tr>
+    <tr><td><code>createUpdateList(setId, input)</code></td><td>POST</td><td><code>/sets/{setId}/update-lists</code></td></tr>
+    <tr><td><code>getUpdateList(id)</code></td><td>GET</td><td><code>/update-lists/{id}</code></td></tr>
+    <tr><td><code>updateUpdateList(id, input)</code></td><td>PUT</td><td><code>/update-lists/{id}</code></td></tr>
+    <tr><td><code>deleteUpdateList(id)</code></td><td>DELETE</td><td><code>/update-lists/{id}</code></td></tr>
+    <tr><td><code>getUpdateListDetail(id)</code></td><td>GET</td><td><code>/update-lists/{id}/detail</code></td></tr>
+    <tr><td><code>upsertBalances(id, balances)</code></td><td>PUT</td><td><code>/update-lists/{id}/balances</code></td></tr>
+  </tbody>
+</table>
+<div class="callout warn">The detail response's per-item and per-category/sub-category <code>orderIndex</code> field is deliberately <strong>not</strong> aliased to <code>order</code> the way <code>TrackingItemOut</code>/<code>CategoryOut</code>/<code>SubCategoryOut</code> alias it elsewhere in this service (see <code>app/schemas/update_tracking_list.py</code>'s module-level comment) — the approved API contract for this specific composite response names the field <code>orderIndex</code> verbatim. The TypeScript types in <code>updateTracking.ts</code> intentionally mirror this rather than "fixing" it to match the rest of the frontend.</div>
+<div class="callout">The backend serialises <code>Decimal</code> fields (<code>balance</code>, <code>deltaAmount</code>, <code>deltaPercent</code>) which FastAPI/Pydantic may emit as numeric strings rather than JSON numbers depending on configuration. <code>updateTracking.ts</code>'s consuming page (<code>updates/[listId]/page.tsx</code>) defensively coerces every such value through a local <code>toFiniteOrNull()</code> helper (<code>Number(value)</code> + <code>Number.isFinite</code> guard) before formatting or comparing — the TypeScript types declare <code>number | null</code> as the intended shape, not a byte-for-byte guarantee of the wire format.</div>
+
+<h3>8.3 Pages and components</h3>
 <table>
   <thead><tr><th>File</th><th>Role</th></tr></thead>
   <tbody>
@@ -287,24 +398,31 @@ user_id on every table is a bare UUID column checked at the application layer on
     <tr><td><code>components/tracking/CreateItemModal.tsx</code></td><td>Minimal create dialog — Name + Type only; other fields are edited afterward on the item detail page</td></tr>
     <tr><td><code>components/tracking/NameDescriptionModal.tsx</code></td><td>Shared create/rename dialog for Tracking Sets, Categories, and Sub-categories (Name + Description)</td></tr>
     <tr><td><code>components/tracking/ConfirmDeleteModal.tsx</code></td><td>Shared delete confirmation, optionally showing a <code>cascadeWarning</code> string describing what else will be deleted</td></tr>
+    <tr><td><code>app/(dashboard)/tracking/updates/page.tsx</code> <em>(Phase 2)</em></td><td>Updates list page: Tracking Set selector (React Query key <code>['tracking-sets']</code>, defaults to the first set once loaded) + table of that set's Update Tracking Lists (<code>['tracking-update-lists', setId]</code>) + "Create New List" action</td></tr>
+    <tr><td><code>app/(dashboard)/tracking/updates/[listId]/page.tsx</code> <em>(Phase 2)</em></td><td>Update Tracking List detail page: renders the full hierarchy with an editable "Latest Balance" input and computed Delta per item (React Query key <code>['update-list-detail', listId]</code>); single "Save All" button bulk-upserts every dirty field</td></tr>
+    <tr><td><code>components/tracking/CreateUpdateListModal.tsx</code> <em>(Phase 2)</em></td><td>Create-modal for a new Update Tracking List — Transaction Date (required, defaults to today) + optional Quarter/Year label. Kept as its own component rather than adapting <code>NameDescriptionModal</code>, whose Name+Description shape doesn't fit a date field</td></tr>
   </tbody>
 </table>
 
-<h3>7.4 Sidebar entry</h3>
-<p>Source: <code>frontend/src/components/layouts/Sidebar.tsx</code>. A <code>Tracking</code> <code>AccordionGroup</code> (icon: <code>Wallet</code>) is registered directly after the <code>Action Plan</code> <code>NavLink</code> and before the <code>Analytics</code> <code>AccordionGroup</code>. Its expanded/collapsed state is tracked in local component state (<code>trackingOpen</code>, initialised from <code>pathname.startsWith('/tracking')</code>), and it currently contains exactly one <code>SubLink</code>:</p>
+<h3>8.3.1 Update Tracking List detail page — edit/save state design</h3>
+<p><code>updates/[listId]/page.tsx</code> hydrates a local <code>values: Record&lt;itemId, string&gt;</code> state from the loaded detail exactly once (guarded by a <code>hydrated</code> flag) rather than binding inputs directly to query data, so that an invalidate+refetch after a partial save does not clobber the user's still-unsaved edits to <em>other</em> fields — the same "hydrate once from server data, edit locally, one explicit save" pattern the Tracking Item detail page (<code>items/[itemId]/page.tsx</code>, Phase 1) established for this app. A parallel <code>dirty: Set&lt;itemId&gt;</code> tracks which fields have actually changed; <strong>Save All</strong> is disabled whenever this set is empty and sends only the dirty entries (as <code>{ trackingItemId, balance: number | null }[]</code>) to <code>upsertBalances()</code> in one call — not one call per field — because the backend endpoint is purpose-built for batch upsert. An empty/cleared input is sent as <code>balance: null</code>; a non-numeric value blocks the whole Save All action with an inline error before any request is made.</p>
+
+<h3>8.4 Sidebar entry</h3>
+<p>Source: <code>frontend/src/components/layouts/Sidebar.tsx</code>. A <code>Tracking</code> <code>AccordionGroup</code> (icon: <code>Wallet</code>) is registered directly after the <code>Action Plan</code> <code>NavLink</code> and before the <code>Analytics</code> <code>AccordionGroup</code>. Its expanded/collapsed state is tracked in local component state (<code>trackingOpen</code>, initialised from <code>pathname.startsWith('/tracking')</code>), and it now contains two <code>SubLink</code>s:</p>
 <pre><code>&lt;AccordionGroup label="Tracking" icon={Wallet} ...&gt;
   &lt;SubLink href="/tracking/category" label="Category" icon={FolderTree} /&gt;
+  &lt;SubLink href="/tracking/updates"  label="Updates"  icon={RefreshCcw} /&gt;
 &lt;/AccordionGroup&gt;</code></pre>
-<p>There is no second <code>SubLink</code> for "Update" or "Dashboard" — confirming those remain unbuilt (see FUNCTIONAL.html §11).</p>
+<p>There is still no <code>SubLink</code> for "Dashboard" — confirming that remains unbuilt (see FUNCTIONAL.html §12). The Update Tracking List <strong>detail</strong> page (<code>updates/[listId]/page.tsx</code>) has no sidebar entry of its own — it is reached only by clicking a row on the Updates list page or the "View previous update list" link, and its breadcrumb links back to <code>/tracking/updates</code>.</p>
 
-<h3>7.5 Item detail page — gating nuance</h3>
+<h3>8.5 Item detail page — gating nuance</h3>
 <p>The Initial Investment Ledger section on the item detail page is gated on <code>item.initialInvestmentTracking</code> — the persisted value from the React Query cache — <strong>not</strong> the local, possibly-unsaved <code>form.initialInvestmentTracking</code> pending edit. This is intentional: the backend 400s both <code>GET .../running-total</code> and <code>POST .../entries</code> until the item's persisted flag is <code>true</code>, so gating on the pending form value would fire a doomed query the instant the user flips the toggle but before clicking Save. The Yes/No toggle control itself still reflects the pending form value so the user sees their in-progress change.</p>
 
 <hr>
 
-<h2>8. Deployment</h2>
+<h2>9. Deployment</h2>
 
-<h3>8.1 Containers</h3>
+<h3>9.1 Containers</h3>
 <table>
   <thead><tr><th>Service</th><th>Image</th><th>Internal port</th><th>Host port</th></tr></thead>
   <tbody>
@@ -313,7 +431,7 @@ user_id on every table is a bare UUID column checked at the application layer on
 </table>
 <p>Run command (from the Dockerfile): <code>uvicorn main:app --host 0.0.0.0 --port 8001 --workers 1 --loop uvloop --http httptools</code>. Single worker in Phase 1 — no distributed-lock or multi-worker concern currently applies to this service (it has no in-process concurrency guard equivalent to the main backend's daily-performance backfill lock, but has not been load-tested for >1 worker either).</p>
 
-<h3>8.2 Environment variables</h3>
+<h3>9.2 Environment variables</h3>
 <table>
   <thead><tr><th>Variable</th><th>Set where</th><th>Notes</th></tr></thead>
   <tbody>
@@ -321,28 +439,28 @@ user_id on every table is a bare UUID column checked at the application layer on
     <tr><td><code>API_PREFIX</code></td><td><code>docker-compose.yml</code> environment block</td><td><code>/api/v1/tracking</code></td></tr>
     <tr><td><code>DATABASE_URL</code></td><td><code>docker-compose.yml</code></td><td>Same Postgres instance/db as <code>backend</code>, separate connection pool (size 10, max overflow 5)</td></tr>
     <tr><td><code>REDIS_URL</code></td><td><code>docker-compose.yml</code></td><td>Same Redis instance/db as <code>backend</code> — required for the blacklist check</td></tr>
-    <tr><td><code>CORS_ORIGINS</code></td><td><code>docker-compose.yml</code></td><td><code>["*"]</code> in dev — browser never calls this service directly, only through the Next.js proxy (see §7.1 gap)</td></tr>
+    <tr><td><code>CORS_ORIGINS</code></td><td><code>docker-compose.yml</code></td><td><code>["*"]</code> in dev — browser never calls this service directly, only through the Next.js proxy (see §8.1 gap)</td></tr>
     <tr><td><code>LOG_LEVEL</code></td><td><code>docker-compose.yml</code></td><td><code>INFO</code></td></tr>
   </tbody>
 </table>
 
-<h3>8.3 Health checks</h3>
+<h3>9.3 Health checks</h3>
 <p><code>GET /api/v1/tracking/health/live</code> — pure liveness, never touches the DB or Redis, always returns <code>{"status": "ok"}</code> so Kubernetes/Docker cannot kill a healthy process during a transient dependency blip.</p>
 <p><code>GET /api/v1/tracking/health/ready</code> — checks both Postgres (<code>SELECT 1</code>) and Redis (<code>PING</code>); returns HTTP 503 with a per-dependency <code>checks</code> object if either fails.</p>
 
-<h3>8.4 Observability</h3>
+<h3>9.4 Observability</h3>
 <p>Structured JSON logging via <code>structlog</code> (mirrors the main backend's setup, duplicated rather than imported). Every log line carries <code>service_name="tracking-backend"</code> so aggregated logs can be filtered to this service specifically. <code>RequestContextMiddleware</code> binds <code>request_id</code>/<code>correlation_id</code> (from incoming <code>X-Request-ID</code>/<code>X-Correlation-ID</code> headers, or newly generated) into structlog's contextvars for the duration of each request, and echoes both back as response headers. <code>SecurityHeadersMiddleware</code> sets <code>X-Content-Type-Options</code>, <code>X-Frame-Options: DENY</code>, <code>Referrer-Policy</code>, and a restrictive <code>Content-Security-Policy</code> on every response.</p>
 
 <hr>
 
-<h2>9. Known gaps and technical debt</h2>
+<h2>10. Known gaps and technical debt</h2>
 <table>
   <thead><tr><th>ID</th><th>Description</th><th>Impact</th></tr></thead>
   <tbody>
     <tr>
       <td><span class="badge red">TD-FT-01</span></td>
-      <td>The Next.js proxy does not route <code>/api/v1/tracking/*</code> requests to <code>tracking-backend</code> — see §7.1. No <code>TRACKING_BACKEND_URL</code> exists anywhere.</td>
-      <td>Every tracking API call in the Docker Compose deployment currently 404s against the main backend. Release blocker.</td>
+      <td>The Next.js proxy does not route <code>/api/v1/tracking/*</code> requests to <code>tracking-backend</code> — see §8.1. No <code>TRACKING_BACKEND_URL</code> exists anywhere.</td>
+      <td>Every tracking API call in the Docker Compose deployment currently 404s against the main backend, including all 7 new Phase 2 Update Tracking List endpoints — this gap was not introduced by Phase 2 but applies equally to it. Release blocker.</td>
     </tr>
     <tr>
       <td><span class="badge yellow">TD-FT-02</span></td>
@@ -363,6 +481,16 @@ user_id on every table is a bare UUID column checked at the application layer on
       <td><span class="badge yellow">TD-FT-05</span></td>
       <td>No role-based access control in this service (§1.1) — any authenticated user has full CRUD on their own data with no tiering.</td>
       <td>Acceptable for a personal-use feature in Phase 1; would need explicit design work if this ever needs admin/analyst/viewer distinctions.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-06</span></td>
+      <td><em>(Phase 2)</em> The Update Tracking List detail response names its ordering field <code>orderIndex</code>, while every other Phase 1 response (<code>CategoryOut</code>, <code>SubCategoryOut</code>, <code>TrackingItemOut</code>) aliases the same underlying column to <code>order</code> — a deliberate, reviewed choice for this specific composite (§8.2.1), not an oversight, but it means the same underlying database column is exposed under two different field names depending on which endpoint returned it.</td>
+      <td>A frontend or integration developer working across both parts of the API must remember which name applies where; there is no single shared naming convention for <code>order_index</code> across the whole service.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-07</span></td>
+      <td><em>(Phase 2)</em> An Update Tracking List's detail view always reflects the tracking set's <strong>current</strong> category/sub-category/item hierarchy rather than a point-in-time structural snapshot (§7.1, FUNCTIONAL.html §11.5) — a reviewed and approved simplicity trade-off, not an oversight.</td>
+      <td>Renaming, reorganising, or deleting tracking items retroactively changes how every past Update Tracking List displays, even though the balance <em>values</em> themselves remain exactly as recorded. Acceptable while there is no requirement for point-in-time hierarchy-shape accuracy; would need a structural-snapshot redesign if that requirement appears later.</td>
     </tr>
   </tbody>
 </table>

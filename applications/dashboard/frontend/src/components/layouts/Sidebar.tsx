@@ -9,7 +9,7 @@ import {
   LayoutDashboard, TrendingUp, Bot, BarChart3, Settings, SlidersHorizontal,
   ChevronLeft, ChevronRight, LogOut, X, Users, ChevronDown, FileText, ClipboardList,
   ShoppingCart, Briefcase, ArrowUpRight, FlaskConical, HardDriveDownload, GitBranch, ScanLine, Search,
-  RefreshCw, Activity, Wallet, FolderTree,
+  RefreshCw, RefreshCcw, Activity, Wallet, FolderTree,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
@@ -875,6 +875,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
           onToggle={() => setTrackingOpen(o => !o)}
         >
           <SubLink href="/tracking/category" label="Category" icon={FolderTree} />
+          <SubLink href="/tracking/updates" label="Updates" icon={RefreshCcw} />
         </AccordionGroup>
         <AccordionGroup
           label="Analytics" icon={BarChart3}

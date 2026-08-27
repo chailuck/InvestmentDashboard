@@ -45,20 +45,63 @@ from unittest.mock import AsyncMock, patch
 # `dashboard-net` network in the meantime).
 #
 # To run this suite from a bare host (outside Docker) against the compose
-# stack's port-forwarded services instead, override both explicitly, e.g.:
-#   DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/investment_test_db
+# stack's port-forwarded services instead, override REDIS_URL, e.g.:
 #   REDIS_URL=redis://localhost:6379/1
 # (this is how these tests were actually verified to pass during development,
 # from a Windows host venv against the compose stack's mapped 5432/6379 ports).
+#
+# SAFETY — read before touching TEST_DATABASE_URL below:
+# This suite's `engine` fixture runs Base.metadata.drop_all()/create_all()
+# every session. An earlier version of this file derived the engine URL from
+# `os.environ["DATABASE_URL"]` (set here via `os.environ.setdefault`, a no-op
+# whenever the variable is already present). Inside the running
+# `inv_tracking_backend` container, DATABASE_URL is ALREADY set by
+# docker-compose to the real dev database — so `setdefault` silently did
+# nothing, `os.environ["DATABASE_URL"]` resolved to the live `investment_db`,
+# and running `docker exec inv_tracking_backend python -m pytest` (the
+# suite's own documented invocation) dropped every ft_* table in the live
+# dev database, permanently destroying real data. This actually happened.
+#
+# The fix: TEST_DATABASE_URL below is a HARDCODED literal, exactly mirroring
+# applications/dashboard/backend/tests/conftest.py's already-safe pattern
+# (see that file's TEST_DATABASE_URL) — it can NEVER resolve to whatever
+# DATABASE_URL happens to be set in the ambient environment, no matter how or
+# where this suite is invoked. Do not change this back to read from
+# os.environ. The assert_test_database() guard directly below is a second,
+# independent safety net in case this constant is ever edited carelessly.
 
 TEST_SECRET_KEY = "test-secret-key-that-is-at-least-32-chars-long!"
+TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@postgres:5432/investment_test_db"
 
-os.environ.setdefault("APP_SECRET_KEY", TEST_SECRET_KEY)
-os.environ.setdefault(
-    "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@postgres:5432/investment_test_db"
-)
+# APP_SECRET_KEY is force-set (NOT setdefault) for the same reason as
+# TEST_DATABASE_URL above: inside the running inv_tracking_backend container,
+# APP_SECRET_KEY is ALREADY set (to the real shared secret from
+# .env.shared), so `setdefault` would silently no-op and this suite's
+# make_token() helper would sign JWTs with TEST_SECRET_KEY while the app
+# verifies them against the real secret — every authenticated test then
+# fails with 401 "Signature verification failed". Forcing it here guarantees
+# the signer and verifier always agree, regardless of the ambient
+# environment this suite happens to run in.
+os.environ["APP_SECRET_KEY"] = TEST_SECRET_KEY
 os.environ.setdefault("REDIS_URL", "redis://redis:6379/1")
 os.environ.setdefault("APP_ENV", "development")
+
+
+def _assert_test_database(url: str) -> None:
+    """Hard-fail rather than silently run destructive fixtures against a
+    non-test database. Defense-in-depth alongside the hardcoded
+    TEST_DATABASE_URL above — see the SAFETY note above this function."""
+    if "test" not in url.rsplit("/", 1)[-1].lower():
+        raise RuntimeError(
+            f"Refusing to run tracking-backend tests against {url!r} — the "
+            "database name doesn't contain 'test'. This suite drops and "
+            "recreates every ft_* table every run; pointing it at a non-test "
+            "database will destroy real data. Fix TEST_DATABASE_URL in "
+            "tests/conftest.py instead of routing around this check."
+        )
+
+
+_assert_test_database(TEST_DATABASE_URL)
 
 from jose import jwt as jose_jwt  # noqa: E402
 
@@ -68,13 +111,9 @@ from app.models.initial_investment_entry import InitialInvestmentEntry  # noqa: 
 from app.models.sub_category import SubCategory  # noqa: F401,E402
 from app.models.tracking_item import TrackingItem  # noqa: F401,E402
 from app.models.tracking_set import TrackingSet  # noqa: F401,E402
+from app.models.update_tracking_list import UpdateTrackingList  # noqa: F401,E402
+from app.models.update_tracking_list_balance import UpdateTrackingListBalance  # noqa: F401,E402
 from main import fastapi_app  # noqa: E402
-
-# Single source of truth for the test engine — always the same value Settings()
-# resolved DATABASE_URL to above, so the app's DB and the test-setup/assertion
-# DB are never accidentally pointed at different databases.
-TEST_DATABASE_URL = os.environ["DATABASE_URL"]
-
 
 # ── Session-scoped event loop ────────────────────────────────────────────────
 

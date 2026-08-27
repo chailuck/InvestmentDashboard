@@ -13,19 +13,22 @@ from app.schemas.common import CamelModel, CamelRequestModel
 
 class UpdateTrackingListCreate(CamelRequestModel):
     transaction_date: date
-    quarter_year_label: str | None = Field(default=None, max_length=50)
+    quarter: int | None = Field(default=None, ge=1, le=4)
+    year: int | None = Field(default=None, ge=2000, le=2100)
 
 
 class UpdateTrackingListUpdate(CamelRequestModel):
     transaction_date: date | None = None
-    quarter_year_label: str | None = Field(default=None, max_length=50)
+    quarter: int | None = Field(default=None, ge=1, le=4)
+    year: int | None = Field(default=None, ge=2000, le=2100)
 
 
 class UpdateTrackingListOut(CamelModel):
     id: uuid.UUID
     tracking_set_id: uuid.UUID
     transaction_date: date
-    quarter_year_label: str | None
+    quarter: int | None
+    year: int | None
     created_at: datetime
     updated_at: datetime
 

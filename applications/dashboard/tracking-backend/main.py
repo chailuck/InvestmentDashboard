@@ -82,7 +82,8 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version="1.0.0",
         description="Financial Tracker API — Tracking Set / Category / Sub-category / "
-        "Tracking Item / Initial Investment Entry CRUD (Phase 1).",
+        "Tracking Item / Initial Investment Entry CRUD (Phase 1), plus Update Tracking "
+        "Lists with read-time delta computation (Phase 2).",
         docs_url="/api/docs" if not settings.is_production else None,
         redoc_url="/api/redoc" if not settings.is_production else None,
         openapi_url="/api/openapi.json" if not settings.is_production else None,

@@ -35,11 +35,11 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
 <h1>API Spec — Financial Tracker</h1>
 
 <div class="obj">
-<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, and Initial Investment Ledger entries. Served by the independent <code>tracking-backend</code> microservice (Phase 1: CRUD only — no "Update Tracking List" or "Dashboard" endpoints exist yet). All routes are mounted under <code>/api/v1/tracking</code>.
+<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1), and Update Tracking Lists with read-time balance deltas (Phase 2). Served by the independent <code>tracking-backend</code> microservice. No "Dashboard" (quarterly/annual rollup reporting) endpoints exist yet. All routes are mounted under <code>/api/v1/tracking</code>.
 </div>
 
 <div class="err">
-<strong>Deployment note:</strong> the Next.js proxy (<code>frontend/src/app/api/proxy/[...path]/route.ts</code>) does not currently route <code>/api/v1/tracking/*</code> requests to this service — see <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §7.1 / §9 (TD-FT-01). The endpoints below are accurate to the running <code>tracking-backend</code> service reachable directly on port 8001; the browser-facing path through the frontend proxy is not yet wired to it.
+<strong>Deployment note:</strong> the Next.js proxy (<code>frontend/src/app/api/proxy/[...path]/route.ts</code>) does not currently route <code>/api/v1/tracking/*</code> requests to this service — see <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §8.1 / §10 (TD-FT-01). The endpoints below are accurate to the running <code>tracking-backend</code> service reachable directly on port 8001; the browser-facing path through the frontend proxy is not yet wired to it.
 </div>
 
 <h4>Authentication</h4>
@@ -79,6 +79,13 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Get one ledger entry</td></tr>
   <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Update a ledger entry</td></tr>
   <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Delete a ledger entry (HTTP 204)</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/sets/{setId}/update-lists</code></td><td><em>(Phase 2)</em> Create an Update Tracking List header (HTTP 201)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{setId}/update-lists</code></td><td><em>(Phase 2)</em> List Update Tracking Lists for a set, newest date first</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/update-lists/{listId}</code></td><td><em>(Phase 2)</em> Get one Update Tracking List header</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/update-lists/{listId}</code></td><td><em>(Phase 2)</em> Update transaction date and/or quarter/year label</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/update-lists/{listId}</code></td><td><em>(Phase 2)</em> Delete (cascades to balance rows) (HTTP 204)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/update-lists/{listId}/detail</code></td><td><em>(Phase 2)</em> Full current hierarchy with per-item balance + read-time delta</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/update-lists/{listId}/balances</code></td><td><em>(Phase 2)</em> Bulk upsert per-item balances (all-or-nothing)</td></tr>
 </table>
 
 <hr>
@@ -356,10 +363,135 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
 
 <hr>
 
+<h2>Update Tracking Lists (Phase 2)</h2>
+
+<div class="obj">
+Periodic balance snapshots ("updates") against a Tracking Set's category/sub-category/tracking-item hierarchy, plus read-time delta computation against the immediately preceding snapshot. Implemented in <code>app/api/v1/endpoints/update_tracking_lists.py</code>. Two URL families share this one router — nested <code>/sets/{setId}/update-lists</code> for header create/list, and standalone <code>/update-lists/{listId}...</code> for everything else — mirroring how <code>tracking_sets.py</code> already nests <code>/sets/{setId}/categories</code>. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §11 for user-facing behaviour and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §7 for the delta-computation algorithm.
+</div>
+
+<h4>Update Tracking List header response shape</h4>
+<pre><code>{
+  "id":                "a1b2c3d4-...",
+  "trackingSetId":     "b1a2c3d4-...",
+  "transactionDate":   "2026-06-30",
+  "quarter":           2,
+  "year":              2026,
+  "createdAt":         "2026-08-25T09:00:00+00:00",
+  "updatedAt":         "2026-08-25T09:00:00+00:00"
+}</code></pre>
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>quarter</code></td><td>integer, nullable</td><td>1-4. Independent of <code>year</code> — either may be set/cleared without touching the other.</td></tr>
+    <tr><td><code>year</code></td><td>integer, nullable</td><td>e.g. 2000-2100. Independent of <code>quarter</code>.</td></tr>
+  </tbody>
+</table>
+<div class="tip">Replaces the former free-text <code>quarterYearLabel</code> field (migration <code>20260827_1000_d112fa78e9c2_split_quarter_year_label_into_quarter_and_year</code>). <code>quarter</code> and <code>year</code> are independently settable or clearable via the partial-update endpoint below — passing one without the other leaves the untouched field as-is.</div>
+
+<h3>POST /api/v1/tracking/sets/{setId}/update-lists</h3>
+<pre><code>// Request — transactionDate required; quarter and year independently optional
+{ "transactionDate": "2026-06-30", "quarter": 2, "year": 2026 }
+
+// Response 201 — full header object (see shape above)</code></pre>
+<div class="err"><strong>404 Not Found</strong> — parent tracking set not found: <code>{"detail": "Tracking set not found"}</code></div>
+<div class="tip">No uniqueness check is applied — creating a second list with the same <code>transactionDate</code> for the same set succeeds and produces two independent rows. See TECHNICAL.html §3 for why.</div>
+
+<h3>GET /api/v1/tracking/sets/{setId}/update-lists</h3>
+<p>Returns the set's Update Tracking Lists ordered by <code>transactionDate</code> descending, then <code>createdAt</code> descending for same-date rows (newest first).</p>
+<pre><code>[
+  { "id": "...", "trackingSetId": "...", "transactionDate": "2026-06-30", "quarter": 2, "year": 2026, "createdAt": "...", "updatedAt": "..." },
+  { "id": "...", "trackingSetId": "...", "transactionDate": "2026-03-31", "quarter": 1, "year": 2026, "createdAt": "...", "updatedAt": "..." }
+]</code></pre>
+<div class="err"><strong>404 Not Found</strong> — parent tracking set not found.</div>
+
+<h3>GET /api/v1/tracking/update-lists/{listId}</h3>
+<div class="err"><strong>404 Not Found</strong> — list does not exist or belongs to another user: <code>{"detail": "Update tracking list not found"}</code></div>
+
+<h3>PUT /api/v1/tracking/update-lists/{listId}</h3>
+<pre><code>// Request — all fields optional; only provided fields are updated.
+// quarter and year are independently settable/clearable (pass null to clear one without affecting the other)
+{ "quarter": 3, "year": 2026 }
+
+// Response 200 — updated header</code></pre>
+<div class="err"><strong>404 Not Found</strong> — list not found.</div>
+
+<h3>DELETE /api/v1/tracking/update-lists/{listId}</h3>
+<p>Hard delete. Cascades to every balance row recorded against this list (<code>ft_update_tracking_list_balance</code> rows with this <code>update_tracking_list_id</code>). Returns HTTP 204 No Content.</p>
+<div class="err"><strong>404 Not Found</strong> — list not found.</div>
+
+<h3>GET /api/v1/tracking/update-lists/{listId}/detail</h3>
+<p>Returns the tracking set's <strong>current</strong> category → sub-category → tracking-item hierarchy — not a structural snapshot frozen at list-creation time — with each item's balance on this list, its balance on the chronologically previous list in the same set, and the computed delta. Note the item/category/sub-category ordering field in this response is <code>orderIndex</code>, not the <code>order</code> alias used by the plain Category/SubCategory/TrackingItem endpoints above.</p>
+<pre><code>// Response 200
+{
+  "list": {
+    "id": "a1b2c3d4-...", "trackingSetId": "b1a2c3d4-...",
+    "transactionDate": "2026-06-30", "quarter": 2, "year": 2026,
+    "createdAt": "...", "updatedAt": "..."
+  },
+  "previousListId": "9f8e7d6c-...",
+  "categories": [
+    {
+      "id": "c2b3d4e5-...", "name": "Assets", "orderIndex": 0,
+      "subCategories": [
+        {
+          "id": "d3c4e5f6-...", "name": "Current Assets", "orderIndex": 0,
+          "items": [
+            {
+              "id": "e4d5f6a7-...", "name": "SCB Savings Account", "type": "Bank account", "orderIndex": 0,
+              "balance": 105000.00, "previousBalance": 100000.00,
+              "deltaAmount": 5000.00, "deltaPercent": 5.00, "hasPreviousData": true
+            },
+            {
+              "id": "f5a6b7c8-...", "name": "New item added this quarter", "type": "Bank account", "orderIndex": 1,
+              "balance": null, "previousBalance": null,
+              "deltaAmount": null, "deltaPercent": null, "hasPreviousData": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}</code></pre>
+<div class="obj">
+<strong>Reading the delta fields:</strong> <code>hasPreviousData=false</code> means either this is the first list for the set, or this item had no balance recorded on the previous list — the UI must show a "no data" indicator, not a fabricated zero. When <code>hasPreviousData=true</code> but the previous balance was exactly <code>0</code>, <code>deltaAmount</code> is still computed but <code>deltaPercent</code> is <code>null</code> (division by zero is avoided deliberately, not a bug). All four delta-related fields are computed fresh on every call — never cached or stored — so editing an older list's balance changes what this response returns on the very next call.
+</div>
+<div class="err"><strong>404 Not Found</strong> — list not found: <code>{"detail": "Update tracking list not found"}</code></div>
+
+<h3>PUT /api/v1/tracking/update-lists/{listId}/balances</h3>
+<pre><code>// Request — bulk upsert; balance may be a number or null (null clears/records "no value")
+{
+  "balances": [
+    { "trackingItemId": "e4d5f6a7-...", "balance": 105000.00 },
+    { "trackingItemId": "f5a6b7c8-...", "balance": null }
+  ]
+}
+
+// Response 200 — the written balance rows
+[
+  {
+    "id": "1a2b3c4d-...", "updateTrackingListId": "a1b2c3d4-...",
+    "trackingItemId": "e4d5f6a7-...", "balance": 105000.00,
+    "createdAt": "...", "updatedAt": "..."
+  },
+  {
+    "id": "2b3c4d5e-...", "updateTrackingListId": "a1b2c3d4-...",
+    "trackingItemId": "f5a6b7c8-...", "balance": null,
+    "createdAt": "...", "updatedAt": "..."
+  }
+]</code></pre>
+<div class="obj">
+<strong>All-or-nothing validation:</strong> every <code>trackingItemId</code> in the request must resolve to a tracking item owned by the caller <strong>and</strong> belonging to this list's own <code>trackingSetId</code> (checked in one query before any row is written). If even one id fails — belongs to a different tracking set, belongs to another user, or doesn't exist — the entire request is rejected and <strong>nothing</strong> in the batch is written. An empty <code>balances</code> array is accepted and returns <code>[]</code> without touching the database.
+</div>
+<div class="err"><strong>400 Bad Request</strong> — one or more ids don't belong to this list's tracking set: <code>{"detail": "Invalid trackingItemId(s) for this tracking set: &lt;id&gt;, &lt;id&gt;"}</code><br>
+<strong>404 Not Found</strong> — list not found.<br>
+<strong>422 Unprocessable Entity</strong> — malformed body (e.g. missing <code>trackingItemId</code>, non-numeric <code>balance</code>).</div>
+
+<hr>
+
 <h2>Common Error Handling</h2>
 <table>
   <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
-  <tr><td>400</td><td>Reorder ids not belonging to the parent; ledger action on an item with <code>initialInvestmentTracking=false</code></td><td>Specific message per case</td></tr>
+  <tr><td>400</td><td>Reorder ids not belonging to the parent; ledger action on an item with <code>initialInvestmentTracking=false</code>; Update Tracking List balance upsert containing a <code>trackingItemId</code> outside the list's own tracking set</td><td>Specific message per case</td></tr>
   <tr><td>401</td><td>Missing/invalid/expired Bearer token, missing <code>jti</code> claim, or token revoked (blacklisted)</td><td>"Missing authentication credentials" / "Invalid token: ..." / "Token missing jti claim" / "Token has been revoked"</td></tr>
   <tr><td>404</td><td>Resource UUID not found, or belongs to another user (ownership check never distinguishes the two — see TECHNICAL.html §5.1)</td><td>"&lt;Resource&gt; not found"</td></tr>
   <tr><td>409</td><td>Duplicate Tracking Set name for the same user</td><td>"A tracking set with this name already exists"</td></tr>

@@ -85,7 +85,7 @@ describe('Sidebar — Tracking navigation entry', () => {
     expect(screen.queryByRole('link', { name: 'Category' })).not.toBeInTheDocument()
   })
 
-  it('reveals exactly one sublink, "Category", linking to /tracking/category, once expanded', async () => {
+  it('reveals "Category" and "Updates" sublinks, in that order, once expanded', async () => {
     render(<Sidebar {...defaultProps} />)
     await screen.findByText('Action Plan')
 
@@ -94,23 +94,32 @@ describe('Sidebar — Tracking navigation entry', () => {
     const categoryLink = await screen.findByRole('link', { name: 'Category' })
     expect(categoryLink).toHaveAttribute('href', '/tracking/category')
 
-    // Phase 1 scope only — no "Update" or "Tracking Dashboard" sub-menus.
-    expect(screen.queryByRole('link', { name: /Update/i })).not.toBeInTheDocument()
+    const updatesLink = await screen.findByRole('link', { name: 'Updates' })
+    expect(updatesLink).toHaveAttribute('href', '/tracking/updates')
+
+    // Phase 2 scope only — no "Tracking Dashboard" sub-menu yet.
     expect(screen.queryByRole('link', { name: /Tracking Dashboard/i })).not.toBeInTheDocument()
+
+    // Category renders before Updates in the accordion.
+    const trackingButton = screen.getByRole('button', { name: /Tracking/i })
+    const trackingGroup = trackingButton.parentElement!
+    const linkTexts = Array.from(trackingGroup.querySelectorAll('a')).map(a => a.textContent)
+    expect(linkTexts.indexOf('Category')).toBeLessThan(linkTexts.indexOf('Updates'))
   })
 
-  it('does not render extra sublinks under Tracking beyond Category', async () => {
+  it('does not render extra sublinks under Tracking beyond Category and Updates', async () => {
     render(<Sidebar {...defaultProps} />)
     await screen.findByText('Action Plan')
 
     fireEvent.click(screen.getByRole('button', { name: /Tracking/i }))
     await screen.findByRole('link', { name: 'Category' })
 
-    // The Tracking group's nested list should contain exactly one link.
+    // The Tracking group's nested list should contain exactly two links.
     const trackingButton = screen.getByRole('button', { name: /Tracking/i })
     const trackingGroup = trackingButton.parentElement!
     const links = trackingGroup.querySelectorAll('a')
-    expect(links).toHaveLength(1)
+    expect(links).toHaveLength(2)
     expect(links[0]).toHaveTextContent('Category')
+    expect(links[1]).toHaveTextContent('Updates')
   })
 })
