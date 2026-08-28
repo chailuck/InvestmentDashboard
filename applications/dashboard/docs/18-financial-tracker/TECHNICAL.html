@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Technical Design</h1>
 
-<p><strong>Version:</strong> 2.0 (Phase 1 + Phase 2) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-25</p>
+<p><strong>Version:</strong> 3.0 (Phase 1 + Phase 2 + Phase 3) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-28</p>
 
 <hr>
 
@@ -52,21 +52,26 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 │   │   ├── database/session.py ← own async SQLAlchemy engine/session/Base
 │   │   ├── database/redis.py   ← own Redis client (blacklist check only)
 │   │   ├── models/              (7 ORM models — 5 from Phase 1 + 2 from
-│   │   │                          Phase 2 — see §3)
+│   │   │                          Phase 2 — see §3. Phase 3 adds no new
+│   │   │                          tables/models — see §8)
 │   │   ├── schemas/              (Pydantic v2, camelCase — see §5)
+│   │   │   └── dashboard.py    ← Phase 3: balance-grid response schemas (no request schema — GET only)
 │   │   ├── services/cascade.py ← default category/sub-category creation
 │   │   ├── services/update_tracking.py ← Phase 2: read-time delta computation
+│   │   ├── services/dashboard_balance_grid.py ← Phase 3: read-time balance-grid
+│   │   │                          aggregation + the shared compute_series_deltas engine — see §8
 │   │   └── api/v1/
 │   │       ├── router.py       ← assembles all sub-routers
 │   │       └── endpoints/      ← health, tracking_sets, categories,
 │   │                              sub_categories, tracking_items, entries,
-│   │                              update_tracking_lists (Phase 2)
-│   ├── alembic/                ← OWN migration chain (see §4)
+│   │                              update_tracking_lists (Phase 2),
+│   │                              dashboard (Phase 3)
+│   ├── alembic/                ← OWN migration chain (see §4) — unchanged by Phase 3
 │   └── tests/
 ├── docker/Dockerfile.tracking-backend
 └── frontend/                   ← SHARED — new pages/components/service added
     └── src/
-        ├── services/tracking.ts          ← Phase 1 entities
+        ├── services/tracking.ts          ← Phase 1 entities + Phase 3 getBalanceGrid()
         ├── services/updateTracking.ts    ← Phase 2: Update Tracking Lists + Balances
         ├── components/tracking/  (CategoryTree, CreateItemModal,
         │                          NameDescriptionModal, ConfirmDeleteModal,
@@ -74,9 +79,10 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
         └── app/(dashboard)/tracking/
             ├── category/page.tsx
             ├── items/[itemId]/page.tsx
-            └── updates/                  ← Phase 2
-                ├── page.tsx               (list + tracking-set selector + create modal)
-                └── [listId]/page.tsx      (detail: hierarchy, editable balances, deltas)</code></pre>
+            ├── updates/                  ← Phase 2
+            │   ├── page.tsx               (list + tracking-set selector + create modal)
+            │   └── [listId]/page.tsx      (detail: hierarchy, editable balances, deltas)
+            └── dashboard/page.tsx        ← Phase 3: read-only balance-grid report — see §9.3.2</code></pre>
 
 <h3>1.1 Why a separate service (ADR summary)</h3>
 <p><strong>Decision:</strong> Build the Financial Tracker as an independently deployable FastAPI service rather than extending <code>backend</code>, driven by the explicit technical requirement to add this feature "so that we can restart this pod without impacting the current functionalities" (see <code>docs/REQUIREMENTS FINANCIAL TRACKER.md</code>, §2).</p>
@@ -289,6 +295,7 @@ item cascades to remove the balance row.</code></pre>
     <tr><td><code>tracking_items.py</code></td><td><code>/items</code></td><td>Tracking Item CRUD by id + nested Ledger Entry create/list + running-total</td></tr>
     <tr><td><code>entries.py</code></td><td><code>/entries</code></td><td>Ledger Entry CRUD by id</td></tr>
     <tr><td><code>update_tracking_lists.py</code> <em>(Phase 2)</em></td><td><code>/sets/{id}/update-lists</code> + <code>/update-lists</code></td><td>Update Tracking List header CRUD, hierarchy+delta detail view, bulk balance upsert — see §7</td></tr>
+    <tr><td><code>dashboard.py</code> <em>(Phase 3)</em></td><td><code>/sets/{id}/dashboard</code></td><td>Single read-only GET returning the quarterly/yearly balance-grid rollup — see §8</td></tr>
   </tbody>
 </table>
 <div class="callout">Unlike every other router in this table, <code>update_tracking_lists.py</code> declares no single fixed <code>prefix=</code> on its <code>APIRouter</code> — it spans two URL families (<code>/sets/{set_id}/update-lists</code> for header create/list, and standalone <code>/update-lists/{list_id}...</code> for everything else), so each route spells out its full path explicitly. This mirrors how <code>tracking_sets.py</code> already nests <code>/sets/{set_id}/categories</code> alongside its own <code>/sets</code> CRUD.</div>
@@ -359,19 +366,62 @@ item cascades to remove the balance row.</code></pre>
 
 <hr>
 
-<h2>8. Frontend integration</h2>
+<h2>8. Dashboard balance-grid service (Phase 3)</h2>
+<p>Source: <code>app/services/dashboard_balance_grid.py — get_balance_grid()</code>, consumed by exactly one endpoint (<code>GET /sets/{set_id}/dashboard/balance-grid</code>, <code>app/api/v1/endpoints/dashboard.py</code>). Same division of responsibility as §7: aggregation is business logic and lives in a service module, not in the endpoint (CLAUDE.md: "NEVER place business logic inside controllers/handlers"). Phase 3 adds <strong>no new database tables, columns, or Alembic migration</strong> — it is a pure read-time rollup over the existing <code>ft_category</code> / <code>ft_sub_category</code> / <code>ft_tracking_item</code> / <code>ft_update_tracking_list</code> / <code>ft_update_tracking_list_balance</code> tables described in §3.</p>
 
-<h3>8.1 Proxy routing</h3>
+<h3>8.1 The grid model — slots, series, and cells</h3>
+<p>The service works in three layers of abstraction, each with its own dataclass family:</p>
+<ol>
+  <li><strong>Slot</strong> — a bare <code>tuple[int, int]</code> of <code>(year, quarter)</code>, the atomic unit of the grid. <code>_slot_sort_key()</code> gives slots a single ascending integer (<code>year * 4 + quarter</code>) for chronological sorting, kept separate from the descending-by-year <em>display</em> order built later.</li>
+  <li><strong>Series</strong> — one row's or rollup tier's populated values, as a plain <code>dict[Slot, Decimal]</code> containing only the slots that actually have data. Absence from the dict, not a stored null, is what "blank" means at this layer.</li>
+  <li><strong>Cell</strong> — the fully positioned, wire-shaped result (<code>year</code>, <code>quarter</code>, <code>balance</code>, <code>delta_amount</code>, <code>delta_percent</code>, <code>has_data</code>, <code>has_previous_data</code>) produced by materializing a series against the grid's ordered <code>display_slots</code> list via <code>_materialize()</code> — one <code>Cell</code> per display slot, blank ones filled from a shared <code>_BLANK_CELL_MATH</code> sentinel.</li>
+</ol>
+
+<h3>8.2 <code>compute_series_deltas</code> — the one shared delta engine</h3>
+<p><code>compute_series_deltas(values_by_slot, ascending_slots)</code> is the <strong>single function</strong> used to compute deltas for every row and every rollup tier in the grid — item rows, sub-category subtotals, category subtotals, the grand total, and the Property/Non-Property breakdown. It is deliberately generic over what the series represents: it has no idea whether it is walking one tracking item's own balances or a whole category's summed total, which is exactly why one function can serve all six use sites in <code>get_balance_grid()</code> rather than duplicating near-identical loop logic per tier.</p>
+<p>Walking <code>ascending_slots</code> (oldest first) with a running <code>last_seen</code> value:</p>
+<ul>
+  <li>A slot absent from <code>values_by_slot</code> produces a blank <code>CellMath</code> (<code>has_data=False</code>) and does <strong>not</strong> advance <code>last_seen</code> — so a later populated slot still diffs against the last real value, not against the blank gap. This is what lets a delta look arbitrarily far back, skipping blank quarters and crossing year boundaries freely, with no extra query per row (FUNCTIONAL.html §12.6).</li>
+  <li>A populated slot sets <code>has_previous_data = last_seen is not None</code>, computes <code>delta_amount = balance - last_seen</code> only when a previous value exists (a first data point gets <code>None</code>, never a fabricated zero delta), and computes <code>delta_percent</code> only when <code>delta_amount</code> is computable <strong>and</strong> <code>last_seen != 0</code> — the same zero-guard convention as <code>update_tracking.py</code>'s <code>_compute_item_delta</code> (§7.3): the amount is still shown, the percentage is suppressed.</li>
+  <li><code>last_seen</code> is then set to the current <code>balance</code> before moving to the next slot.</li>
+</ul>
+
+<h3>8.3 Rollup — the "at least one populated" rule</h3>
+<p><code>_rollup_values(items_subset, ascending_slots, item_values_by_id)</code> sums a group of items' per-slot values for every subtotal tier (sub-category, category, grand total, property/non-property). For each slot, it sums only the items that actually have a value that slot; if zero items in the group have data for a slot, that slot is left absent from the result (blank), not written as zero. This means a subtotal is populated as soon as <strong>any one</strong> item beneath it has data for a quarter — it never disappears just because a sibling item in the same group has no history yet (FUNCTIONAL.html §12.4). Category subtotals are computed by summing directly over every non-Exclusive <strong>leaf item</strong> in the category (flattened across its sub-categories), not by re-summing the already-computed sub-category subtotal cells — so the "at least one populated" rule is applied once, at the leaf-item granularity, rather than compounding across two levels of rollup.</p>
+
+<h3>8.4 Duplicate (year, quarter) slot — winner selection</h3>
+<p>Only <code>UpdateTrackingList</code> rows with <strong>both</strong> <code>year</code> and <code>quarter</code> set are eligible for the grid at all — rows missing either are silently excluded from this report (not an error). Eligible rows are grouped in Python by their <code>(year, quarter)</code> tuple; when more than one list shares the same slot (allowed by design — §3, FUNCTIONAL.html §11.1's duplicate-date behavior extends naturally to duplicate quarter/year labels too), the winner is the row with the greatest <code>(created_at, id)</code> tuple — i.e. <strong>most recently created wins</strong>, with <code>id</code> descending as the final deterministic tiebreak for the vanishingly unlikely case of an identical <code>created_at</code>. This mirrors the tie-break direction of <code>_find_previous_list()</code> in §7.2, but is computed via a plain Python <code>sorted(..., reverse=True)[0]</code> over already-loaded rows rather than a second SQL query, since all candidate rows for the set are loaded in one query up front (§8.5).</p>
+
+<h3>8.5 Performance — exactly 6 queries, no N+1</h3>
+<p><code>get_balance_grid()</code> issues a fixed, small number of queries regardless of how many years, quarters, categories, or items the tracking set has:</p>
+<ol>
+  <li>Every <code>UpdateTrackingList</code> row for the set with <code>year</code> and <code>quarter</code> both non-null.</li>
+  <li>Every <code>UpdateTrackingListBalance</code> row for the winning lists selected in-memory from query 1 (§8.4) — a single <code>WHERE update_tracking_list_id IN (...)</code>, not one query per slot.</li>
+  <li><code>Category</code> rows for the set.</li>
+  <li><code>SubCategory</code> rows for those categories.</li>
+  <li><code>TrackingItem</code> rows for those sub-categories.</li>
+</ol>
+<p>(Ownership verification of the <code>TrackingSet</code> itself, via <code>_get_set_or_404</code> in the endpoint, is a 6th query performed by the caller before the service function is entered — see §8.6.) Every grouping, winner-selection, summation, and delta computation described in §8.2–§8.4 happens afterward, entirely in Python against data already loaded — there is no query inside a per-item, per-slot, or per-tier loop.</p>
+
+<h3>8.6 Endpoint and ownership</h3>
+<p>Source: <code>app/api/v1/endpoints/dashboard.py</code>, mounted with no fixed router-level prefix (its one route spells out the full <code>/sets/{set_id}/dashboard/balance-grid</code> path itself, the same pattern already used by <code>update_tracking_lists.py</code> — §5). The endpoint reuses <code>_get_set_or_404</code> imported directly from <code>update_tracking_lists.py</code> rather than duplicating it, so a cross-user request against someone else's tracking set gets the identical bare 404 (never 403) as every other resource in this service (§5.1). Once ownership is confirmed, the endpoint calls <code>get_balance_grid(db, tracking_set_id=...)</code> and maps the returned dataclasses onto the <code>DashboardBalanceGridOut</code> Pydantic response via a small local <code>_to_response()</code>/<code>_to_cells()</code> pair — kept in the endpoint module rather than the service module, since it is pure schema mapping with no business logic of its own.</p>
+
+<hr>
+
+<h2>9. Frontend integration</h2>
+
+<h3>9.1 Proxy routing</h3>
 <p>The browser never talks to either backend directly — every API call from the frontend goes through the existing Next.js catch-all proxy route <code>frontend/src/app/api/proxy/[...path]/route.ts</code>, which the app already used for the main backend. <code>trackingService</code> (in <code>frontend/src/services/tracking.ts</code>) builds paths as <code>/tracking/&lt;resource&gt;</code>, which the shared <code>apiClient</code> (baseURL <code>/api/proxy/api/v1</code>) turns into a browser request to <code>/api/proxy/api/v1/tracking/&lt;resource&gt;</code>.</p>
 <div class="callout warn">
 <strong>Known gap — proxy does not yet route to tracking-backend.</strong> As implemented today, <code>route.ts</code> forwards <em>every</em> request it receives — regardless of path — to a single <code>BACKEND_URL</code> environment variable (default <code>http://backend:8000</code>, the main backend). There is no branch on the <code>/api/v1/tracking/</code> prefix, and no <code>TRACKING_BACKEND_URL</code> variable exists anywhere in the codebase (checked: not in <code>route.ts</code>, not in <code>docker-compose.yml</code>, not in any <code>.env*</code> file). <code>docker-compose.yml</code> does run <code>tracking-backend</code> as its own container on port 8001, but nothing in the frontend currently points at it. In the current wiring, every <code>/api/proxy/api/v1/tracking/...</code> call is forwarded to the <strong>main</strong> backend, which does not mount these routes and will return 404. This must be fixed — e.g. by branching in <code>route.ts</code> on <code>params.path[0..2] === ['api','v1','tracking']</code> and forwarding to a new <code>TRACKING_BACKEND_URL</code> env var pointing at <code>http://tracking-backend:8001</code> — before this feature works end-to-end in the Docker Compose deployment. Track as a release blocker, not a cosmetic doc gap.
 </div>
 
-<h3>8.2 Frontend service layer</h3>
+<h3>9.2 Frontend service layer</h3>
 <p>Source: <code>frontend/src/services/tracking.ts</code>. All types and payloads use <strong>camelCase</strong> field names (<code>trackingSetId</code>, <code>orderIndex</code> serialised as <code>order</code>, <code>entryDate</code>, etc.) to match what the tracking-backend API returns — unlike the legacy snake_case services elsewhere in this frontend for the main backend.</p>
 <p>The three <code>reorder*</code> methods (<code>reorderCategories</code>, <code>reorderSubCategories</code>, <code>reorderItems</code>) are confirmed against the actual backend implementation: they are <code>PUT</code> requests with a body of <code>{ items: [{ id, order }, ...] }</code>, built by a local <code>toOrderItems()</code> helper that converts a flat, newly-ordered id array into 1-indexed <code>{id, order}</code> pairs.</p>
+<p><em>(Phase 3)</em> <code>trackingService.getBalanceGrid(setId)</code> is a single <code>GET</code> to <code>/tracking/sets/{setId}/dashboard/balance-grid</code>, added directly to this same file rather than a new sibling service module — unlike Update Tracking Lists (§9.2.1), the Dashboard has exactly one read-only method, which does not justify its own file. The <code>DashboardBalanceGridOut</code>/<code>DashboardCategoryRow</code>/<code>DashboardSubCategoryRow</code>/<code>DashboardItemRow</code>/<code>BalanceCell</code> TypeScript types mirror the backend's <code>CamelModel</code> schemas (§8) field-for-field, including the module-header note that every <code>cells</code>/<code>subtotal</code>/<code>grandTotal</code>/<code>propertyTotal</code>/<code>nonPropertyTotal</code> array is positionally aligned to the flattened <code>years × [1,2,3,4]</code> order — the page zips its rendered columns against these arrays by index, with no client-side date/quarter matching.</p>
 
-<h3>8.2.1 Update Tracking List service layer (Phase 2)</h3>
+<h3>9.2.1 Update Tracking List service layer (Phase 2)</h3>
 <p>Source: <code>frontend/src/services/updateTracking.ts</code>. Kept as a <strong>separate sibling file</strong> to <code>tracking.ts</code> rather than folded into it — this is a distinct entity family (Update Tracking Lists and their per-item Balances) reached through its own nested routes, and keeping it separate avoids growing one already-large service file. It follows the same conventions documented in <code>tracking.ts</code>'s header comment: camelCase field names, calls through the shared <code>apiClient</code>, and errors surfaced via <code>extractApiError</code>.</p>
 <table>
   <thead><tr><th>Method</th><th>Request</th><th>Backend route</th></tr></thead>
@@ -388,7 +438,7 @@ item cascades to remove the balance row.</code></pre>
 <div class="callout warn">The detail response's per-item and per-category/sub-category <code>orderIndex</code> field is deliberately <strong>not</strong> aliased to <code>order</code> the way <code>TrackingItemOut</code>/<code>CategoryOut</code>/<code>SubCategoryOut</code> alias it elsewhere in this service (see <code>app/schemas/update_tracking_list.py</code>'s module-level comment) — the approved API contract for this specific composite response names the field <code>orderIndex</code> verbatim. The TypeScript types in <code>updateTracking.ts</code> intentionally mirror this rather than "fixing" it to match the rest of the frontend.</div>
 <div class="callout">The backend serialises <code>Decimal</code> fields (<code>balance</code>, <code>deltaAmount</code>, <code>deltaPercent</code>) which FastAPI/Pydantic may emit as numeric strings rather than JSON numbers depending on configuration. <code>updateTracking.ts</code>'s consuming page (<code>updates/[listId]/page.tsx</code>) defensively coerces every such value through a local <code>toFiniteOrNull()</code> helper (<code>Number(value)</code> + <code>Number.isFinite</code> guard) before formatting or comparing — the TypeScript types declare <code>number | null</code> as the intended shape, not a byte-for-byte guarantee of the wire format.</div>
 
-<h3>8.3 Pages and components</h3>
+<h3>9.3 Pages and components</h3>
 <table>
   <thead><tr><th>File</th><th>Role</th></tr></thead>
   <tbody>
@@ -401,28 +451,38 @@ item cascades to remove the balance row.</code></pre>
     <tr><td><code>app/(dashboard)/tracking/updates/page.tsx</code> <em>(Phase 2)</em></td><td>Updates list page: Tracking Set selector (React Query key <code>['tracking-sets']</code>, defaults to the first set once loaded) + table of that set's Update Tracking Lists (<code>['tracking-update-lists', setId]</code>) + "Create New List" action</td></tr>
     <tr><td><code>app/(dashboard)/tracking/updates/[listId]/page.tsx</code> <em>(Phase 2)</em></td><td>Update Tracking List detail page: renders the full hierarchy with an editable "Latest Balance" input and computed Delta per item (React Query key <code>['update-list-detail', listId]</code>); single "Save All" button bulk-upserts every dirty field</td></tr>
     <tr><td><code>components/tracking/CreateUpdateListModal.tsx</code> <em>(Phase 2)</em></td><td>Create-modal for a new Update Tracking List — Transaction Date (required, defaults to today) + optional Quarter/Year label. Kept as its own component rather than adapting <code>NameDescriptionModal</code>, whose Name+Description shape doesn't fit a date field</td></tr>
+    <tr><td><code>app/(dashboard)/tracking/dashboard/page.tsx</code> <em>(Phase 3)</em></td><td>Read-only balance-grid report: Tracking Set selector (<code>['tracking-sets']</code>, same default-to-first-set pattern) + grid fetched via <code>['tracking-dashboard-balance-grid', selectedSetId]</code>. No components of its own — the whole page, including the grid table, cell renderers, and collapse state, lives in this one file. See §9.3.2.</td></tr>
   </tbody>
 </table>
 
-<h3>8.3.1 Update Tracking List detail page — edit/save state design</h3>
+<h3>9.3.1 Update Tracking List detail page — edit/save state design</h3>
 <p><code>updates/[listId]/page.tsx</code> hydrates a local <code>values: Record&lt;itemId, string&gt;</code> state from the loaded detail exactly once (guarded by a <code>hydrated</code> flag) rather than binding inputs directly to query data, so that an invalidate+refetch after a partial save does not clobber the user's still-unsaved edits to <em>other</em> fields — the same "hydrate once from server data, edit locally, one explicit save" pattern the Tracking Item detail page (<code>items/[itemId]/page.tsx</code>, Phase 1) established for this app. A parallel <code>dirty: Set&lt;itemId&gt;</code> tracks which fields have actually changed; <strong>Save All</strong> is disabled whenever this set is empty and sends only the dirty entries (as <code>{ trackingItemId, balance: number | null }[]</code>) to <code>upsertBalances()</code> in one call — not one call per field — because the backend endpoint is purpose-built for batch upsert. An empty/cleared input is sent as <code>balance: null</code>; a non-numeric value blocks the whole Save All action with an inline error before any request is made.</p>
 
-<h3>8.4 Sidebar entry</h3>
-<p>Source: <code>frontend/src/components/layouts/Sidebar.tsx</code>. A <code>Tracking</code> <code>AccordionGroup</code> (icon: <code>Wallet</code>) is registered directly after the <code>Action Plan</code> <code>NavLink</code> and before the <code>Analytics</code> <code>AccordionGroup</code>. Its expanded/collapsed state is tracked in local component state (<code>trackingOpen</code>, initialised from <code>pathname.startsWith('/tracking')</code>), and it now contains two <code>SubLink</code>s:</p>
-<pre><code>&lt;AccordionGroup label="Tracking" icon={Wallet} ...&gt;
-  &lt;SubLink href="/tracking/category" label="Category" icon={FolderTree} /&gt;
-  &lt;SubLink href="/tracking/updates"  label="Updates"  icon={RefreshCcw} /&gt;
-&lt;/AccordionGroup&gt;</code></pre>
-<p>There is still no <code>SubLink</code> for "Dashboard" — confirming that remains unbuilt (see FUNCTIONAL.html §12). The Update Tracking List <strong>detail</strong> page (<code>updates/[listId]/page.tsx</code>) has no sidebar entry of its own — it is reached only by clicking a row on the Updates list page or the "View previous update list" link, and its breadcrumb links back to <code>/tracking/updates</code>.</p>
+<h3>9.3.2 Dashboard page — collapse/expand state design (Phase 3)</h3>
+<p><code>dashboard/page.tsx</code> is entirely read-only (no <code>values</code>/<code>dirty</code> state at all, unlike §9.3.1) — its only local state is which row-groups and year-columns are collapsed. This is implemented with a small generic hook, <code>useToggleSet&lt;T&gt;()</code>, private to this page file: it wraps a <code>Set&lt;T&gt;</code> tracking which keys are <strong>collapsed</strong> (default: empty, i.e. everything expanded, matching the reference spreadsheet's default fully-expanded view) and exposes <code>has(key)</code>, <code>toggle(key)</code>, <code>setAll(keys)</code>, and <code>clear()</code>. Three independent instances are created — <code>collapsedYears: useToggleSet&lt;number&gt;()</code>, <code>collapsedCategories: useToggleSet&lt;string&gt;()</code>, <code>collapsedSubCategories: useToggleSet&lt;string&gt;()</code> — so a year-column collapse and a Category/Sub-category row-collapse never interfere with each other.</p>
+<div class="callout">This is deliberately <strong>not</strong> <code>useExpandableList</code> — the existing shared hook used by the Action Plan page's tables for "show latest N of a flat list, expand for the rest." That hook's shape (a flat list with a numeric reveal count) does not fit this page's requirement (arbitrary keyed nodes, independently toggled, in two unrelated dimensions — rows and columns). Rather than force-fit the existing hook, <code>useToggleSet</code> is a new, smaller, purpose-built one, local to this page rather than promoted to a shared hooks file, since nothing else in the app needs this exact shape yet.</div>
+<p>The global <strong>Detail</strong>/<strong>Summary</strong> buttons (FUNCTIONAL.html §12.5) call <code>collapsedCategories.clear()</code> + <code>collapsedSubCategories.clear()</code> (Detail) or <code>collapsedCategories.setAll(allCategoryIds)</code> + <code>collapsedSubCategories.setAll(allSubCategoryIds)</code> (Summary) — bulk operations against the same underlying <code>Set</code>s the per-row chevrons toggle individually, so a user can click Summary and then re-expand one Category by its own chevron with no special-casing required.</p>
+<p>Year-column collapsing is handled differently from row collapsing: a <code>visibleColumnIndices</code> array (<code>useMemo</code>, keyed off <code>grid</code> and <code>collapsedYears.set</code>) is built by walking <code>grid.years</code> in the exact order the backend returned them and, for every <strong>non-collapsed</strong> year, pushing that year's four flattened cell-array indices. A collapsed year contributes zero indices. Every row's <code>&lt;GridCells&gt;</code> renderer then maps over <code>visibleColumnIndices</code> rather than the full cell array — this is what actually removes a collapsed year's columns from the DOM (not a CSS <code>display:none</code>), while its header <code>&lt;th&gt;</code> still renders via <code>rowSpan</code> as a single narrow re-expand target. Because the page never re-sorts <code>grid.years</code> (already descending from the backend — §8.5, §8.4), the flattened index math (<code>yearIdx * 4 + q</code>) stays valid without any client-side date arithmetic.</p>
+<p>Decimal-as-string defensiveness mirrors §9.2.1's callout for the Update Tracking List detail page: every <code>balance</code>/<code>deltaAmount</code>/<code>deltaPercent</code> value is passed through a local <code>toFiniteOrNull()</code> helper before formatting, and the formatting helpers (<code>fmtAmount</code>, <code>fmtPercent</code>) are deliberately duplicated from <code>updates/[listId]/page.tsx</code> rather than imported, because Next.js App Router statically rejects named exports from a <code>page.tsx</code> module other than the specific ones it recognizes (<code>default</code>, <code>metadata</code>, <code>generateStaticParams</code>, ...).</p>
 
-<h3>8.5 Item detail page — gating nuance</h3>
+<h3>9.4 Sidebar entry</h3>
+<p>Source: <code>frontend/src/components/layouts/Sidebar.tsx</code>. A <code>Tracking</code> <code>AccordionGroup</code> (icon: <code>Wallet</code>) is registered directly after the <code>Action Plan</code> <code>NavLink</code> and before the <code>Analytics</code> <code>AccordionGroup</code>. Its expanded/collapsed state is tracked in local component state (<code>trackingOpen</code>, initialised from <code>pathname.startsWith('/tracking')</code>), and it now contains three <code>SubLink</code>s:</p>
+<pre><code>&lt;AccordionGroup label="Tracking" icon={Wallet} ...&gt;
+  &lt;SubLink href="/tracking/category"  label="Category"  icon={FolderTree} /&gt;
+  &lt;SubLink href="/tracking/updates"   label="Updates"   icon={RefreshCcw} /&gt;
+  &lt;SubLink href="/tracking/dashboard" label="Dashboard" icon={Table2} /&gt;
+&lt;/AccordionGroup&gt;</code></pre>
+<p><em>(Phase 3)</em> The "Dashboard" <code>SubLink</code> (icon: <code>Table2</code>) is now present, closing the gap this document previously flagged. The Update Tracking List <strong>detail</strong> page (<code>updates/[listId]/page.tsx</code>) still has no sidebar entry of its own — it is reached only by clicking a row on the Updates list page or the "View previous update list" link, and its breadcrumb links back to <code>/tracking/updates</code>. The Dashboard page has no comparable drill-down page, so this is not a gap for it — it has exactly one route.</p>
+
+<h3>9.5 Item detail page — gating nuance</h3>
 <p>The Initial Investment Ledger section on the item detail page is gated on <code>item.initialInvestmentTracking</code> — the persisted value from the React Query cache — <strong>not</strong> the local, possibly-unsaved <code>form.initialInvestmentTracking</code> pending edit. This is intentional: the backend 400s both <code>GET .../running-total</code> and <code>POST .../entries</code> until the item's persisted flag is <code>true</code>, so gating on the pending form value would fire a doomed query the instant the user flips the toggle but before clicking Save. The Yes/No toggle control itself still reflects the pending form value so the user sees their in-progress change.</p>
 
 <hr>
 
-<h2>9. Deployment</h2>
+<h2>10. Deployment</h2>
+<p><em>(Phase 3)</em> No new container, environment variable, or health-check surface — the Dashboard endpoint is served by the same <code>tracking-backend</code> process on the same port as every other Phase 1/2 route, and is covered by the same readiness check (§10.3).</p>
 
-<h3>9.1 Containers</h3>
+<h3>10.1 Containers</h3>
 <table>
   <thead><tr><th>Service</th><th>Image</th><th>Internal port</th><th>Host port</th></tr></thead>
   <tbody>
@@ -431,7 +491,7 @@ item cascades to remove the balance row.</code></pre>
 </table>
 <p>Run command (from the Dockerfile): <code>uvicorn main:app --host 0.0.0.0 --port 8001 --workers 1 --loop uvloop --http httptools</code>. Single worker in Phase 1 — no distributed-lock or multi-worker concern currently applies to this service (it has no in-process concurrency guard equivalent to the main backend's daily-performance backfill lock, but has not been load-tested for >1 worker either).</p>
 
-<h3>9.2 Environment variables</h3>
+<h3>10.2 Environment variables</h3>
 <table>
   <thead><tr><th>Variable</th><th>Set where</th><th>Notes</th></tr></thead>
   <tbody>
@@ -439,28 +499,28 @@ item cascades to remove the balance row.</code></pre>
     <tr><td><code>API_PREFIX</code></td><td><code>docker-compose.yml</code> environment block</td><td><code>/api/v1/tracking</code></td></tr>
     <tr><td><code>DATABASE_URL</code></td><td><code>docker-compose.yml</code></td><td>Same Postgres instance/db as <code>backend</code>, separate connection pool (size 10, max overflow 5)</td></tr>
     <tr><td><code>REDIS_URL</code></td><td><code>docker-compose.yml</code></td><td>Same Redis instance/db as <code>backend</code> — required for the blacklist check</td></tr>
-    <tr><td><code>CORS_ORIGINS</code></td><td><code>docker-compose.yml</code></td><td><code>["*"]</code> in dev — browser never calls this service directly, only through the Next.js proxy (see §8.1 gap)</td></tr>
+    <tr><td><code>CORS_ORIGINS</code></td><td><code>docker-compose.yml</code></td><td><code>["*"]</code> in dev — browser never calls this service directly, only through the Next.js proxy (see §9.1 gap)</td></tr>
     <tr><td><code>LOG_LEVEL</code></td><td><code>docker-compose.yml</code></td><td><code>INFO</code></td></tr>
   </tbody>
 </table>
 
-<h3>9.3 Health checks</h3>
+<h3>10.3 Health checks</h3>
 <p><code>GET /api/v1/tracking/health/live</code> — pure liveness, never touches the DB or Redis, always returns <code>{"status": "ok"}</code> so Kubernetes/Docker cannot kill a healthy process during a transient dependency blip.</p>
 <p><code>GET /api/v1/tracking/health/ready</code> — checks both Postgres (<code>SELECT 1</code>) and Redis (<code>PING</code>); returns HTTP 503 with a per-dependency <code>checks</code> object if either fails.</p>
 
-<h3>9.4 Observability</h3>
+<h3>10.4 Observability</h3>
 <p>Structured JSON logging via <code>structlog</code> (mirrors the main backend's setup, duplicated rather than imported). Every log line carries <code>service_name="tracking-backend"</code> so aggregated logs can be filtered to this service specifically. <code>RequestContextMiddleware</code> binds <code>request_id</code>/<code>correlation_id</code> (from incoming <code>X-Request-ID</code>/<code>X-Correlation-ID</code> headers, or newly generated) into structlog's contextvars for the duration of each request, and echoes both back as response headers. <code>SecurityHeadersMiddleware</code> sets <code>X-Content-Type-Options</code>, <code>X-Frame-Options: DENY</code>, <code>Referrer-Policy</code>, and a restrictive <code>Content-Security-Policy</code> on every response.</p>
 
 <hr>
 
-<h2>10. Known gaps and technical debt</h2>
+<h2>11. Known gaps and technical debt</h2>
 <table>
   <thead><tr><th>ID</th><th>Description</th><th>Impact</th></tr></thead>
   <tbody>
     <tr>
       <td><span class="badge red">TD-FT-01</span></td>
-      <td>The Next.js proxy does not route <code>/api/v1/tracking/*</code> requests to <code>tracking-backend</code> — see §8.1. No <code>TRACKING_BACKEND_URL</code> exists anywhere.</td>
-      <td>Every tracking API call in the Docker Compose deployment currently 404s against the main backend, including all 7 new Phase 2 Update Tracking List endpoints — this gap was not introduced by Phase 2 but applies equally to it. Release blocker.</td>
+      <td>The Next.js proxy does not route <code>/api/v1/tracking/*</code> requests to <code>tracking-backend</code> — see §9.1. No <code>TRACKING_BACKEND_URL</code> exists anywhere.</td>
+      <td>Every tracking API call in the Docker Compose deployment currently 404s against the main backend, including all 7 Phase 2 Update Tracking List endpoints and the Phase 3 Dashboard endpoint — this gap was not introduced by Phase 2 or Phase 3 but applies equally to both. Release blocker.</td>
     </tr>
     <tr>
       <td><span class="badge yellow">TD-FT-02</span></td>
@@ -484,7 +544,7 @@ item cascades to remove the balance row.</code></pre>
     </tr>
     <tr>
       <td><span class="badge yellow">TD-FT-06</span></td>
-      <td><em>(Phase 2)</em> The Update Tracking List detail response names its ordering field <code>orderIndex</code>, while every other Phase 1 response (<code>CategoryOut</code>, <code>SubCategoryOut</code>, <code>TrackingItemOut</code>) aliases the same underlying column to <code>order</code> — a deliberate, reviewed choice for this specific composite (§8.2.1), not an oversight, but it means the same underlying database column is exposed under two different field names depending on which endpoint returned it.</td>
+      <td><em>(Phase 2)</em> The Update Tracking List detail response names its ordering field <code>orderIndex</code>, while every other Phase 1 response (<code>CategoryOut</code>, <code>SubCategoryOut</code>, <code>TrackingItemOut</code>) aliases the same underlying column to <code>order</code> — a deliberate, reviewed choice for this specific composite (§9.2.1), not an oversight, but it means the same underlying database column is exposed under two different field names depending on which endpoint returned it. The Phase 3 Dashboard response (§8) follows the same <code>orderIndex</code> convention as this composite, for consistency with the other nested-hierarchy response rather than with the flat Category/SubCategory/TrackingItem endpoints.</td>
       <td>A frontend or integration developer working across both parts of the API must remember which name applies where; there is no single shared naming convention for <code>order_index</code> across the whole service.</td>
     </tr>
     <tr>

@@ -3,7 +3,7 @@ import {
   trackingService,
   TRACKING_ITEM_TYPES,
   type TrackingSet, type Category, type SubCategory, type TrackingItem,
-  type Entry, type RunningTotal,
+  type Entry, type RunningTotal, type DashboardBalanceGridOut,
 } from '@/services/tracking'
 import { apiClient, extractApiError } from '@/services/api'
 
@@ -282,6 +282,51 @@ describe('trackingService — Ledger entries', () => {
 
     expect(mockedGet).toHaveBeenCalledWith('/tracking/items/i1/running-total')
     expect(result).toEqual(runningTotal)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+describe('trackingService — Dashboard', () => {
+  it('getBalanceGrid calls GET /tracking/sets/{setId}/dashboard/balance-grid and returns the typed grid', async () => {
+    const grid: DashboardBalanceGridOut = {
+      trackingSetId: 's1',
+      years: [{ year: 2026, quarters: [1, 2, 3, 4] }],
+      categories: [],
+      grandTotal: [
+        { year: 2026, quarter: 1, balance: 1000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+        { year: 2026, quarter: 2, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+        { year: 2026, quarter: 3, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+        { year: 2026, quarter: 4, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+      ],
+      propertyBreakdown: {
+        propertyTotal: [
+          { year: 2026, quarter: 1, balance: 500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+          { year: 2026, quarter: 2, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+          { year: 2026, quarter: 3, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+          { year: 2026, quarter: 4, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+        ],
+        nonPropertyTotal: [
+          { year: 2026, quarter: 1, balance: 500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+          { year: 2026, quarter: 2, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+          { year: 2026, quarter: 3, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+          { year: 2026, quarter: 4, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+        ],
+      },
+    }
+    mockedGet.mockResolvedValueOnce({ data: grid })
+
+    const result = await trackingService.getBalanceGrid('s1')
+
+    expect(mockedGet).toHaveBeenCalledWith('/tracking/sets/s1/dashboard/balance-grid')
+    expect(result).toEqual(grid)
+  })
+
+  it('propagates errors from the API client for getBalanceGrid', async () => {
+    mockedGet.mockRejectedValueOnce(new Error('Network error'))
+    await expect(trackingService.getBalanceGrid('s1')).rejects.toThrow('Network error')
   })
 })
 

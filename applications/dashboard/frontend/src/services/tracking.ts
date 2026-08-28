@@ -82,6 +82,76 @@ export interface RunningTotal {
   entries: (Entry & { runningTotal: number })[]
 }
 
+// ── Dashboard balance grid (Financial Tracker Phase 3) ───────────────────────
+// Read-only quarterly/yearly rollup grid. Every `cells`/`subtotal`/
+// `grandTotal`/`propertyTotal`/`nonPropertyTotal` array below has exactly
+// `years.length * 4` entries, positionally aligned to iterating `years`
+// top-to-bottom then `[1,2,3,4]` per year — the page renders the header once
+// from `years` and zips every row's array against that same flattened index,
+// with zero client-side date/quarter matching.
+
+/** One balance snapshot cell for a single (year, quarter) column. */
+export interface BalanceCell {
+  year: number
+  quarter: number // 1-4
+  balance: number | null
+  deltaAmount: number | null
+  deltaPercent: number | null
+  hasData: boolean
+  hasPreviousData: boolean
+}
+
+/** One year's column-group header — `quarters` is always `[1, 2, 3, 4]`. */
+export interface DashboardYearColumn {
+  year: number
+  quarters: number[]
+}
+
+export interface DashboardItemRow {
+  id: string
+  name: string
+  type: string
+  orderIndex: number
+  exclusive: boolean
+  /** Positionally aligned to the flattened `years x quarters` order — see module header. */
+  cells: BalanceCell[]
+}
+
+export interface DashboardSubCategoryRow {
+  id: string
+  name: string
+  orderIndex: number
+  items: DashboardItemRow[]
+  /** Positionally aligned to the flattened `years x quarters` order — see module header. */
+  subtotal: BalanceCell[]
+}
+
+export interface DashboardCategoryRow {
+  id: string
+  name: string
+  orderIndex: number
+  subCategories: DashboardSubCategoryRow[]
+  /** Positionally aligned to the flattened `years x quarters` order — see module header. */
+  subtotal: BalanceCell[]
+}
+
+export interface DashboardPropertyBreakdown {
+  /** Positionally aligned to the flattened `years x quarters` order — see module header. */
+  propertyTotal: BalanceCell[]
+  /** Positionally aligned to the flattened `years x quarters` order — see module header. */
+  nonPropertyTotal: BalanceCell[]
+}
+
+export interface DashboardBalanceGridOut {
+  trackingSetId: string
+  /** Descending by year — the page renders columns in this order verbatim, without re-sorting. */
+  years: DashboardYearColumn[]
+  categories: DashboardCategoryRow[]
+  /** Positionally aligned to the flattened `years x quarters` order — see module header. */
+  grandTotal: BalanceCell[]
+  propertyBreakdown: DashboardPropertyBreakdown
+}
+
 // ── Input payloads ────────────────────────────────────────────────────────────
 // Server-managed fields (id, order, createdAt, updatedAt) are never sent by the client.
 
@@ -246,5 +316,11 @@ export const trackingService = {
   async getRunningTotal(itemId: string): Promise<RunningTotal> {
     const { data } = await apiClient.get(p(`/items/${itemId}/running-total`))
     return data as RunningTotal
+  },
+
+  // Dashboard ──────────────────────────────────────────────────────────────
+  async getBalanceGrid(setId: string): Promise<DashboardBalanceGridOut> {
+    const { data } = await apiClient.get(p(`/sets/${setId}/dashboard/balance-grid`))
+    return data as DashboardBalanceGridOut
   },
 }

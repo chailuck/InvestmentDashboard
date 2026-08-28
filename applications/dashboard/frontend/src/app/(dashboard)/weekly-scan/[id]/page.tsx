@@ -1094,7 +1094,16 @@ export default function WeeklyScanPage() {
                     </td>
                     <td className="px-3 py-2">
                       <StrategyCell value={item.strategy}
-                        onChange={v => updateField(item.symbol, { strategy: v })} />
+                        onChange={v => updateField(
+                          item.symbol,
+                          // Picking a strategy on a row with no color yet defaults it to
+                          // YELLOW (Watch) so the item doesn't stay stuck "Unreviewed"
+                          // just because the user went straight to Strategy. Clearing a
+                          // strategy (v === null) never touches color_mark.
+                          v !== null && !item.color_mark
+                            ? { strategy: v, color_mark: 'YELLOW' }
+                            : { strategy: v },
+                        )} />
                     </td>
                     {/* Previous scan: color + strategy combined */}
                     {(() => {

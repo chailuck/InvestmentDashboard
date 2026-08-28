@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Functional Specification</h1>
 
-<p><strong>Version:</strong> 2.0 (Phase 1 + Phase 2) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-25 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code></p>
+<p><strong>Version:</strong> 3.0 (Phase 1 + Phase 2 + Phase 3) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-28 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code>, <code>/tracking/dashboard</code></p>
 
 <hr>
 
@@ -48,20 +48,20 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 
 <p>A user can maintain multiple independent Tracking Sets — for example, a personal set and a family set — each with its own category tree. A tracking set belongs to exactly one user; it is never shared or visible to other users.</p>
 
-<div class="callout">This document covers <strong>Phase 1</strong> (creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger — §3–§9) and <strong>Phase 2</strong> (the "Updates" sub-menu — periodic balance snapshots against a tracking set's hierarchy — §11). The "Dashboard" sub-feature described in the original requirements is <strong>still a future phase and has not been built yet</strong> — see §12.</div>
+<div class="callout">This document covers <strong>Phase 1</strong> (creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger — §3–§9), <strong>Phase 2</strong> (the "Updates" sub-menu — periodic balance snapshots against a tracking set's hierarchy — §11), and <strong>Phase 3</strong> (the "Dashboard" sub-menu — a read-only quarterly/yearly balance-grid rollup built from the data captured by Updates — §12).</div>
 
 <hr>
 
 <h2>2. Navigation</h2>
-<p>The sidebar shows a <strong>Tracking</strong> accordion group (positioned directly below Action Plan, above Analytics) that expands to reveal two sub-links:</p>
+<p>The sidebar shows a <strong>Tracking</strong> accordion group (positioned directly below Action Plan, above Analytics) that expands to reveal three sub-links:</p>
 <table>
   <thead><tr><th>Sub-link</th><th>Route</th><th>Purpose</th></tr></thead>
   <tbody>
     <tr><td>Category</td><td><code>/tracking/category</code></td><td>Manage Tracking Sets, Categories, Sub-categories, and Tracking Items</td></tr>
     <tr><td>Updates</td><td><code>/tracking/updates</code></td><td>Record and review periodic balance snapshots ("Update Tracking Lists") — see §11</td></tr>
+    <tr><td>Dashboard</td><td><code>/tracking/dashboard</code></td><td>Read-only quarterly/yearly balance-grid rollup across the whole tracking set — see §12</td></tr>
   </tbody>
 </table>
-<div class="callout warn">There is no "Dashboard" sub-link yet — the quarterly/annual rollup reporting view is planned for a later phase (§12).</div>
 
 <hr>
 
@@ -187,6 +187,11 @@ Liabilities
     <tr><td>Update Tracking List balance save</td><td>All-or-nothing per Save All click; every submitted tracking item id must belong to the list's own tracking set</td></tr>
     <tr><td>Delta calculation</td><td>Computed fresh on every page load against the chronologically previous list in the same set; never stored</td></tr>
     <tr><td>Delta with zero previous balance</td><td>Amount shown; percent suppressed (undefined), never displayed as a misleading 0%</td></tr>
+    <tr><td>Dashboard grid columns</td><td>Every year that has at least one quarter of data gets all 4 quarters shown, even quarters with no data (§12.3)</td></tr>
+    <tr><td>Dashboard delta comparison point</td><td>The nearest EARLIER quarter with real data for that same row — not necessarily the immediately preceding column; blank quarters are skipped and year boundaries are crossed freely (§12.6)</td></tr>
+    <tr><td>Dashboard duplicate (year, quarter) Update Tracking Lists</td><td>The most-recently-created list for that slot wins; all others are ignored for the Dashboard only (§12.3)</td></tr>
+    <tr><td>Dashboard subtotal/total "at least one populated" rule</td><td>A subtotal cell is populated as soon as one contributing item has data that quarter; it is never blanked just because a sibling item has no history yet (§12.4)</td></tr>
+    <tr><td>Dashboard Exclusive-item rollup exclusion</td><td>An Exclusive item still shows as its own row, but is left out of every subtotal, the Grand Total, and the Property/Non-Property breakdown (§12.7)</td></tr>
   </tbody>
 </table>
 
@@ -253,12 +258,47 @@ Liabilities
 
 <hr>
 
-<h2>12. Not yet built — future phase</h2>
-<p>The original requirements for this feature also described a "Dashboard" sub-menu. It does not exist in the product today; noted here only so readers of this spec know it is intentionally out of scope for Phase 1 and Phase 2, not an oversight:</p>
+<h2>12. Dashboard ("Dashboard" sub-menu) — Phase 3</h2>
+<p>The <strong>Dashboard</strong> sub-link gives a user a single, read-only report that rolls up every balance ever recorded via the Updates sub-menu (§11) into one quarterly/yearly grid, laid out with the same Category → Sub-category → Tracking Item hierarchy used everywhere else in the Financial Tracker. It answers "how has my net worth (or any category of it) moved, quarter by quarter and year by year?" without the user having to open each Update Tracking List individually and compare figures by hand.</p>
+
+<h3>12.1 Dashboard page (<code>/tracking/dashboard</code>)</h3>
+<p>The page opens with the same kind of Tracking Set selector used on the Category and Updates pages (§12.2). Once a set is selected, the page loads and renders a single wide table — the balance grid (§12.3) — beneath the selector. The table scrolls horizontally when it is wider than the screen, since a tracking set with several years of history produces a genuinely wide grid; nothing about the page shrinks or reflows the columns to force a fit.</p>
+<p>The page has no forms, no editable fields, and no save action anywhere — it is a report, not an editor. Balances are entered and corrected exclusively from the Updates sub-menu (§11); the Dashboard only ever displays what has already been recorded there.</p>
+
+<h3>12.2 Tracking Set selector</h3>
+<p>Identical in behaviour to the selector on the Category and Updates pages: it defaults to the user's first Tracking Set once the list of sets has loaded, and switching the selection immediately reloads the grid for the newly chosen set. If the user has no tracking sets yet, the page invites them to create one from the Category page first, since there is nothing to report on otherwise.</p>
+
+<h3>12.3 The grid layout — years and quarters</h3>
+<p>Columns are grouped by year, with years ordered <strong>most recent first</strong> (descending), reading left to right. Every year that appears has all four quarters (Q1 through Q4) shown as its own pair of columns — a Balance column and a Delta column — even for a quarter that has no recorded snapshot at all. A year only appears in the grid if the tracking set has at least one Update Tracking List for that year with both a quarter and a year value saved on it (see §11.2 for how those are set); a year is never partially shown with some quarters silently missing from the column set.</p>
+<p>If two different Update Tracking Lists were both tagged with the same year and quarter (for example, two snapshots both labelled "Q3 2026" — allowed by design, §11.1), the grid shows exactly one of them for that quarter: whichever one was created most recently. The other is simply not used for this report; it remains fully visible and editable on the Updates page as always.</p>
+<p>Rows follow the same Category → Sub-category → Tracking Item hierarchy as the Category and Updates pages, always reflecting the <strong>current</strong> structure — the same "always current, never a point-in-time snapshot" behaviour already established for the Updates detail page (§11.5) applies here too.</p>
+
+<h3>12.4 Subtotal rows</h3>
+<p>Beneath each Sub-category's items, and beneath each Category's sub-categories, a bold subtotal row shows that group's combined balance and delta for every quarter — the sum of every non-Exclusive item beneath it that has data for that quarter (see §12.7 for how Exclusive items are treated). A subtotal cell is populated as soon as at least one item in the group has a value for that quarter; a subtotal is never left blank merely because one sibling item happens to have no history yet.</p>
+<p>Below the full category tree, a single <strong>Grand Total</strong> row sums every non-Exclusive item in the entire tracking set, followed by two secondary rows — <strong>Property Total</strong> and <strong>Non-Property Total</strong> — which split that same Grand Total between Tracking Items of type Property and everything else, again excluding Exclusive items. These two rows are a convenience breakdown; they always add up to the Grand Total for any populated quarter.</p>
+
+<h3>12.5 Collapse and expand controls</h3>
+<p>Each Category's and each Sub-category's own row doubles as its collapse/expand toggle — clicking it hides or reveals the rows beneath it (a Sub-category's items, or a Category's sub-categories and everything beneath them). Collapsing a group never hides that group's own subtotal row; the subtotal stays visible so the rolled-up figures remain useful even while the detail underneath is tucked away.</p>
+<p>Independently, each year's column header has its own collapse toggle: collapsing a year genuinely removes its eight columns (four quarters × Balance+Delta) from the table rather than merely hiding them with styling, so a user can shrink the grid down to just the years they currently care about. A collapsed year's header remains visible as a single narrow re-expand target.</p>
+<p>A global <strong>Detail</strong> / <strong>Summary</strong> button pair sits above the grid and bulk-toggles every Category and Sub-category at once — <strong>Detail</strong> expands everything, <strong>Summary</strong> collapses every group down to just its subtotal row. This is a bulk convenience layered on top of the per-row toggles, not a replacement for them: after clicking Summary, a user can still re-expand one Category individually by clicking it, without affecting any other group's collapsed state. The grid loads fully expanded (Detail) by default. The global toggle does not affect year-column collapsing, which is controlled solely by each year's own header button.</p>
+
+<h3>12.6 Blank quarters and the "no data" convention</h3>
+<p>A quarter for which no data exists for a given row — whether because no snapshot was ever recorded for that quarter, or because this particular item/subtotal simply had nothing to report that quarter — shows as a dash ("–") in its Balance cell rather than a blank cell or a zero. A zero is a real, meaningful recorded balance and is always shown as "0.00", never conflated with "no data".</p>
+<p>The Delta cell for a row follows the same convention as the Updates page (§11.4): comparing this quarter's balance against the <strong>nearest earlier quarter that actually has data for that same row</strong> — not necessarily the column immediately to its left. A blank quarter in between is simply skipped when looking backward for a comparison point, and the search freely crosses from one year into the previous year if that is where the nearest real data point happens to be. If no earlier populated quarter exists at all for that row (e.g. the very first quarter it ever has data), the Delta cell shows "No prior data" rather than a fabricated change. As on the Updates page, a comparison against a previous balance of exactly zero still shows the signed amount changed, but suppresses the percentage (a percentage change from zero is not a meaningful number).</p>
+
+<h3>12.7 The Exclusive flag's effect on the Dashboard</h3>
+<p>A Tracking Item with its <strong>Exclusive</strong> flag (§8) set to Yes still appears as its own row in the grid, with its own balances and deltas shown normally — it is visually marked with a small "Excl." badge next to its name so this is clear at a glance. However, it is left out of every rollup figure above it: its Sub-category's subtotal, its Category's subtotal, the Grand Total, and the Property/Non-Property breakdown all compute as if that item were not present. This is the first functional use of the Exclusive flag anywhere in the Financial Tracker — in Phase 1 it was reserved but had no effect (§8).</p>
+
+<h3>12.8 Read-only by design</h3>
+<p>Every figure on this page is derived, on the fly, from the Update Tracking Lists already recorded via the Updates sub-menu. There is nothing to type, nothing to save, and no action on this page changes any stored data. If a figure looks wrong, the fix is always made on the Updates page against the relevant snapshot (§11.3) — the Dashboard will reflect that correction the next time it is loaded.</p>
+
+<h3>12.9 Out of scope for this phase</h3>
+<p>A few ideas from the original requirements were deliberately not built as part of this phase — noted here so readers know these are intentional scope decisions, not gaps:</p>
 <ul>
-  <li><strong>"Dashboard" sub-menu</strong> — a planned reporting view to show balances rolled up by category/sub-category/item across quarters and years, using the data captured by the Update Tracking Lists described in §11.</li>
+  <li>The reference spreadsheet's bespoke "Actual asset / Real estate / Total asset" three-way split is not implemented; only the Property vs. Non-Property breakdown described in §12.4 is available.</li>
+  <li>Free-text annotations on individual grid cells are not supported.</li>
+  <li>An alternate layout — "every quarter in a single row" rather than grouped by year — was mentioned as an option in the original requirements but was not built; only the year-grouped grid described in §12.3 exists.</li>
 </ul>
-<div class="callout warn">No schema, API, or UI for this future feature exists anywhere in the current codebase. Do not treat any table, endpoint, or component name in this documentation set as an implementation of it.</div>
 
 </body>
 </html>

@@ -35,11 +35,11 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
 <h1>API Spec — Financial Tracker</h1>
 
 <div class="obj">
-<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1), and Update Tracking Lists with read-time balance deltas (Phase 2). Served by the independent <code>tracking-backend</code> microservice. No "Dashboard" (quarterly/annual rollup reporting) endpoints exist yet. All routes are mounted under <code>/api/v1/tracking</code>.
+<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1); Update Tracking Lists with read-time balance deltas (Phase 2); and a read-only quarterly/yearly balance-grid rollup report (Phase 3). Served by the independent <code>tracking-backend</code> microservice. All routes are mounted under <code>/api/v1/tracking</code>.
 </div>
 
 <div class="err">
-<strong>Deployment note:</strong> the Next.js proxy (<code>frontend/src/app/api/proxy/[...path]/route.ts</code>) does not currently route <code>/api/v1/tracking/*</code> requests to this service — see <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §8.1 / §10 (TD-FT-01). The endpoints below are accurate to the running <code>tracking-backend</code> service reachable directly on port 8001; the browser-facing path through the frontend proxy is not yet wired to it.
+<strong>Deployment note:</strong> the Next.js proxy (<code>frontend/src/app/api/proxy/[...path]/route.ts</code>) does not currently route <code>/api/v1/tracking/*</code> requests to this service — see <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §9.1 / §11 (TD-FT-01). The endpoints below are accurate to the running <code>tracking-backend</code> service reachable directly on port 8001; the browser-facing path through the frontend proxy is not yet wired to it.
 </div>
 
 <h4>Authentication</h4>
@@ -86,6 +86,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/update-lists/{listId}</code></td><td><em>(Phase 2)</em> Delete (cascades to balance rows) (HTTP 204)</td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/update-lists/{listId}/detail</code></td><td><em>(Phase 2)</em> Full current hierarchy with per-item balance + read-time delta</td></tr>
   <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/update-lists/{listId}/balances</code></td><td><em>(Phase 2)</em> Bulk upsert per-item balances (all-or-nothing)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{setId}/dashboard/balance-grid</code></td><td><em>(Phase 3)</em> Read-only quarterly/yearly balance-grid rollup for the whole tracking set</td></tr>
 </table>
 
 <hr>
@@ -485,6 +486,82 @@ Periodic balance snapshots ("updates") against a Tracking Set's category/sub-cat
 <div class="err"><strong>400 Bad Request</strong> — one or more ids don't belong to this list's tracking set: <code>{"detail": "Invalid trackingItemId(s) for this tracking set: &lt;id&gt;, &lt;id&gt;"}</code><br>
 <strong>404 Not Found</strong> — list not found.<br>
 <strong>422 Unprocessable Entity</strong> — malformed body (e.g. missing <code>trackingItemId</code>, non-numeric <code>balance</code>).</div>
+
+<hr>
+
+<h2>Dashboard (Phase 3)</h2>
+
+<div class="obj">
+A single read-only report endpoint that rolls up every balance ever recorded via Update Tracking Lists into one quarterly/yearly grid, following the same Category → Sub-category → Tracking Item hierarchy as every other view in this service. Implemented in <code>app/api/v1/endpoints/dashboard.py</code>, with all aggregation logic in <code>app/services/dashboard_balance_grid.py</code>. No request body, no query parameters beyond the path's <code>setId</code>, and nothing is ever written — every field is recomputed on each call. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §12 for user-facing behaviour and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §8 for the aggregation algorithm.
+</div>
+
+<h3>GET /api/v1/tracking/sets/{setId}/dashboard/balance-grid</h3>
+<p>Returns the tracking set's current category/sub-category/tracking-item hierarchy with a balance-grid cell for every quarter of every year that has at least one Update Tracking List with both <code>year</code> and <code>quarter</code> set. Years are ordered <strong>descending</strong> (most recent first); every year that appears always has all four quarters present in its <code>cells</code>/<code>subtotal</code>/etc. arrays, even a quarter with no recorded data (<code>hasData: false</code>, <code>balance: null</code> — never omitted from the array). Every <code>cells</code>, <code>subtotal</code>, <code>grandTotal</code>, <code>propertyTotal</code>, and <code>nonPropertyTotal</code> array has exactly <code>years.length * 4</code> entries, positionally aligned to iterating <code>years</code> top-to-bottom then quarters <code>[1, 2, 3, 4]</code> ascending for each year — callers should zip against that same flattened index rather than matching on <code>(year, quarter)</code> per cell.</p>
+
+<h4>Response field reference</h4>
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>trackingSetId</code></td><td>UUID</td><td>Echoes the path parameter.</td></tr>
+    <tr><td><code>years[].year</code></td><td>integer</td><td>Descending order — the response's array order IS the intended display order.</td></tr>
+    <tr><td><code>years[].quarters</code></td><td>integer[]</td><td>Always exactly <code>[1, 2, 3, 4]</code>.</td></tr>
+    <tr><td><code>categories[].subCategories[].items[].orderIndex</code></td><td>integer</td><td>Not aliased to <code>order</code> — this composite response follows the same <code>orderIndex</code> convention as the Update Tracking List detail response (see TECHNICAL.html §11 TD-FT-06), not the flat Category/SubCategory/TrackingItem endpoints above.</td></tr>
+    <tr><td><code>...items[].exclusive</code></td><td>boolean</td><td>When <code>true</code>, this item is included as its own row but excluded from every <code>subtotal</code>/<code>grandTotal</code>/<code>propertyTotal</code>/<code>nonPropertyTotal</code> tier that would otherwise contain it.</td></tr>
+    <tr><td><code>cells[].balance</code></td><td>number, nullable</td><td><code>null</code> whenever <code>hasData</code> is <code>false</code> for that quarter.</td></tr>
+    <tr><td><code>cells[].deltaAmount</code> / <code>deltaPercent</code></td><td>number, nullable</td><td>Computed against the <strong>nearest earlier quarter with real data for this same row</strong> — not necessarily the adjacent column; blank quarters are skipped and year boundaries are crossed. <code>deltaPercent</code> is <code>null</code> whenever the comparison balance was exactly <code>0</code> (division-by-zero guard) even though <code>deltaAmount</code> is still populated.</td></tr>
+    <tr><td><code>cells[].hasData</code></td><td>boolean</td><td><code>true</code> only if THIS exact quarter has a real recorded value for this row.</td></tr>
+    <tr><td><code>cells[].hasPreviousData</code></td><td>boolean</td><td><code>true</code> if a nearest-earlier populated quarter was found for the delta comparison — independent of <code>hasData</code> (a blank current quarter can still have <code>hasPreviousData: true</code> from an earlier quarter, though in that case <code>balance</code>/<code>deltaAmount</code> are still <code>null</code> since there is nothing to diff for a blank slot).</td></tr>
+    <tr><td><code>categories[].subtotal</code>, <code>subCategories[].subtotal</code></td><td>Cell[]</td><td>Sums that group's non-Exclusive items for each quarter; populated as soon as at least one contributing item has data that quarter (never blanked just because a sibling has no history).</td></tr>
+    <tr><td><code>grandTotal</code></td><td>Cell[]</td><td>Sums every non-Exclusive item in the whole tracking set.</td></tr>
+    <tr><td><code>propertyBreakdown.propertyTotal</code> / <code>.nonPropertyTotal</code></td><td>Cell[]</td><td>Splits <code>grandTotal</code> by whether the item's <code>type</code> is <code>"Property"</code>; the two always sum to <code>grandTotal</code> for any populated quarter.</td></tr>
+  </tbody>
+</table>
+
+<pre><code>// Response 200
+{
+  "trackingSetId": "b1a2c3d4-...",
+  "years": [
+    { "year": 2026, "quarters": [1, 2, 3, 4] },
+    { "year": 2025, "quarters": [1, 2, 3, 4] }
+  ],
+  "categories": [
+    {
+      "id": "c2b3d4e5-...", "name": "Assets", "orderIndex": 0,
+      "subCategories": [
+        {
+          "id": "d3c4e5f6-...", "name": "Current Assets", "orderIndex": 0,
+          "items": [
+            {
+              "id": "e4d5f6a7-...", "name": "SCB Savings Account", "type": "Bank account",
+              "orderIndex": 0, "exclusive": false,
+              "cells": [
+                { "year": 2026, "quarter": 1, "balance": 110000.00, "deltaAmount": 5000.00, "deltaPercent": 4.76, "hasData": true, "hasPreviousData": true },
+                { "year": 2026, "quarter": 2, "balance": null, "deltaAmount": null, "deltaPercent": null, "hasData": false, "hasPreviousData": true },
+                { "year": 2026, "quarter": 3, "balance": null, "deltaAmount": null, "deltaPercent": null, "hasData": false, "hasPreviousData": true },
+                { "year": 2026, "quarter": 4, "balance": null, "deltaAmount": null, "deltaPercent": null, "hasData": false, "hasPreviousData": true },
+                { "year": 2025, "quarter": 1, "balance": 100000.00, "deltaAmount": null, "deltaPercent": null, "hasData": true, "hasPreviousData": false },
+                { "year": 2025, "quarter": 2, "balance": null, "deltaAmount": null, "deltaPercent": null, "hasData": false, "hasPreviousData": false },
+                { "year": 2025, "quarter": 3, "balance": null, "deltaAmount": null, "deltaPercent": null, "hasData": false, "hasPreviousData": false },
+                { "year": 2025, "quarter": 4, "balance": null, "deltaAmount": null, "deltaPercent": null, "hasData": false, "hasPreviousData": false }
+              ]
+            }
+          ],
+          "subtotal": [ /* same 8-cell shape, summed across this sub-category's non-Exclusive items */ ]
+        }
+      ],
+      "subtotal": [ /* same 8-cell shape, summed across the whole category */ ]
+    }
+  ],
+  "grandTotal": [ /* same 8-cell shape, whole tracking set */ ],
+  "propertyBreakdown": {
+    "propertyTotal": [ /* same 8-cell shape, type == "Property" only */ ],
+    "nonPropertyTotal": [ /* same 8-cell shape, type != "Property" only */ ]
+  }
+}</code></pre>
+<div class="obj">
+<strong>Reading the 2026-Q1 example above:</strong> the item had 100000.00 in 2025-Q1 and nothing recorded again until 110000.00 in 2026-Q1. 2026-Q1's delta (+5000.00, +4.76%) is computed against 2025-Q1 — the nearest earlier populated quarter — not against the immediately preceding column (2025-Q4, which is blank). Every blank quarter in between still carries <code>hasPreviousData: true</code> because a real earlier value (2025-Q1) exists somewhere further back, even though that blank quarter itself has no <code>balance</code> to show.
+</div>
+<div class="err"><strong>404 Not Found</strong> — tracking set does not exist or belongs to another user (same bare-404, never-403 ownership pattern as every other resource): <code>{"detail": "Tracking set not found"}</code></div>
 
 <hr>
 

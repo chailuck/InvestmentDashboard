@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen, fireEvent } from '@testing-library/react'
+import { screen, fireEvent, within } from '@testing-library/react'
 import { render } from '@/test/test-utils'
 import { Sidebar } from '../Sidebar'
 
@@ -85,7 +85,7 @@ describe('Sidebar — Tracking navigation entry', () => {
     expect(screen.queryByRole('link', { name: 'Category' })).not.toBeInTheDocument()
   })
 
-  it('reveals "Category" and "Updates" sublinks, in that order, once expanded', async () => {
+  it('reveals "Category", "Updates", and "Dashboard" sublinks, in that order, once expanded', async () => {
     render(<Sidebar {...defaultProps} />)
     await screen.findByText('Action Plan')
 
@@ -97,29 +97,33 @@ describe('Sidebar — Tracking navigation entry', () => {
     const updatesLink = await screen.findByRole('link', { name: 'Updates' })
     expect(updatesLink).toHaveAttribute('href', '/tracking/updates')
 
-    // Phase 2 scope only — no "Tracking Dashboard" sub-menu yet.
-    expect(screen.queryByRole('link', { name: /Tracking Dashboard/i })).not.toBeInTheDocument()
-
-    // Category renders before Updates in the accordion.
+    // "Dashboard" also names the top-level `/dashboard` NavLink, so scope
+    // this lookup to the Tracking accordion's own nested list.
     const trackingButton = screen.getByRole('button', { name: /Tracking/i })
     const trackingGroup = trackingButton.parentElement!
+    const dashboardLink = within(trackingGroup).getByRole('link', { name: 'Dashboard' })
+    expect(dashboardLink).toHaveAttribute('href', '/tracking/dashboard')
+
+    // Category, Updates, Dashboard render in that order in the accordion.
     const linkTexts = Array.from(trackingGroup.querySelectorAll('a')).map(a => a.textContent)
     expect(linkTexts.indexOf('Category')).toBeLessThan(linkTexts.indexOf('Updates'))
+    expect(linkTexts.indexOf('Updates')).toBeLessThan(linkTexts.indexOf('Dashboard'))
   })
 
-  it('does not render extra sublinks under Tracking beyond Category and Updates', async () => {
+  it('does not render extra sublinks under Tracking beyond Category, Updates, and Dashboard', async () => {
     render(<Sidebar {...defaultProps} />)
     await screen.findByText('Action Plan')
 
     fireEvent.click(screen.getByRole('button', { name: /Tracking/i }))
     await screen.findByRole('link', { name: 'Category' })
 
-    // The Tracking group's nested list should contain exactly two links.
+    // The Tracking group's nested list should contain exactly three links.
     const trackingButton = screen.getByRole('button', { name: /Tracking/i })
     const trackingGroup = trackingButton.parentElement!
     const links = trackingGroup.querySelectorAll('a')
-    expect(links).toHaveLength(2)
+    expect(links).toHaveLength(3)
     expect(links[0]).toHaveTextContent('Category')
     expect(links[1]).toHaveTextContent('Updates')
+    expect(links[2]).toHaveTextContent('Dashboard')
   })
 })
