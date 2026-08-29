@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, status
@@ -65,6 +66,75 @@ async def get_current_user_id(
         )
 
     return str(payload["sub"])
+
+
+@dataclass(frozen=True)
+class CurrentUser:
+    """Lightweight identity carrier for endpoints that need the caller's email
+    without a DB round-trip (e.g. to use as an email digest recipient).
+
+    Additive alongside ``get_current_user_id`` — does not replace it. Do not
+    change ``get_current_user_id``'s return shape; it is depended on by many
+    other endpoints.
+    """
+
+    id: str
+    email: str
+
+
+async def get_current_user_with_email(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> CurrentUser:
+    """Mirrors ``get_current_user_id``'s validation exactly (decode, jti check,
+    Redis blacklist check) but also extracts the ``email`` claim from the
+    token payload, raising 401 if it is missing.
+    """
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication credentials",
+        )
+    try:
+        payload = verify_token(credentials.credentials)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
+
+    jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing jti claim",
+        )
+
+    # Check Redis blacklist — fail closed if Redis is unavailable
+    try:
+        r = await get_redis()
+        is_blacklisted = await r.exists(f"{BLACKLIST_KEY_PREFIX}{jti}")
+    except aioredis.RedisError as exc:
+        _log.error("Redis unavailable during auth blacklist check", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        ) from exc
+
+    if is_blacklisted:
+        _log.warning("Rejected blacklisted token", jti=jti)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+        )
+
+    email = payload.get("email")
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing email claim",
+        )
+
+    return CurrentUser(id=str(payload["sub"]), email=email)
 
 
 async def get_current_user(

@@ -874,9 +874,9 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
           open={trackingOpen}
           onToggle={() => setTrackingOpen(o => !o)}
         >
-          <SubLink href="/tracking/category" label="Category" icon={FolderTree} />
-          <SubLink href="/tracking/updates" label="Updates" icon={RefreshCcw} />
           <SubLink href="/tracking/dashboard" label="Dashboard" icon={Table2} />
+          <SubLink href="/tracking/updates" label="Updates" icon={RefreshCcw} />
+          <SubLink href="/tracking/category" label="Category" icon={FolderTree} />
         </AccordionGroup>
         <AccordionGroup
           label="Analytics" icon={BarChart3}

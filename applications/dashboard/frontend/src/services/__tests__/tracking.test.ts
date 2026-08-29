@@ -3,7 +3,7 @@ import {
   trackingService,
   TRACKING_ITEM_TYPES,
   type TrackingSet, type Category, type SubCategory, type TrackingItem,
-  type Entry, type RunningTotal, type DashboardBalanceGridOut,
+  type Entry, type RunningTotal, type DashboardBalanceGridOut, type TrackingSetExport,
 } from '@/services/tracking'
 import { apiClient, extractApiError } from '@/services/api'
 
@@ -327,6 +327,38 @@ describe('trackingService — Dashboard', () => {
   it('propagates errors from the API client for getBalanceGrid', async () => {
     mockedGet.mockRejectedValueOnce(new Error('Network error'))
     await expect(trackingService.getBalanceGrid('s1')).rejects.toThrow('Network error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Full backup export (Email Dashboard feature)
+// ---------------------------------------------------------------------------
+
+describe('trackingService — Export', () => {
+  it('getExport calls GET /tracking/sets/{setId}/export and returns the typed export envelope', async () => {
+    const exportData: TrackingSetExport = {
+      exportVersion: 1,
+      exportedAt: '2026-08-24T00:00:00Z',
+      trackingSet: { id: 's1', name: 'My Set', description: null, createdAt: '', updatedAt: '' },
+      categories: [{ id: 'c1' }],
+      subCategories: [],
+      trackingItems: [],
+      updateTrackingLists: [],
+      updateTrackingListBalances: [],
+      initialInvestmentEntries: [],
+    }
+    mockedGet.mockResolvedValueOnce({ data: exportData })
+
+    const result = await trackingService.getExport('s1')
+
+    expect(mockedGet).toHaveBeenCalledWith('/tracking/sets/s1/export')
+    expect(result).toEqual(exportData)
+  })
+
+  it('propagates a 404 for a missing/not-owned tracking set', async () => {
+    const err = { isAxiosError: true, response: { status: 404, data: { detail: 'Tracking set not found' } } }
+    mockedGet.mockRejectedValueOnce(err)
+    await expect(trackingService.getExport('missing')).rejects.toEqual(err)
   })
 })
 

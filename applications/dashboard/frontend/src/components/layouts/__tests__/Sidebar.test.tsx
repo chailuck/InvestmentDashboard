@@ -85,7 +85,7 @@ describe('Sidebar — Tracking navigation entry', () => {
     expect(screen.queryByRole('link', { name: 'Category' })).not.toBeInTheDocument()
   })
 
-  it('reveals "Category", "Updates", and "Dashboard" sublinks, in that order, once expanded', async () => {
+  it('reveals "Dashboard", "Updates", and "Category" sublinks, in that order, once expanded', async () => {
     render(<Sidebar {...defaultProps} />)
     await screen.findByText('Action Plan')
 
@@ -104,13 +104,13 @@ describe('Sidebar — Tracking navigation entry', () => {
     const dashboardLink = within(trackingGroup).getByRole('link', { name: 'Dashboard' })
     expect(dashboardLink).toHaveAttribute('href', '/tracking/dashboard')
 
-    // Category, Updates, Dashboard render in that order in the accordion.
+    // Dashboard, Updates, Category render in that order in the accordion.
     const linkTexts = Array.from(trackingGroup.querySelectorAll('a')).map(a => a.textContent)
-    expect(linkTexts.indexOf('Category')).toBeLessThan(linkTexts.indexOf('Updates'))
-    expect(linkTexts.indexOf('Updates')).toBeLessThan(linkTexts.indexOf('Dashboard'))
+    expect(linkTexts.indexOf('Dashboard')).toBeLessThan(linkTexts.indexOf('Updates'))
+    expect(linkTexts.indexOf('Updates')).toBeLessThan(linkTexts.indexOf('Category'))
   })
 
-  it('does not render extra sublinks under Tracking beyond Category, Updates, and Dashboard', async () => {
+  it('does not render extra sublinks under Tracking beyond Dashboard, Updates, and Category', async () => {
     render(<Sidebar {...defaultProps} />)
     await screen.findByText('Action Plan')
 
@@ -122,8 +122,8 @@ describe('Sidebar — Tracking navigation entry', () => {
     const trackingGroup = trackingButton.parentElement!
     const links = trackingGroup.querySelectorAll('a')
     expect(links).toHaveLength(3)
-    expect(links[0]).toHaveTextContent('Category')
+    expect(links[0]).toHaveTextContent('Dashboard')
     expect(links[1]).toHaveTextContent('Updates')
-    expect(links[2]).toHaveTextContent('Dashboard')
+    expect(links[2]).toHaveTextContent('Category')
   })
 })

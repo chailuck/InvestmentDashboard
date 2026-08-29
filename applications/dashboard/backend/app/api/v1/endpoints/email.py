@@ -9,15 +9,17 @@ Routes (all under /api/v1/email):
 
 from __future__ import annotations
 
+import base64
+import binascii
 import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_current_user_id
+from app.auth.dependencies import CurrentUser, get_current_user_id, get_current_user_with_email
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.database.session import get_db
@@ -94,6 +96,48 @@ class SendResultResponse(BaseModel):
             price_refresh_duration_seconds=pr.duration_seconds if pr else None,
             error=result.error,
         )
+
+
+class SendExportRequest(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=200)
+    html_body: str = Field(..., min_length=1)
+    attachment_filename: str = Field(..., min_length=1, max_length=255)
+    attachment_content: str = Field(..., min_length=1)  # base64-encoded JSON bytes
+
+    @field_validator("attachment_filename")
+    @classmethod
+    def _safe_filename(cls, v: str) -> str:
+        if any(c in v for c in ("/", "\\", "\r", "\n")) or not v.endswith(".json"):
+            raise ValueError("attachment_filename must be a bare '*.json' name")
+        return v
+
+    @field_validator("subject")
+    @classmethod
+    def _no_crlf_subject(cls, v: str) -> str:
+        # A mail Subject header must be a single line — CR/LF would allow
+        # header injection (extra headers, e.g. a spoofed Bcc). Kept in
+        # parity with attachment_filename's guard even though the recipient
+        # is fixed to the JWT-derived email today.
+        if "\r" in v or "\n" in v:
+            raise ValueError("subject must not contain CR or LF characters")
+        return v
+
+    @field_validator("html_body")
+    @classmethod
+    def _no_nul_bytes(cls, v: str) -> str:
+        # html_body is a full HTML document and legitimately contains
+        # newlines, so only reject NUL bytes — never valid in text/HTML and
+        # a known source of parser/truncation abuse in some C-based libs.
+        if "\x00" in v:
+            raise ValueError("html_body must not contain NUL bytes")
+        return v
+
+
+class SendExportResponse(BaseModel):
+    success: bool
+    recipient: str
+    sent_at: str | None = None
+    error: str | None = None
 
 
 # ── Helper: resolve User or 404 ───────────────────────────────────────────────
@@ -228,6 +272,81 @@ async def send_email_now(user_id: UserId, db: DB) -> SendResultResponse:
     svc = EmailService()
     result = await svc.send_daily_digest(db, user_id, recipient)
     return SendResultResponse.from_send_result(result)
+
+
+# ── POST /email/send-export ───────────────────────────────────────────────────
+
+@router.post("/send-export", response_model=SendExportResponse)
+async def send_export(
+    body: SendExportRequest,
+    current_user: CurrentUser = Depends(get_current_user_with_email),
+) -> SendExportResponse:
+    """Send an ad-hoc export (e.g. a portfolio backup JSON) to the caller's own
+    email address, taken from the JWT's ``email`` claim — never from request
+    input, so a caller cannot redirect the export to an arbitrary address.
+
+    Unlike ``send-now`` (which reports SMTP failure as a 200 with
+    ``success: false``), this endpoint raises 502 on SMTP failure: an export
+    request that silently fails to deliver is a distinct error state that
+    callers must not be able to swallow.
+    """
+    settings = get_settings()
+
+    if not settings.gmail_user or not settings.gmail_app_password.get_secret_value():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Gmail credentials not configured. "
+                "Set GMAIL_USER and GMAIL_APP_PASSWORD environment variables."
+            ),
+        )
+
+    try:
+        attachment_bytes = base64.b64decode(body.attachment_content, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"attachment_content is not valid base64: {exc}",
+        ) from exc
+
+    _log.info(
+        "email.send_export.triggered",
+        user_id=current_user.id,
+        recipient=current_user.email,
+        attachment_filename=body.attachment_filename,
+    )
+
+    svc = EmailService()
+    result: SendResult = await svc.send_export_email(
+        recipient_email=current_user.email,
+        subject=body.subject,
+        html_body=body.html_body,
+        attachment_filename=body.attachment_filename,
+        attachment_bytes=attachment_bytes,
+    )
+
+    if not result.success:
+        _log.error(
+            "email.send_export.failed",
+            user_id=current_user.id,
+            recipient=current_user.email,
+            error=result.error,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to send export email: {result.error}",
+        )
+
+    _log.info(
+        "email.send_export.sent",
+        user_id=current_user.id,
+        recipient=current_user.email,
+    )
+    return SendExportResponse(
+        success=True,
+        recipient=result.recipient,
+        sent_at=result.sent_at,
+    )
 
 
 # ── GET /email/preview ────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
@@ -34,6 +35,12 @@ from app.services.price_refresh_service import PriceRefreshResult, PriceRefreshS
 _log = get_logger("email_service")
 
 _CF_URL_RE = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
+
+# Generic, safe message surfaced to clients on SMTP failure. The real
+# exception (which may contain SMTP hostnames, connection errors, or other
+# internal infrastructure details) is always logged server-side in full via
+# _log.error — never included here.
+_GENERIC_SMTP_ERROR = "Failed to send the email. Please try again later."
 
 
 def _get_cloudflare_url(container_name: str = "cloudflared") -> str:
@@ -573,4 +580,82 @@ class EmailService:
             recipient=recipient_email,
             sent_at=sent_at,
             price_refresh=refresh_result,
+        )
+
+    async def send_export_email(
+        self,
+        recipient_email: str,
+        subject: str,
+        html_body: str,
+        attachment_filename: str,
+        attachment_bytes: bytes,
+    ) -> SendResult:
+        """Send an ad-hoc export email with a JSON attachment.
+
+        Independent of ``send_daily_digest`` — no price refresh, no widget
+        data fetch, no DB access. Builds a multipart/mixed message:
+            - a multipart/alternative part containing only the HTML body
+              (mail clients expect this nesting even without a plain-text
+              sibling)
+            - an application/json attachment part
+
+        Returns a SendResult; SMTP exceptions are caught here and reported
+        via ``SendResult.success = False`` — callers decide the HTTP status.
+        """
+        settings = get_settings()
+
+        msg = MIMEMultipart("mixed")
+        msg["Subject"] = subject
+        msg["From"] = settings.gmail_user
+        msg["To"] = recipient_email
+
+        body_part = MIMEMultipart("alternative")
+        body_part.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(body_part)
+
+        attachment_part = MIMEApplication(attachment_bytes, _subtype="json")
+        attachment_part.add_header(
+            "Content-Disposition",
+            "attachment",
+            filename=attachment_filename,
+        )
+        msg.attach(attachment_part)
+
+        try:
+            await aiosmtplib.send(
+                msg,
+                hostname="smtp.gmail.com",
+                port=587,
+                start_tls=True,
+                username=settings.gmail_user,
+                password=settings.gmail_app_password.get_secret_value(),
+            )
+        except Exception as exc:
+            # Full exception detail is logged server-side for debugging;
+            # the client only ever sees the generic message below so that
+            # internal infrastructure details (SMTP hostnames, connection
+            # errors, etc.) are never leaked in the HTTP response.
+            _log.error(
+                "email.export.smtp_failed",
+                recipient=recipient_email,
+                error=str(exc),
+            )
+            return SendResult(
+                success=False,
+                recipient=recipient_email,
+                error=_GENERIC_SMTP_ERROR,
+            )
+
+        sent_at = datetime.now(tz=timezone.utc).isoformat()
+        _log.info(
+            "email.export.sent",
+            recipient=recipient_email,
+            attachment_filename=attachment_filename,
+            sent_at=sent_at,
+        )
+
+        return SendResult(
+            success=True,
+            recipient=recipient_email,
+            sent_at=sent_at,
         )

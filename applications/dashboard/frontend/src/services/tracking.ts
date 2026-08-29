@@ -152,6 +152,31 @@ export interface DashboardBalanceGridOut {
   propertyBreakdown: DashboardPropertyBreakdown
 }
 
+// ── Full backup export (Email Dashboard feature) ─────────────────────────────
+// `GET /tracking/sets/{setId}/export` — a full JSON snapshot of everything
+// under one tracking set, used as the email attachment for the "Email
+// Dashboard" button on the Dashboard page. The frontend treats the deep
+// internals (categories/subCategories/trackingItems/etc.) as an OPAQUE blob
+// it re-transmits verbatim as a base64 attachment — it never parses or
+// validates their shape — so only the top-level envelope is typed here.
+export interface TrackingSetExport {
+  exportVersion: number
+  exportedAt: string
+  trackingSet: {
+    id: string
+    name: string
+    description: string | null
+    createdAt: string
+    updatedAt: string
+  }
+  categories: unknown[]
+  subCategories: unknown[]
+  trackingItems: unknown[]
+  updateTrackingLists: unknown[]
+  updateTrackingListBalances: unknown[]
+  initialInvestmentEntries: unknown[]
+}
+
 // ── Input payloads ────────────────────────────────────────────────────────────
 // Server-managed fields (id, order, createdAt, updatedAt) are never sent by the client.
 
@@ -322,5 +347,12 @@ export const trackingService = {
   async getBalanceGrid(setId: string): Promise<DashboardBalanceGridOut> {
     const { data } = await apiClient.get(p(`/sets/${setId}/dashboard/balance-grid`))
     return data as DashboardBalanceGridOut
+  },
+
+  // Full backup export ─────────────────────────────────────────────────────
+  /** Fetches the full JSON backup export for one tracking set (404 if it doesn't exist or isn't owned by the caller) — used as the "Email Dashboard" button's attachment. */
+  async getExport(setId: string): Promise<TrackingSetExport> {
+    const { data } = await apiClient.get(p(`/sets/${setId}/export`))
+    return data as TrackingSetExport
   },
 }
