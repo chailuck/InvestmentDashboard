@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Technical Design</h1>
 
-<p><strong>Version:</strong> 3.4 (Phase 1 + Phase 2 + Phase 3, Dashboard page revision — Category Trend chart split into two components, two aggregate overlay lines on the stacked-bar chart, both-ends quarter trimming, Non-Property Total bold-value fix) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-29</p>
+<p><strong>Version:</strong> 3.5 (Phase 1 + Phase 2 + Phase 3 + Phase 4 — Email Dashboard export: a new tracking-backend export endpoint, a new main-backend send-export endpoint, and a Dashboard-page "Email Dashboard" button) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-29</p>
 
 <hr>
 
@@ -55,7 +55,8 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 │   │   │                          Phase 2 — see §3. Phase 3 adds no new
 │   │   │                          tables/models — see §8)
 │   │   ├── schemas/              (Pydantic v2, camelCase — see §5)
-│   │   │   └── dashboard.py    ← Phase 3: balance-grid response schemas (no request schema — GET only)
+│   │   │   ├── dashboard.py    ← Phase 3: balance-grid response schemas (no request schema — GET only)
+│   │   │   └── export.py       ← Phase 4: full-snapshot export response schemas (no request schema — GET only) — see §12.1
 │   │   ├── services/cascade.py ← default category/sub-category creation
 │   │   ├── services/update_tracking.py ← Phase 2: read-time delta computation
 │   │   ├── services/dashboard_balance_grid.py ← Phase 3: read-time balance-grid
@@ -65,14 +66,18 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 │   │       └── endpoints/      ← health, tracking_sets, categories,
 │   │                              sub_categories, tracking_items, entries,
 │   │                              update_tracking_lists (Phase 2),
-│   │                              dashboard (Phase 3)
-│   ├── alembic/                ← OWN migration chain (see §4) — unchanged by Phase 3
+│   │                              dashboard (Phase 3), export (Phase 4)
+│   ├── alembic/                ← OWN migration chain (see §4) — unchanged by Phase 3 AND Phase 4 (no schema change)
 │   └── tests/
 ├── docker/Dockerfile.tracking-backend
 └── frontend/                   ← SHARED — new pages/components/service added
     └── src/
-        ├── services/tracking.ts          ← Phase 1 entities + Phase 3 getBalanceGrid()
+        ├── services/tracking.ts          ← Phase 1 entities + Phase 3 getBalanceGrid() + Phase 4 getExport()
         ├── services/updateTracking.ts    ← Phase 2: Update Tracking Lists + Balances
+        ├── services/emailExport.ts       ← Phase 4: sendExportEmail() — camelCase↔snake_case
+        │                                    translation layer for POST /email/send-export on the MAIN backend — see §12.2
+        ├── lib/tracking-export-html.ts   ← Phase 4: pure function building the emailed HTML table
+        │                                    from already-loaded Dashboard state — see §12.4
         ├── components/tracking/  (CategoryTree, CreateItemModal,
         │                          NameDescriptionModal, ConfirmDeleteModal,
         │                          CreateUpdateListModal — Phase 2)
@@ -82,7 +87,15 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
             ├── updates/                  ← Phase 2
             │   ├── page.tsx               (list + tracking-set selector + create modal)
             │   └── [listId]/page.tsx      (detail: hierarchy, editable balances, deltas)
-            └── dashboard/page.tsx        ← Phase 3: read-only balance-grid report — see §9.3.2</code></pre>
+            └── dashboard/page.tsx        ← Phase 3: read-only balance-grid report (§9.3.2);
+                                             Phase 4 adds the "Email Dashboard" button + handleEmailDashboard() — see §12.4
+
+backend/                                  ← EXISTING main API service — Phase 4 adds ONE new endpoint here (see §12.2)
+├── app/api/v1/endpoints/email.py         ← adds POST /email/send-export alongside the pre-existing
+│                                            GET/PUT /email/settings, POST /email/send-now, GET /email/preview
+├── app/services/email_service.py         ← adds EmailService.send_export_email()
+└── app/auth/dependencies.py              ← adds CurrentUser dataclass + get_current_user_with_email,
+                                             additive alongside the existing get_current_user_id — see §12.3</code></pre>
 
 <h3>1.1 Why a separate service (ADR summary)</h3>
 <p><strong>Decision:</strong> Build the Financial Tracker as an independently deployable FastAPI service rather than extending <code>backend</code>, driven by the explicit technical requirement to add this feature "so that we can restart this pod without impacting the current functionalities" (see <code>docs/REQUIREMENTS FINANCIAL TRACKER.md</code>, §2).</p>
@@ -296,6 +309,7 @@ item cascades to remove the balance row.</code></pre>
     <tr><td><code>entries.py</code></td><td><code>/entries</code></td><td>Ledger Entry CRUD by id</td></tr>
     <tr><td><code>update_tracking_lists.py</code> <em>(Phase 2)</em></td><td><code>/sets/{id}/update-lists</code> + <code>/update-lists</code></td><td>Update Tracking List header CRUD, hierarchy+delta detail view, bulk balance upsert — see §7</td></tr>
     <tr><td><code>dashboard.py</code> <em>(Phase 3)</em></td><td><code>/sets/{id}/dashboard</code></td><td>Single read-only GET returning the quarterly/yearly balance-grid rollup — see §8</td></tr>
+    <tr><td><code>export.py</code> <em>(Phase 4)</em></td><td><code>/sets/{id}/export</code></td><td>Single read-only GET returning a full, restorable JSON snapshot of the tracking set — see §12.1</td></tr>
   </tbody>
 </table>
 <div class="callout">Unlike every other router in this table, <code>update_tracking_lists.py</code> declares no single fixed <code>prefix=</code> on its <code>APIRouter</code> — it spans two URL families (<code>/sets/{set_id}/update-lists</code> for header create/list, and standalone <code>/update-lists/{list_id}...</code> for everything else), so each route spells out its full path explicitly. This mirrors how <code>tracking_sets.py</code> already nests <code>/sets/{set_id}/categories</code> alongside its own <code>/sets</code> CRUD.</div>
@@ -635,6 +649,105 @@ item cascades to remove the balance row.</code></pre>
     </tr>
   </tbody>
 </table>
+
+<hr>
+
+<h2>12. Email Dashboard export (Phase 4)</h2>
+<p>A new "Email Dashboard" button on the Dashboard page (FUNCTIONAL.html §13) emails the sole authenticated user their currently-displayed dashboard tables (HTML) plus a full backup export of their tracking data (JSON attachment), to their own registered email only. This is a cross-service feature spanning three codebases already documented separately in this file: a new read-only export endpoint on <strong>tracking-backend</strong> (§12.1), a new send endpoint on the <strong>main backend</strong> (§12.2, §12.3), and new orchestration on the <strong>frontend</strong> Dashboard page (§12.4). No database schema changed anywhere for this feature, and no new npm/pip dependency was introduced.</p>
+
+<h3>12.1 Tracking-backend export endpoint — contract and ownership model</h3>
+<p>Source: <code>tracking-backend/app/api/v1/endpoints/export.py</code>, schemas in <code>tracking-backend/app/schemas/export.py</code>.</p>
+<pre><code>GET /api/v1/tracking/sets/{set_id}/export</code></pre>
+<p>Read-only. Reuses <code>_get_or_404</code> imported directly from <code>tracking_sets.py</code> — the same bare-404-never-403 ownership check used by every other resource in this service (§5.1): a request for a tracking set that does not exist or belongs to another user is rejected identically, either way, with a plain 404. Once ownership is confirmed, the endpoint issues one query per table (7 total) scoped down the FK chain from the verified <code>tracking_set_id</code> — <code>Category</code> → <code>SubCategory</code> → <code>TrackingItem</code>, plus <code>UpdateTrackingList</code> → <code>UpdateTrackingListBalance</code>, plus <code>InitialInvestmentEntry</code> — each query <strong>additionally</strong> filtered by <code>user_id</code> as belt-and-suspenders defense-in-depth on top of the FK-chain scoping, since this endpoint hands back a full data dump intended for later re-import. No business logic — no deltas, no rollups, no winner selection — so, unlike §7 and §8, this logic lives directly in the endpoint module rather than a separate service module.</p>
+<p>Response shape (<code>TrackingExportOut</code>, camelCase per this service's convention — §5):</p>
+<table>
+  <thead><tr><th>Field</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>exportVersion</code></td><td>Integer, currently <code>1</code> (<code>EXPORT_VERSION</code> constant). Bumped whenever the export shape changes, so a future restore/import endpoint can detect and reject an incompatible payload rather than guessing.</td></tr>
+    <tr><td><code>exportedAt</code></td><td>ISO 8601 UTC timestamp string, e.g. <code>"2026-08-29T12:00:00+00:00"</code> — when the snapshot was assembled, not when any underlying row was last changed.</td></tr>
+    <tr><td><code>trackingSet</code></td><td><code>{id, name, description, createdAt, updatedAt}</code>. <strong>Deliberately omits <code>userId</code></strong> — see the callout below.</td></tr>
+    <tr><td><code>categories[]</code>, <code>subCategories[]</code>, <code>trackingItems[]</code></td><td>Flat arrays (not nested), each row carrying every raw column from its model plus its parent's id (<code>trackingSetId</code> / <code>categoryId</code> / <code>subCategoryId</code>) — a restore tool reconstructs the hierarchy from these foreign keys rather than the response nesting itself for it.</td></tr>
+    <tr><td><code>updateTrackingLists[]</code>, <code>updateTrackingListBalances[]</code></td><td>Every Phase 2 snapshot header and per-item balance ever recorded for this set, verbatim.</td></tr>
+    <tr><td><code>initialInvestmentEntries[]</code></td><td>Every Phase 1 ledger entry ever recorded for any item in this set, verbatim.</td></tr>
+  </tbody>
+</table>
+<div class="callout warn"><strong><code>user_id</code> is deliberately omitted from the exported <code>trackingSet</code> object</strong> — this is a restore-safety design decision, not an oversight. This payload is meant to be re-importable later (a restore/import endpoint is a natural, though not-yet-built, follow-up); if the export echoed back <code>userId</code> and a future restore endpoint ever trusted a client-supplied value from it, one account could claim rows that originally belonged to another. Restoring must always target the caller's own account, resolved the same way every other write in this service resolves ownership — from the caller's own token — never from a value read back out of the export JSON.</div>
+<div class="callout tip">Every field name and nullability in <code>export.py</code>'s schemas was verified directly against the current SQLAlchemy models (not merely trusted from the original design draft) before this endpoint shipped — there are no undocumented deviations between what §3's tables actually contain and what this endpoint returns.</div>
+<p><strong>Field naming note:</strong> like the Phase 2 Update Tracking List detail response and the Phase 3 Dashboard response (TD-FT-06, §11), this composite uses <code>orderIndex</code> verbatim rather than the <code>order</code> alias the flat CRUD endpoints (<code>CategoryOut</code>, <code>SubCategoryOut</code>, <code>TrackingItemOut</code>) use — consistent with the precedent that a purpose-built composite response is not bound to the CRUD schemas' aliasing convention.</p>
+<p><strong>Performance:</strong> a fixed 7 queries regardless of tracking set size (plus the 1 ownership-check query already counted elsewhere), matching the same "no N+1, small fixed query count" reasoning already established for <code>dashboard_balance_grid.py</code> (§8.5) — acceptable for a low-frequency, read-only export operation at this scale.</p>
+
+<h3>12.2 Main-backend send-export endpoint — contract and recipient-resolution security note</h3>
+<p>Source: <code>backend/app/api/v1/endpoints/email.py</code>, service logic in <code>backend/app/services/email_service.py</code>. This endpoint lives in the <strong>main</strong> backend, not tracking-backend — email sending was already a main-backend capability (the pre-existing daily-digest <code>/email/send-now</code>), so this feature extends that existing capability rather than duplicating SMTP plumbing into tracking-backend.</p>
+<pre><code>POST /api/v1/email/send-export</code></pre>
+<p>Request body (snake_case — see the callout below for why):</p>
+<pre><code>{
+  "subject": "Financial Tracker Export - 2026-08-29",
+  "html_body": "&lt;table&gt;...&lt;/table&gt;",
+  "attachment_filename": "tracking-backup-&lt;setId&gt;-2026-08-29T12-00-00-000Z.json",
+  "attachment_content": "eyJleHBvcnRWZXJzaW9uIjox..."   // base64-encoded UTF-8 JSON bytes
+}</code></pre>
+<table>
+  <thead><tr><th>Field</th><th>Validation</th></tr></thead>
+  <tbody>
+    <tr><td><code>subject</code></td><td>1–200 chars; rejects CR/LF (mail-header-injection guard — a Subject header must be a single line)</td></tr>
+    <tr><td><code>html_body</code></td><td>Non-empty; rejects NUL bytes only — it is a full multi-line HTML document, so newlines are legitimate and only NUL bytes (a known parser/truncation abuse vector in some C-based mail libraries) are disallowed</td></tr>
+    <tr><td><code>attachment_filename</code></td><td>1–255 chars; must end in <code>.json</code> and contain no <code>/</code>, <code>\</code>, CR, or LF — a bare filename only, no path traversal or header injection via the <code>Content-Disposition</code> header</td></tr>
+    <tr><td><code>attachment_content</code></td><td>Non-empty; must be valid base64 (checked with <code>validate=True</code>) — malformed base64 is a 400, not a 422, since it is a decode failure rather than a schema/shape failure</td></tr>
+  </tbody>
+</table>
+<div class="callout warn"><strong>There is no <code>recipient</code> field in this request schema — this is intentional, not an omission.</strong> The endpoint is authenticated via <code>get_current_user_with_email</code> (§12.3) and sends exclusively to <code>current_user.email</code>, resolved from the caller's own JWT <code>email</code> claim. No code path in this endpoint, in <code>EmailService.send_export_email()</code>, or anywhere in the frontend's call site ever reads a recipient from client input. This was a deliberate, security-reviewed design choice: an endpoint that emails a JSON dump of a user's full financial data must not be redirectable to an arbitrary address by a malicious or buggy caller, so the recipient is architecturally incapable of being anything other than the authenticated caller's own address.</div>
+<h4>Responses</h4>
+<table>
+  <thead><tr><th>Status</th><th>Body / meaning</th></tr></thead>
+  <tbody>
+    <tr><td>200</td><td><code>{"success": true, "recipient": "...", "sentAt": "2026-08-29T12:00:01+00:00", "error": null}</code></td></tr>
+    <tr><td>503</td><td>Gmail credentials (<code>GMAIL_USER</code> / <code>GMAIL_APP_PASSWORD</code>) not configured — identical guard and message to the pre-existing <code>POST /email/send-now</code>, checked before any base64 decoding or send attempt</td></tr>
+    <tr><td>502</td><td><strong>Deliberately distinct from <code>send-now</code>'s behaviour</strong> — see the callout below</td></tr>
+    <tr><td>422</td><td>Any of the request-field validators above fails (Pydantic validation error array)</td></tr>
+    <tr><td>400</td><td><code>attachment_content</code> is not valid base64</td></tr>
+    <tr><td>401</td><td>Missing/invalid/expired token, or a token whose payload has no <code>email</code> claim (§12.3)</td></tr>
+  </tbody>
+</table>
+<div class="callout"><strong>502 vs. <code>send-now</code>'s 200-with-<code>success:false</code> pattern:</strong> the pre-existing <code>POST /email/send-now</code> reports an SMTP send failure as HTTP 200 with <code>{"success": false, "error": "..."}</code> in the body — appropriate for a background-style digest send where the caller (a scheduler or a "trigger now" button) treats failure as informational. <code>send-export</code> deliberately raises HTTP 502 instead: this endpoint exists specifically so a user can be sure their backup was actually emailed, and a genuine send failure must surface as a real HTTP error the frontend cannot mistake for success — see §12.4's three-failure-path design, which depends on this status code being distinguishable from a 200.</div>
+
+<h3>12.3 <code>get_current_user_with_email</code> — additive dependency pattern and why</h3>
+<p>Source: <code>backend/app/auth/dependencies.py</code>. A new <code>CurrentUser</code> frozen dataclass (<code>{id: str, email: str}</code>) and a new <code>get_current_user_with_email</code> dependency function were added <strong>alongside</strong> the existing <code>get_current_user_id</code> — the existing function's signature, return type, and behavior are completely untouched.</p>
+<p><code>get_current_user_with_email</code> duplicates <code>get_current_user_id</code>'s entire validation sequence verbatim (missing-credentials check, signature/expiry verification, <code>jti</code>-claim check, Redis blacklist check — fail closed on Redis error) and then additionally extracts the <code>email</code> claim from the already-decoded token payload, raising 401 with "Token missing email claim" if it is absent, rather than falling back to a database lookup.</p>
+<div class="callout tip"><strong>Why an additive new dependency rather than modifying <code>get_current_user_id</code> to also return the email:</strong> <code>get_current_user_id</code> returns a bare <code>str</code> (the user id) and is depended on by a large number of existing endpoints across this backend — changing its return type to a richer object would be a breaking change to every one of those call sites for a capability only this one new endpoint needs. A new, narrowly-scoped dependency avoids that blast radius entirely: every existing endpoint using <code>get_current_user_id</code> is provably unaffected, and the new endpoint's auth requirement (needs the email claim) is visible directly in its own dependency declaration rather than being an incidental side effect of a shared dependency's return shape changing underneath it.</div>
+<p>An alternative considered and rejected: looking up the user's email from the <code>users</code> table via <code>user_id</code> (the way <code>send-now</code> already does for its <em>digest-recipient setting</em>, which is a separate, user-editable field). Rejected because the JWT's <code>email</code> claim is exactly the account's registered email at the time of login — sourcing the recipient from the token, not a mutable database column, keeps the "recipient is always the authenticated identity, never a value that could have been separately edited" guarantee (§12.2) airtight without an extra DB round-trip.</p>
+
+<h3>12.4 Frontend orchestration sequence and the three failure paths</h3>
+<p>Source: <code>handleEmailDashboard()</code> in <code>frontend/src/app/(dashboard)/tracking/dashboard/page.tsx</code>, calling <code>buildDashboardEmailHtml()</code> (<code>frontend/src/lib/tracking-export-html.ts</code>), <code>trackingService.getExport()</code> (<code>frontend/src/services/tracking.ts</code> — <code>GET /tracking/sets/{setId}/export</code>, §12.1), and <code>sendExportEmail()</code> (<code>frontend/src/services/emailExport.ts</code> — <code>POST /email/send-export</code>, §12.2).</p>
+<ol>
+  <li><strong>Build the HTML body — no network call.</strong> <code>buildDashboardEmailHtml()</code> is a pure function over data the page has already loaded: the current <code>DashboardBalanceGridOut</code> grid plus the page's own <code>collapsedYears</code>/<code>collapsedCategories</code>/<code>collapsedSubCategories</code> state. It mirrors <code>YearTable</code>'s and <code>GrandTotalRows</code>' actual rendering rules exactly (§9.3.2) — a collapsed year renders as a one-line "collapsed, not included in this export" notice with no rows beneath it; a collapsed Category/Sub-category still renders its own subtotal row (exactly like the on-screen collapse behaviour) but omits its children; Grand Total / Property Total / Non-Property Total always render for every visible year. Every user-controlled string (category/item names) is HTML-escaped before being embedded, since this HTML becomes an email body. Uses only inline <code>style="..."</code> attributes — no <code>&lt;style&gt;</code> block or CSS classes — because mail clients unpredictably strip embedded/external stylesheets.</li>
+  <li><strong>Fetch the full backup export.</strong> <code>trackingService.getExport(selectedSetId)</code> calls §12.1's endpoint. <strong>If this call fails, the flow stops here</strong> — no email is sent at all, since this feature's design rule is that it never sends a dashboard email without a genuine, complete backup attached (a partial send would violate the feature's own purpose). The user sees "Could not build backup — dashboard not emailed".</li>
+  <li><strong>Base64-encode the backup.</strong> <code>utf8ToBase64()</code> (exported from <code>dashboard/page.tsx</code>) runs the export JSON through <code>TextEncoder</code> first and base64-encodes the resulting byte sequence one byte at a time — plain <code>btoa(jsonString)</code> is avoided because it only handles Latin-1 correctly and mangles or throws on any non-ASCII character. This app's real user works in Thai, and tracking data routinely contains Thai text in <code>remark</code>/description-style fields, so this path is exercised by real data, not a theoretical edge case; it is covered by round-trip tests using real Thai text.</li>
+  <li><strong>Send.</strong> <code>sendExportEmail()</code> translates the camelCase payload (<code>subject</code>, <code>htmlBody</code>, <code>attachmentFilename</code>, <code>attachmentContent</code>) to the wire's snake_case body (§12.2) and POSTs to <code>/email/send-export</code> through the same proxy every other call in this app uses. On success, a toast names the recipient address returned by the API.</li>
+</ol>
+<p>The button's <code>sendingEmail</code> boolean is set before step 1 and cleared in a <code>finally</code> block wrapping the whole sequence, so the button re-enables after success, after the export-fetch failure, and after a send failure alike.</p>
+<h4>Three distinct failure paths (deliberately different messages)</h4>
+<table>
+  <thead><tr><th>Failure point</th><th>User-visible message</th><th>Was an email attempted?</th></tr></thead>
+  <tbody>
+    <tr><td>Step 2 — export fetch throws</td><td>"Could not build backup — dashboard not emailed"</td><td>No — caught locally, function returns before step 4 is ever reached</td></tr>
+    <tr><td>Step 4 — send returns HTTP 503</td><td>"Email is not configured on the server."</td><td>No — rejected server-side before any SMTP attempt</td></tr>
+    <tr><td>Step 4 — send returns HTTP 502</td><td>"Backup was prepared, but sending the email failed. Try again."</td><td>Yes — a genuine SMTP send was attempted and failed</td></tr>
+  </tbody>
+</table>
+<p>Any other error status from step 4 falls through to the app's generic <code>extractApiError(err)</code> message, rather than being silently swallowed.</p>
+
+<h3>12.5 MIME structure</h3>
+<p><code>EmailService.send_export_email()</code> (<code>backend/app/services/email_service.py</code>) builds the outgoing message independently of <code>send_daily_digest</code> — no price refresh, no widget-data fetch, no DB access at all, since everything it needs (HTML body, subject, attachment bytes) arrives already assembled in the request body:</p>
+<pre><code>multipart/mixed                          (top-level message)
+├── multipart/alternative                (body_part)
+│    └── text/html; charset=utf-8        (the dashboard HTML table)
+└── application/json                     (attachment_part)
+     Content-Disposition: attachment; filename="&lt;attachment_filename&gt;"</code></pre>
+<p>The HTML body is nested inside a <code>multipart/alternative</code> even though there is no plain-text sibling part — mail clients conventionally expect that nesting for an HTML-only body, so it is included for compatibility rather than because a second part exists. Sent via <code>aiosmtplib</code> to <code>smtp.gmail.com:587</code> with STARTTLS, using the same <code>GMAIL_USER</code>/<code>GMAIL_APP_PASSWORD</code> settings already used by <code>send-now</code>. Any SMTP exception is caught and reported back as <code>SendResult(success=False, error=...)</code> using the same generic, non-leaking error message (<code>_GENERIC_SMTP_ERROR</code>) as every other send path in this service — the real exception (which may contain SMTP hostnames or connection details) is logged server-side only, never returned to the client.</p>
+
+<h3>12.6 API documentation coverage — a pre-existing gap, not new</h3>
+<p>The tracking-backend export endpoint (§12.1) is documented in <a href="../02-infrastructure/API-FINANCIAL-TRACKER.html">API-FINANCIAL-TRACKER.html</a>'s new "Export (Phase 4)" section, alongside the Dashboard and Update Tracking List endpoints — it is a tracking-backend route and that file's stated scope ("Served by the independent tracking-backend microservice") covers it directly.</p>
+<div class="callout warn">The main-backend <code>send-export</code> endpoint (§12.2) is documented <strong>here only</strong>, not in a dedicated API reference page. This project's docs tree has <strong>no standalone API doc file for any <code>/email/*</code> endpoint</strong> — this is a pre-existing gap that predates this feature: even the long-standing <code>POST /email/send-now</code> and <code>GET</code>/<code>PUT /email/settings</code> endpoints have never had a dedicated reference page anywhere in <code>docs/</code>. <code>API-FINANCIAL-TRACKER.html</code>'s objective statement is explicit that its scope is the tracking-backend service only, so adding a main-backend endpoint into that file would misstate its own stated coverage rather than close the real gap. This feature does not attempt to backfill that pre-existing, project-wide gap for <code>/email/*</code> as a whole — it documents its own new endpoint's full contract here in TECHNICAL.html (§12.2, §12.3) instead, which is the more accurate fix for one new endpoint than partially seeding a cross-service API reference file that does not otherwise exist yet.</div>
 
 </body>
 </html>

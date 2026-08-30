@@ -35,7 +35,11 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
 <h1>API Spec — Financial Tracker</h1>
 
 <div class="obj">
-<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1); Update Tracking Lists with read-time balance deltas (Phase 2); and a read-only quarterly/yearly balance-grid rollup report (Phase 3). Served by the independent <code>tracking-backend</code> microservice. All routes are mounted under <code>/api/v1/tracking</code>.
+<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1); Update Tracking Lists with read-time balance deltas (Phase 2); a read-only quarterly/yearly balance-grid rollup report (Phase 3); and a full-snapshot export endpoint (Phase 4) used by the Dashboard page's "Email Dashboard" button. Served by the independent <code>tracking-backend</code> microservice. All routes are mounted under <code>/api/v1/tracking</code>.
+</div>
+
+<div class="tip">
+<strong>Scope note:</strong> this file covers only endpoints served by <code>tracking-backend</code>. The Phase 4 "Email Dashboard" feature also added a new endpoint on the separate main <code>backend</code> service (<code>POST /api/v1/email/send-export</code>) — that endpoint is documented in <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §12.2/§12.3 instead, since no standalone API reference page exists anywhere in this docs tree for any main-backend <code>/email/*</code> endpoint (a pre-existing gap, not one introduced by this feature — see TECHNICAL.html §12.6).
 </div>
 
 <div class="err">
@@ -87,6 +91,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/update-lists/{listId}/detail</code></td><td><em>(Phase 2)</em> Full current hierarchy with per-item balance + read-time delta</td></tr>
   <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/update-lists/{listId}/balances</code></td><td><em>(Phase 2)</em> Bulk upsert per-item balances (all-or-nothing)</td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{setId}/dashboard/balance-grid</code></td><td><em>(Phase 3)</em> Read-only quarterly/yearly balance-grid rollup for the whole tracking set</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{setId}/export</code></td><td><em>(Phase 4)</em> Full, restorable JSON snapshot of the whole tracking set — used as the "Email Dashboard" button's backup attachment</td></tr>
 </table>
 
 <hr>
@@ -561,6 +566,61 @@ A single read-only report endpoint that rolls up every balance ever recorded via
 <div class="obj">
 <strong>Reading the 2026-Q1 example above:</strong> the item had 100000.00 in 2025-Q1 and nothing recorded again until 110000.00 in 2026-Q1. 2026-Q1's delta (+5000.00, +4.76%) is computed against 2025-Q1 — the nearest earlier populated quarter — not against the immediately preceding column (2025-Q4, which is blank). Every blank quarter in between still carries <code>hasPreviousData: true</code> because a real earlier value (2025-Q1) exists somewhere further back, even though that blank quarter itself has no <code>balance</code> to show.
 </div>
+<div class="err"><strong>404 Not Found</strong> — tracking set does not exist or belongs to another user (same bare-404, never-403 ownership pattern as every other resource): <code>{"detail": "Tracking set not found"}</code></div>
+
+<hr>
+
+<h2>Export (Phase 4)</h2>
+
+<div class="obj">
+A single read-only endpoint returning a full, restorable snapshot of one Tracking Set — every Category, Sub-category, Tracking Item, Update Tracking List, Update Tracking List balance, and Initial Investment Ledger entry it contains, as raw fields with no derived or calculated values. Implemented in <code>app/api/v1/endpoints/export.py</code>; schemas in <code>app/schemas/export.py</code>. This is the JSON backup attached to the email sent by the Dashboard page's "Email Dashboard" button. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §13 for user-facing behaviour and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §12.1 for the ownership and query-scoping detail.
+</div>
+
+<h3>GET /api/v1/tracking/sets/{setId}/export</h3>
+<p>No request body, no query parameters beyond the path's <code>setId</code>. Nothing is ever written by this endpoint. Every returned row is scoped both by the FK chain down from the verified tracking set AND by an explicit <code>user_id</code> filter on every query (belt-and-suspenders, since this response is intended for later re-import).</p>
+
+<h4>Response field reference</h4>
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>exportVersion</code></td><td>integer</td><td>Currently <code>1</code>. A future incompatible change to this shape bumps this value.</td></tr>
+    <tr><td><code>exportedAt</code></td><td>string</td><td>ISO 8601 UTC timestamp of when the snapshot was assembled.</td></tr>
+    <tr><td><code>trackingSet</code></td><td>object</td><td><code>{id, name, description, createdAt, updatedAt}</code>. <strong>No <code>userId</code> field</strong> — deliberately omitted for restore-safety (see TECHNICAL.html §12.1).</td></tr>
+    <tr><td><code>categories[]</code></td><td>array</td><td>Flat array; each row includes <code>trackingSetId</code>, <code>orderIndex</code>, and every other raw <code>ft_category</code> column.</td></tr>
+    <tr><td><code>subCategories[]</code></td><td>array</td><td>Flat array; each row includes <code>categoryId</code>, <code>orderIndex</code>, and every other raw <code>ft_sub_category</code> column.</td></tr>
+    <tr><td><code>trackingItems[]</code></td><td>array</td><td>Flat array; each row includes <code>subCategoryId</code>, <code>type</code>, <code>initialInvestmentTracking</code>, <code>exclusive</code>, <code>orderIndex</code>, and every other raw <code>ft_tracking_item</code> column.</td></tr>
+    <tr><td><code>updateTrackingLists[]</code></td><td>array</td><td>Every Phase 2 snapshot header for this set, verbatim (<code>transactionDate</code>, <code>quarter</code>, <code>year</code>, etc.).</td></tr>
+    <tr><td><code>updateTrackingListBalances[]</code></td><td>array</td><td>Every Phase 2 per-item balance row for this set's lists, verbatim.</td></tr>
+    <tr><td><code>initialInvestmentEntries[]</code></td><td>array</td><td>Every Phase 1 ledger entry for any item in this set, verbatim.</td></tr>
+  </tbody>
+</table>
+<div class="obj"><strong>Note:</strong> <code>orderIndex</code> is used verbatim here (not aliased to <code>order</code>), matching the same convention already used by the Update Tracking List detail and Dashboard responses above — see TECHNICAL.html §11 TD-FT-06.</div>
+
+<pre><code>// Response 200
+{
+  "exportVersion": 1,
+  "exportedAt": "2026-08-29T12:00:00+00:00",
+  "trackingSet": {
+    "id": "a1b2c3d4-...", "name": "Personal", "description": null,
+    "createdAt": "2026-06-01T09:00:00+00:00", "updatedAt": "2026-08-20T10:00:00+00:00"
+  },
+  "categories": [
+    { "id": "c2b3d4e5-...", "trackingSetId": "a1b2c3d4-...", "name": "Assets", "description": null, "orderIndex": 0, "createdAt": "...", "updatedAt": "..." }
+  ],
+  "subCategories": [
+    { "id": "d3c4e5f6-...", "categoryId": "c2b3d4e5-...", "name": "Current Assets", "description": null, "orderIndex": 0, "createdAt": "...", "updatedAt": "..." }
+  ],
+  "trackingItems": [
+    { "id": "e4d5f6a7-...", "subCategoryId": "d3c4e5f6-...", "name": "SCB Savings Account", "type": "Bank account", "initialInvestmentTracking": false, "exclusive": false, "orderIndex": 0, "description": null, "accountName": null, "remark": null, "createdAt": "...", "updatedAt": "..." }
+  ],
+  "updateTrackingLists": [
+    { "id": "f5e6a7b8-...", "trackingSetId": "a1b2c3d4-...", "transactionDate": "2026-06-30", "quarter": 2, "year": 2026, "createdAt": "...", "updatedAt": "..." }
+  ],
+  "updateTrackingListBalances": [
+    { "id": "a6b7c8d9-...", "updateTrackingListId": "f5e6a7b8-...", "trackingItemId": "e4d5f6a7-...", "balance": 110000.00, "createdAt": "...", "updatedAt": "..." }
+  ],
+  "initialInvestmentEntries": []
+}</code></pre>
 <div class="err"><strong>404 Not Found</strong> — tracking set does not exist or belongs to another user (same bare-404, never-403 ownership pattern as every other resource): <code>{"detail": "Tracking set not found"}</code></div>
 
 <hr>

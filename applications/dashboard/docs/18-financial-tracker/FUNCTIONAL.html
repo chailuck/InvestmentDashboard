@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Functional Specification</h1>
 
-<p><strong>Version:</strong> 3.4 (Phase 1 + Phase 2 + Phase 3, Dashboard page revision — Category Trend chart split into two side-by-side charts, two aggregate overlay lines on the stacked-bar chart, both-ends quarter trimming, Non-Property Total bold-value fix) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-29 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code>, <code>/tracking/dashboard</code></p>
+<p><strong>Version:</strong> 3.5 (Phase 1 + Phase 2 + Phase 3 + Phase 4 — "Email Dashboard" button added to the Dashboard page) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-29 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code>, <code>/tracking/dashboard</code></p>
 
 <hr>
 
@@ -48,7 +48,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 
 <p>A user can maintain multiple independent Tracking Sets — for example, a personal set and a family set — each with its own category tree. A tracking set belongs to exactly one user; it is never shared or visible to other users.</p>
 
-<div class="callout">This document covers <strong>Phase 1</strong> (creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger — §3–§9), <strong>Phase 2</strong> (the "Updates" sub-menu — periodic balance snapshots against a tracking set's hierarchy — §11), and <strong>Phase 3</strong> (the "Dashboard" sub-menu — a read-only quarterly/yearly balance-grid rollup built from the data captured by Updates — §12).</div>
+<div class="callout">This document covers <strong>Phase 1</strong> (creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger — §3–§9), <strong>Phase 2</strong> (the "Updates" sub-menu — periodic balance snapshots against a tracking set's hierarchy — §11), <strong>Phase 3</strong> (the "Dashboard" sub-menu — a read-only quarterly/yearly balance-grid rollup built from the data captured by Updates — §12), and <strong>Phase 4</strong> (the "Email Dashboard" button on the Dashboard page, emailing the user their currently-displayed dashboard plus a full backup export — §13).</div>
 
 <hr>
 
@@ -200,6 +200,10 @@ Liabilities
     <tr><td>Category Trend / Category Breakdown chart x-axis trimming</td><td>Both leading (earliest) AND trailing (latest) blank quarters are trimmed from both charts using the same "has data" rule; interior gaps are unaffected and the per-year tables (§12.3/§12.4) still show all 4 quarters of every year regardless (§12.10)</td></tr>
     <tr><td>Non-Property Total target</td><td>Defaults to 20,000,000 THB; persisted client-side only in <code>localStorage</code>, keyed per tracking set — never sent to or stored by any backend (§12.12)</td></tr>
     <tr><td>Non-Property Total summary row value weight</td><td>Balance values render bold, matching the existing Category/Sub-category subtotal row treatment; Delta styling is unchanged (never bolded on any row) (§12.12)</td></tr>
+    <tr><td>Email Dashboard recipient</td><td>Always the caller's own registered email, resolved server-side from the JWT; there is no field anywhere in this flow — UI, request, or API — for supplying a different recipient (§13.1)</td></tr>
+    <tr><td>Email Dashboard HTML content</td><td>Mirrors the ACTUAL on-screen collapse state at the moment the button is clicked — a collapsed year/category/sub-category is genuinely omitted from the emailed HTML, not merely hidden (§13.2)</td></tr>
+    <tr><td>Email Dashboard failure handling</td><td>Three distinct, separately-worded failure states (backup-build failure, SMTP-not-configured, send failure) so the user always knows whether an email was attempted at all (§13.4)</td></tr>
+    <tr><td>Email Dashboard button availability</td><td>Disabled while a send is in progress; always re-enabled afterward regardless of outcome (§13.3)</td></tr>
   </tbody>
 </table>
 
@@ -369,6 +373,52 @@ Liabilities
 </ul>
 <h4>Color convention when the target is met</h4>
 <p>When the current figure meets or exceeds the target, the current-value text and the progress bar switch to this app's existing "gain" (green) color — the same color already used elsewhere on this page for a positive balance change. Below target, the indicator intentionally uses a neutral color rather than the "loss" (red) color: falling short of a personal savings goal is not the same thing as a balance going down, so this page does not reuse its loss color to describe it.</p>
+
+<hr>
+
+<h2>13. Email Dashboard export — Phase 4</h2>
+<p>An <strong>Email Dashboard</strong> button on the Dashboard page (§12.1) lets the user send themselves, by email, exactly what the Dashboard is currently showing them — plus a complete backup of every piece of data behind the whole tracking set — with a single click, so they have an off-app copy of both the report and the raw data without having to screenshot the page or export anything by hand.</p>
+
+<h3>13.1 What gets sent, and to whom</h3>
+<p>Clicking <strong>Email Dashboard</strong> sends one email containing two things:</p>
+<ul>
+  <li><strong>An HTML table</strong> — built from exactly what is on screen at the moment of the click, using the current Detail/Sub-category/Summary view mode and the current collapse/expand state of every year, Category, and Sub-category (§12.5). If a year or a Category/Sub-category group is collapsed on screen, its detail rows are genuinely left out of the email, not merely hidden by styling — someone reading the email in a plain-text or restrictive mail client sees the same rows a screenshot of the current page would show, no more.</li>
+  <li><strong>A full backup of the tracking set</strong>, as a JSON file attached to the email — every Tracking Set, Category, Sub-category, Tracking Item, Update Tracking List, Update Tracking List balance, and Initial Investment Ledger entry the user has ever recorded under this tracking set, not only what happens to be visible in the current view. This is the same complete data the Dashboard's figures are computed from, captured as a point-in-time snapshot.</li>
+</ul>
+<div class="callout">The email always goes to the user's own registered account email address. There is no address field anywhere — on the button, in a dialog, or otherwise — where a different recipient could be entered. This is a deliberate security choice, reviewed and confirmed during this feature's build: the recipient is always resolved from the user's own signed-in session, never typed in by anyone, so there is no way for this feature to be used to send a user's financial data to an address that isn't their own.</div>
+
+<h3>13.2 What the button does, step by step</h3>
+<ol>
+  <li>The button builds the HTML table described in §13.1 from data the Dashboard page has already loaded — nothing is re-fetched for this step.</li>
+  <li>It then requests the full backup snapshot described in §13.1 for the currently-selected Tracking Set.</li>
+  <li>Once both the HTML table and the backup are ready, it sends them together as one email to the user's own address.</li>
+  <li>A confirmation message names the address the email was sent to once sending succeeds.</li>
+</ol>
+
+<h3>13.3 Button behaviour while sending</h3>
+<p>The button shows a spinner and is disabled for the duration of the click — a second click cannot start an overlapping send. It always returns to its normal, clickable state again once the attempt finishes, whether it succeeded or failed, so a failed attempt never leaves the button stuck.</p>
+
+<h3>13.4 What happens when something goes wrong</h3>
+<p>Three distinct situations can prevent the email from being delivered, and each is reported with its own message so the user always knows what did or didn't happen — in particular, whether any email was actually attempted:</p>
+<table>
+  <thead><tr><th>Situation</th><th>Message shown</th><th>Was an email attempted?</th></tr></thead>
+  <tbody>
+    <tr><td>The backup snapshot could not be retrieved</td><td>"Could not build backup — dashboard not emailed"</td><td>No — the send is never attempted without a genuine, complete backup attached. This is a deliberate design rule: this feature never sends a partial export.</td></tr>
+    <tr><td>Email sending is not set up on the server at all</td><td>"Email is not configured on the server."</td><td>No — the server rejected the request before attempting to send anything.</td></tr>
+    <tr><td>The backup was ready and a send was attempted, but the send itself failed</td><td>"Backup was prepared, but sending the email failed. Try again."</td><td>Yes — the attempt was genuinely made and genuinely failed; retrying is the correct next step.</td></tr>
+  </tbody>
+</table>
+<div class="callout tip">These three messages are worded differently on purpose. The first is the only one where the user should not expect to check their inbox at all; the other two both represent an attempted send, so retrying is the sensible response to either.</div>
+
+<h3>13.5 Ownership and privacy</h3>
+<p>The backup snapshot behind this feature is generated from the same tracking set the user already owns and is looking at (§9), using the same ownership rule as everywhere else in the Financial Tracker: a request for a tracking set that doesn't exist or belongs to someone else is rejected identically to any other not-found resource, never confirming or denying that it exists for another user.</p>
+
+<h3>13.6 Out of scope for this phase</h3>
+<ul>
+  <li>There is no schedule or recurring send for this feature — it is a manual, on-demand, one-click action every time.</li>
+  <li>There is no history or log of previously sent emails visible in the app; the record of what was sent lives only in the user's own inbox.</li>
+  <li>There is no restore/import feature that consumes the backup JSON attachment yet — today it is a one-way export intended to be a safety copy the user holds onto, not something the app itself can currently read back in.</li>
+</ul>
 
 </body>
 </html>

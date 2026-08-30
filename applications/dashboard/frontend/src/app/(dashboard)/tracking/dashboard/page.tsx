@@ -17,7 +17,7 @@ import {
   type DashboardCategoryRow,
   type DashboardYearColumn,
 } from '@/services/tracking'
-import { buildDashboardEmailHtml } from '@/lib/tracking-export-html'
+import { buildDashboardEmailHtml, utf8ToBase64 } from '@/lib/tracking-export-html'
 import { sendExportEmail } from '@/services/emailExport'
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
@@ -61,23 +61,6 @@ function toFiniteOrNull(value: unknown): number | null {
   if (value === null || value === undefined) return null
   const n = Number(value)
   return Number.isFinite(n) ? n : null
-}
-
-/**
- * UTF-8-safe base64 encoding for the "Email Dashboard" backup attachment
- * (Change: Email Dashboard feature). Plain `btoa(jsonString)` only works
- * correctly for Latin1 text — it throws (or silently mangles bytes,
- * depending on engine) on any character outside that range, and this app's
- * tracking data routinely contains non-ASCII text (Thai `remark`/
- * `description`/`accountName` fields). This encodes to UTF-8 bytes first via
- * `TextEncoder`, then base64-encodes THAT byte sequence one byte at a time,
- * so every character survives the round trip intact.
- */
-export function utf8ToBase64(str: string): string {
-  const bytes = new TextEncoder().encode(str)
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-  return btoa(binary)
 }
 
 /** A defensive fallback cell used only if a row's `cells` array is ever shorter than expected. */

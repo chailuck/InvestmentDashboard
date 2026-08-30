@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { screen, within, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { render } from '@/test/test-utils'
-import TrackingDashboardPage, { utf8ToBase64 } from '../page'
+import TrackingDashboardPage from '../page'
 import { trackingService } from '@/services/tracking'
 import type {
   TrackingSet, DashboardBalanceGridOut, BalanceCell, TrackingSetExport,
 } from '@/services/tracking'
 import { sendExportEmail } from '@/services/emailExport'
+import { utf8ToBase64 } from '@/lib/tracking-export-html'
 import toast from 'react-hot-toast'
 
 // ---------------------------------------------------------------------------
