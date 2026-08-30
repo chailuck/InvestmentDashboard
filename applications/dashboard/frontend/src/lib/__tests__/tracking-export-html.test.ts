@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { buildDashboardEmailHtml, type VisibilitySnapshot } from '../tracking-export-html'
-import type { BalanceCell, DashboardBalanceGridOut } from '@/services/tracking'
+import type {
+  BalanceCell, DashboardBalanceGridOut, OriginalInvestmentRollup,
+} from '@/services/tracking'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -227,5 +229,101 @@ describe('buildDashboardEmailHtml — cell formatting', () => {
     const html = buildDashboardEmailHtml(grid, EMPTY_VISIBILITY)
     expect(html).not.toContain('<img src=x onerror=alert(1)>')
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Optional "Original Investment vs Profit" section (3rd `rollup` argument)
+// ---------------------------------------------------------------------------
+
+/** A rollup with one covered row, one not-covered row, plus a covered-only totals block and one excluded name. */
+function makeRollup(): OriginalInvestmentRollup {
+  return {
+    trackingSetId: 'set-1',
+    generatedAt: '2026-08-30T07:30:00+00:00',
+    coverage: { shownCount: 1, totalCount: 3, excludedItemNames: ['Condo Bangkok'] },
+    items: [
+      {
+        itemId: 'it-1', itemName: 'ARK Growth', categoryName: 'Investments', subCategoryName: 'US Equity',
+        netOriginalInvestment: 100000, currentValue: 132000,
+        currentValueSlot: { year: 2026, quarter: 2 },
+        profit: 32000, profitPercent: 32, isCovered: true,
+      },
+      {
+        itemId: 'it-2', itemName: 'Condo Bangkok', categoryName: 'Property', subCategoryName: 'Real estate',
+        netOriginalInvestment: null, currentValue: 5200000,
+        currentValueSlot: { year: 2026, quarter: 1 },
+        profit: null, profitPercent: null, isCovered: false,
+      },
+    ],
+    totals: { netOriginalInvestment: 100000, currentValue: 132000, profit: 32000, profitPercent: 32 },
+  }
+}
+
+describe('buildDashboardEmailHtml — optional original-investment rollup section', () => {
+  it('is byte-identical to the no-rollup output when the 3rd arg is omitted, null, or an empty-items rollup', () => {
+    const grid = makeGrid()
+    const baseline = buildDashboardEmailHtml(grid, EMPTY_VISIBILITY)
+
+    expect(buildDashboardEmailHtml(grid, EMPTY_VISIBILITY, undefined)).toBe(baseline)
+    expect(buildDashboardEmailHtml(grid, EMPTY_VISIBILITY, null)).toBe(baseline)
+
+    const emptyRollup: OriginalInvestmentRollup = {
+      ...makeRollup(),
+      items: [],
+      coverage: { shownCount: 0, totalCount: 0, excludedItemNames: [] },
+      totals: { netOriginalInvestment: null, currentValue: null, profit: null, profitPercent: null },
+    }
+    expect(buildDashboardEmailHtml(grid, EMPTY_VISIBILITY, emptyRollup)).toBe(baseline)
+  })
+
+  it('appends a profit section (heading + one row per item + coverage footnote) when a non-empty rollup is passed', () => {
+    const html = buildDashboardEmailHtml(makeGrid(), EMPTY_VISIBILITY, makeRollup())
+
+    expect(html).toContain('Original Investment vs Profit')
+    expect(html).toContain('ARK Growth')
+    expect(html).toContain('Condo Bangkok')
+    // Covered row: real figures via formatNumber / toFixed.
+    expect(html).toContain('100,000.00')
+    expect(html).toContain('132,000.00')
+    expect(html).toContain('32,000.00')
+    expect(html).toContain('32.00%')
+    // Covered-only totals row.
+    expect(html).toContain('Total (covered items)')
+    // Coverage footnote with the excluded name.
+    expect(html).toContain('Profit vs original shown for 1 of 3 tracked items.')
+    expect(html).toContain('Not shown: Condo Bangkok.')
+  })
+
+  it('renders an em dash (never a fabricated 0 / 0%) in every numeric cell of a not-covered row', () => {
+    const html = buildDashboardEmailHtml(makeGrid(), EMPTY_VISIBILITY, makeRollup())
+
+    // Isolate the Condo Bangkok <tr> and assert its 4 numeric cells are all em dashes.
+    const rowMatch = html.match(/<tr>(?:(?!<\/tr>).)*Condo Bangkok(?:(?!<\/tr>).)*<\/tr>/s)
+    expect(rowMatch).not.toBeNull()
+    const row = rowMatch![0]
+    expect((row.match(/&mdash;/g) ?? []).length).toBe(4)
+    expect(row).not.toContain('0.00')
+    expect(row).not.toContain('0%')
+    // The not-covered row still carries its name / category / sub-category.
+    expect(row).toContain('Property')
+    expect(row).toContain('Real estate')
+  })
+
+  it('passes a Thai itemName through escapeHtml unchanged (not broken) and escapes an itemName containing <script>', () => {
+    const rollup = makeRollup()
+    rollup.items[0].itemName = 'กองทุนหุ้นสหรัฐ'
+    rollup.items[1].itemName = '<script>alert(1)</script>'
+    rollup.coverage.excludedItemNames = ['<script>alert(2)</script>']
+
+    const html = buildDashboardEmailHtml(makeGrid(), EMPTY_VISIBILITY, rollup)
+
+    // Thai text is passed through verbatim (escapeHtml leaves it untouched).
+    expect(html).toContain('กองทุนหุ้นสหรัฐ')
+    // <script> is neutralised in both the table cell and the footnote.
+    expect(html).not.toContain('<script>alert(1)</script>')
+    expect(html).not.toContain('<script>alert(2)</script>')
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
+    expect(html).toContain('&lt;script&gt;alert(2)&lt;/script&gt;')
   })
 })

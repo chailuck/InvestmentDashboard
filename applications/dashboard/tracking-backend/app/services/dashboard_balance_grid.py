@@ -227,6 +227,50 @@ class BalanceGridResult:
     property_breakdown: PropertyBreakdown
 
 
+# ── Derived view: each item's most-recent populated balance ─────────────────
+
+
+@dataclass(frozen=True)
+class CurrentValue:
+    """An item's balance in its most-recent populated (year, quarter) slot —
+    the same "most recent populated slot" notion the grid's per-slot series
+    already walks, just reduced to the single latest data point."""
+
+    value: Decimal
+    year: int
+    quarter: int
+
+
+def current_value_by_item(
+    result: BalanceGridResult,
+) -> dict[uuid.UUID, CurrentValue | None]:
+    """For every item in the grid tree (exclusive items INCLUDED — the caller
+    decides whether to use them), return its balance in the most-recent
+    populated slot, or None if the item has no populated cell at all.
+
+    "Most recent" = greatest `year * 4 + quarter` among that item's cells
+    whose `has_data` is True. No query — this is a pure reduction over the
+    already-materialised `BalanceGridResult` (each `ItemRow.cells` entry
+    carries `year`, `quarter`, `has_data` and `balance`)."""
+    out: dict[uuid.UUID, CurrentValue | None] = {}
+    for cat in result.categories:
+        for sub in cat.sub_categories:
+            for item in sub.items:
+                best: CurrentValue | None = None
+                best_key = -1
+                for cell in item.cells:
+                    if not cell.has_data or cell.balance is None:
+                        continue
+                    key = cell.year * 4 + cell.quarter
+                    if key > best_key:
+                        best_key = key
+                        best = CurrentValue(
+                            value=cell.balance, year=cell.year, quarter=cell.quarter
+                        )
+                out[item.id] = best
+    return out
+
+
 # ── Main assembly ────────────────────────────────────────────────────────────
 
 

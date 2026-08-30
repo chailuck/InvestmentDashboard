@@ -4,6 +4,7 @@ import {
   TRACKING_ITEM_TYPES,
   type TrackingSet, type Category, type SubCategory, type TrackingItem,
   type Entry, type RunningTotal, type DashboardBalanceGridOut, type TrackingSetExport,
+  type OriginalInvestmentRollup,
 } from '@/services/tracking'
 import { apiClient, extractApiError } from '@/services/api'
 
@@ -244,7 +245,7 @@ describe('trackingService — Tracking Items', () => {
 // ---------------------------------------------------------------------------
 
 describe('trackingService — Ledger entries', () => {
-  const ENTRY: Entry = { id: 'e1', trackingItemId: 'i1', amount: 1000, entryDate: '2026-01-01', createdAt: '', updatedAt: '' }
+  const ENTRY: Entry = { id: 'e1', trackingItemId: 'i1', amount: 1000, entryDate: '2026-01-01', note: null, createdAt: '', updatedAt: '' }
 
   it('listEntries calls GET /tracking/items/{itemId}/entries', async () => {
     mockedGet.mockResolvedValueOnce({ data: [ENTRY] })
@@ -259,10 +260,26 @@ describe('trackingService — Ledger entries', () => {
     expect(mockedPost).toHaveBeenCalledWith('/tracking/items/i1/entries', { amount: 1000, entryDate: '2026-01-01' })
   })
 
+  it('createEntry forwards an optional note (UTF-8 / Thai) verbatim in the request body', async () => {
+    mockedPost.mockResolvedValueOnce({ data: { ...ENTRY, note: 'เงินโบนัส' } })
+    await trackingService.createEntry('i1', { amount: 1000, entryDate: '2026-01-01', note: 'เงินโบนัส' })
+    expect(mockedPost).toHaveBeenCalledWith('/tracking/items/i1/entries', {
+      amount: 1000, entryDate: '2026-01-01', note: 'เงินโบนัส',
+    })
+  })
+
   it('updateEntry calls PUT /tracking/entries/{id}', async () => {
     mockedPut.mockResolvedValueOnce({ data: ENTRY })
     await trackingService.updateEntry('e1', { amount: -500, entryDate: '2026-02-01' })
     expect(mockedPut).toHaveBeenCalledWith('/tracking/entries/e1', { amount: -500, entryDate: '2026-02-01' })
+  })
+
+  it('updateEntry forwards an explicit null note (clear-the-note intent) in the request body', async () => {
+    mockedPut.mockResolvedValueOnce({ data: ENTRY })
+    await trackingService.updateEntry('e1', { amount: -500, entryDate: '2026-02-01', note: null })
+    expect(mockedPut).toHaveBeenCalledWith('/tracking/entries/e1', {
+      amount: -500, entryDate: '2026-02-01', note: null,
+    })
   })
 
   it('deleteEntry calls DELETE /tracking/entries/{id}', async () => {
@@ -274,7 +291,15 @@ describe('trackingService — Ledger entries', () => {
   it('getRunningTotal calls GET /tracking/items/{itemId}/running-total', async () => {
     const runningTotal: RunningTotal = {
       itemId: 'i1', currentTotal: 500,
-      entries: [{ ...ENTRY, runningTotal: 1000 }, { id: 'e2', trackingItemId: 'i1', amount: -500, entryDate: '2026-02-01', createdAt: '', updatedAt: '', runningTotal: 500 }],
+      entries: [
+        { ...ENTRY, runningTotal: 1000 },
+        { id: 'e2', trackingItemId: 'i1', amount: -500, entryDate: '2026-02-01', note: 'partial sell', createdAt: '', updatedAt: '', runningTotal: 500 },
+      ],
+      profitVsOriginal: {
+        netOriginalInvestment: 500, currentValue: 620,
+        currentValueSlot: { year: 2026, quarter: 2 },
+        profit: 120, profitPercent: 24, isCovered: true,
+      },
     }
     mockedGet.mockResolvedValueOnce({ data: runningTotal })
 
@@ -327,6 +352,40 @@ describe('trackingService — Dashboard', () => {
   it('propagates errors from the API client for getBalanceGrid', async () => {
     mockedGet.mockRejectedValueOnce(new Error('Network error'))
     await expect(trackingService.getBalanceGrid('s1')).rejects.toThrow('Network error')
+  })
+
+  it('getOriginalInvestmentRollup calls GET /tracking/sets/{setId}/dashboard/original-investment and returns the typed rollup', async () => {
+    const rollup: OriginalInvestmentRollup = {
+      trackingSetId: 's1',
+      generatedAt: '2026-08-30T07:30:00+00:00',
+      coverage: { shownCount: 1, totalCount: 2, excludedItemNames: ['Condo Bangkok'] },
+      items: [
+        {
+          itemId: 'it1', itemName: 'ARK Growth', categoryName: 'Investments', subCategoryName: 'US Equity',
+          netOriginalInvestment: 100000, currentValue: 132000,
+          currentValueSlot: { year: 2026, quarter: 2 },
+          profit: 32000, profitPercent: 32, isCovered: true,
+        },
+        {
+          itemId: 'it2', itemName: 'Condo Bangkok', categoryName: 'Property', subCategoryName: 'Real estate',
+          netOriginalInvestment: null, currentValue: 5200000,
+          currentValueSlot: { year: 2026, quarter: 1 },
+          profit: null, profitPercent: null, isCovered: false,
+        },
+      ],
+      totals: { netOriginalInvestment: 100000, currentValue: 132000, profit: 32000, profitPercent: 32 },
+    }
+    mockedGet.mockResolvedValueOnce({ data: rollup })
+
+    const result = await trackingService.getOriginalInvestmentRollup('s1')
+
+    expect(mockedGet).toHaveBeenCalledWith('/tracking/sets/s1/dashboard/original-investment')
+    expect(result).toEqual(rollup)
+  })
+
+  it('propagates errors from the API client for getOriginalInvestmentRollup', async () => {
+    mockedGet.mockRejectedValueOnce(new Error('Network error'))
+    await expect(trackingService.getOriginalInvestmentRollup('s1')).rejects.toThrow('Network error')
   })
 })
 

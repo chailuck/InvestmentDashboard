@@ -78,6 +78,38 @@ async def test_create_entry_accepts_negative_amount(auth_client):
     assert resp.json()["amount"] == "-250.5000"
 
 
+async def test_create_entry_accepts_a_far_future_entry_date(auth_client):
+    """AC2 (ADR-018): there is NO future-date restriction on ledger entries.
+    A contribution/withdrawal dated years ahead must be accepted as-is."""
+    from datetime import date, timedelta
+
+    item_id = await _make_item(auth_client, tracking_enabled=True)
+    future = (date.today() + timedelta(days=3650)).isoformat()
+    resp = await auth_client.post(
+        f"{PREFIX}/items/{item_id}/entries", json={"amount": "100", "entryDate": future}
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["entryDate"] == future
+
+
+async def test_update_entry_date_to_a_new_value_persists(auth_client):
+    """AC4 (ADR-018): the presence-aware update still applies a real
+    `entryDate` value (regression guard for the model_dump(exclude_unset)
+    refactor — the non-null branch of the `entry_date` handling)."""
+    item_id = await _make_item(auth_client, tracking_enabled=True)
+    create = await auth_client.post(
+        f"{PREFIX}/items/{item_id}/entries", json={"amount": "42", "entryDate": "2026-01-01"}
+    )
+    entry_id = create.json()["id"]
+
+    upd = await auth_client.put(
+        f"{PREFIX}/entries/{entry_id}", json={"entryDate": "2026-06-15"}
+    )
+    assert upd.status_code == 200, upd.text
+    assert upd.json()["entryDate"] == "2026-06-15"
+    assert upd.json()["amount"] == "42.0000"  # untouched
+
+
 async def test_create_entry_on_nonexistent_item_returns_404(auth_client):
     resp = await auth_client.post(
         f"{PREFIX}/items/{uuid.uuid4()}/entries", json={"amount": "10", "entryDate": "2026-01-01"}

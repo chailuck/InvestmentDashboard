@@ -35,7 +35,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
 <h1>API Spec — Financial Tracker</h1>
 
 <div class="obj">
-<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1); Update Tracking Lists with read-time balance deltas (Phase 2); a read-only quarterly/yearly balance-grid rollup report (Phase 3); and a full-snapshot export endpoint (Phase 4) used by the Dashboard page's "Email Dashboard" button. Served by the independent <code>tracking-backend</code> microservice. All routes are mounted under <code>/api/v1/tracking</code>.
+<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1); Update Tracking Lists with read-time balance deltas (Phase 2); a read-only quarterly/yearly balance-grid rollup report (Phase 3); and a full-snapshot export endpoint (Phase 4) used by the Dashboard page's "Email Dashboard" button. Phase 5 (ADR-018) adds an optional <code>note</code> on ledger entries, a <code>profitVsOriginal</code> block on the running-total response, and a per-set "profit vs original investment" rollup endpoint. Served by the independent <code>tracking-backend</code> microservice. All routes are mounted under <code>/api/v1/tracking</code>.
 </div>
 
 <div class="tip">
@@ -79,7 +79,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Delete (cascades to ledger entries) (HTTP 204)</td></tr>
   <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>Add a ledger entry (HTTP 201)</td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>List ledger entries, chronological</td></tr>
-  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/running-total</code></td><td>Ledger entries with a cumulative running total</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/running-total</code></td><td>Ledger entries with a cumulative running total, plus a <code>profitVsOriginal</code> block <em>(Phase 5)</em></td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Get one ledger entry</td></tr>
   <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Update a ledger entry</td></tr>
   <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Delete a ledger entry (HTTP 204)</td></tr>
@@ -91,6 +91,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/update-lists/{listId}/detail</code></td><td><em>(Phase 2)</em> Full current hierarchy with per-item balance + read-time delta</td></tr>
   <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/update-lists/{listId}/balances</code></td><td><em>(Phase 2)</em> Bulk upsert per-item balances (all-or-nothing)</td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{setId}/dashboard/balance-grid</code></td><td><em>(Phase 3)</em> Read-only quarterly/yearly balance-grid rollup for the whole tracking set</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{setId}/dashboard/original-investment</code></td><td><em>(Phase 5)</em> Read-only per-item + set-level "profit vs original investment" rollup with a coverage indicator</td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{setId}/export</code></td><td><em>(Phase 4)</em> Full, restorable JSON snapshot of the whole tracking set — used as the "Email Dashboard" button's backup attachment</td></tr>
 </table>
 
@@ -313,8 +314,9 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
 </div>
 
 <h3>POST /api/v1/tracking/items/{itemId}/entries</h3>
-<pre><code>// Request — amount must be non-zero; positive = increase, negative = decrease
-{ "amount": 50000.00, "entryDate": "2026-01-15" }
+<pre><code>// Request — amount must be non-zero; positive = increase, negative = decrease.
+// note (Phase 5) is optional: max 500 chars; blank/whitespace-only is stored as null; Thai text kept verbatim.
+{ "amount": 50000.00, "entryDate": "2026-01-15", "note": "annual top-up" }
 
 // Response 201
 {
@@ -322,17 +324,19 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
   "trackingItemId":  "e4d5f6a7-...",
   "amount":          50000.00,
   "entryDate":       "2026-01-15",
+  "note":            "annual top-up",
   "createdAt":       "2026-08-23T09:30:00+00:00",
   "updatedAt":       "2026-08-23T09:30:00+00:00"
 }</code></pre>
+<p><code>note</code> is <code>null</code> when omitted, sent empty, or sent blank/whitespace-only.</p>
 <div class="err">
 <strong>400 Bad Request</strong> — item does not have <code>initialInvestmentTracking</code> enabled: <code>{"detail": "This tracking item does not have initial_investment_tracking enabled; enable it before adding ledger entries"}</code><br>
 <strong>404 Not Found</strong> — item not found.<br>
-<strong>422 Unprocessable Entity</strong> — <code>amount</code> is zero: <code>"amount must not be zero (positive = increase, negative = decrease)"</code>
+<strong>422 Unprocessable Entity</strong> — <code>amount</code> is zero (<code>"amount must not be zero (positive = increase, negative = decrease)"</code>), or <code>note</code> is longer than 500 characters.
 </div>
 
 <h3>GET /api/v1/tracking/items/{itemId}/entries</h3>
-<p>Ordered by <code>entryDate</code> ascending, then <code>createdAt</code> ascending for same-day entries.</p>
+<p>Ordered by <code>entryDate</code> ascending, then <code>createdAt</code> ascending for same-day entries. Each entry object has the same shape as the POST response above, including the <em>(Phase 5)</em> <code>note</code> field (<code>null</code> when the entry has no note).</p>
 <div class="err"><strong>404 Not Found</strong> — item not found.</div>
 
 <h3>GET /api/v1/tracking/items/{itemId}/running-total</h3>
@@ -341,12 +345,33 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
   "itemId":       "e4d5f6a7-...",
   "currentTotal": 45000.00,
   "entries": [
-    { "id": "...", "entryDate": "2026-01-15", "amount": 50000.00, "runningTotal": 50000.00 },
-    { "id": "...", "entryDate": "2026-03-01", "amount": -5000.00, "runningTotal": 45000.00 }
-  ]
+    { "id": "...", "entryDate": "2026-01-15", "amount": 50000.00, "runningTotal": 50000.00, "note": "annual top-up" },
+    { "id": "...", "entryDate": "2026-03-01", "amount": -5000.00, "runningTotal": 45000.00, "note": null }
+  ],
+  "profitVsOriginal": {
+    "netOriginalInvestment": 45000.00,
+    "currentValue":          52000.00,
+    "currentValueSlot":      { "year": 2026, "quarter": 2 },
+    "profit":                7000.00,
+    "profitPercent":         15.56,
+    "isCovered":             true
+  }
 }</code></pre>
+<h4>The <code>profitVsOriginal</code> object <em>(Phase 5)</em></h4>
+<p>Always present on the response — it compares this item's cost basis against its latest recorded balance. Produced by the shared <code>profit_math.compute_profit</code> helper (TECHNICAL.html §13.2), so the null rules below match those of the set-wide rollup endpoint.</p>
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>netOriginalInvestment</code></td><td>number, nullable</td><td>Running signed sum of every ledger entry <code>amount</code> for this item (same value as <code>currentTotal</code>). <code>null</code> only when the item has no entries at all.</td></tr>
+    <tr><td><code>currentValue</code></td><td>number, nullable</td><td>The item's balance in its most-recent populated <code>(year, quarter)</code> slot, using the same winning-Update-Tracking-List selection as the Dashboard balance grid. <code>null</code> when the item has never had a balance recorded on any Update Tracking List.</td></tr>
+    <tr><td><code>currentValueSlot</code></td><td><code>{year, quarter}</code>, nullable</td><td>Which slot <code>currentValue</code> came from; <code>null</code> whenever <code>currentValue</code> is <code>null</code>.</td></tr>
+    <tr><td><code>profit</code></td><td>number, nullable</td><td><code>currentValue - netOriginalInvestment</code>; <code>null</code> unless both inputs are present.</td></tr>
+    <tr><td><code>profitPercent</code></td><td>number, nullable</td><td><code>profit / netOriginalInvestment * 100</code>, only when <code>netOriginalInvestment &gt; 0</code> and <code>currentValue</code> exists. When the net is <code>0</code> or negative, <code>profit</code> is still populated but <code>profitPercent</code> is <code>null</code> — never <code>Infinity</code>, <code>NaN</code>, or a string.</td></tr>
+    <tr><td><code>isCovered</code></td><td>boolean</td><td><code>true</code> when the flag is on AND the item has at least one entry AND <code>currentValue</code> is present. Does not require a positive net.</td></tr>
+  </tbody>
+</table>
 <div class="err">
-<strong>400 Bad Request</strong> — item does not have <code>initialInvestmentTracking</code> enabled.<br>
+<strong>400 Bad Request</strong> — item does not have <code>initialInvestmentTracking</code> enabled (unchanged from Phase 1 — the <code>profitVsOriginal</code> block does not relax this).<br>
 <strong>404 Not Found</strong> — item not found.
 </div>
 
@@ -354,13 +379,19 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
 <div class="err"><strong>404 Not Found</strong> — entry not found.</div>
 
 <h3>PUT /api/v1/tracking/entries/{id}</h3>
-<pre><code>// Request — amount and/or entryDate; amount must remain non-zero if provided
-{ "amount": 55000.00 }
+<pre><code>// Request — presence-aware (Phase 5): only the fields you send are changed.
+//   omit a field                       -> left untouched
+//   "note": null  /  "note": ""        -> clears the note (blank/whitespace is coerced to null)
+//   "amount": null  /  "entryDate": null -> rejected with 422 (these are non-nullable)
+{ "amount": 55000.00, "note": "sold half position" }
 
-// Response 200 — updated entry</code></pre>
+// Response 200 — updated entry (same shape as the POST response, including note)</code></pre>
+<div class="obj">
+<strong>Presence-aware semantics:</strong> the handler applies <code>model_dump(exclude_unset=True)</code>, so a field absent from the request body is not modified. This is what lets a caller change only <code>note</code> without resending <code>amount</code> / <code>entryDate</code>. Explicit <code>null</code> is meaningful only for <code>note</code> (it clears it); for <code>amount</code> and <code>entryDate</code>, <code>null</code> is a validation error, not "leave as-is".
+</div>
 <div class="err">
 <strong>404 Not Found</strong> — entry not found.<br>
-<strong>422 Unprocessable Entity</strong> — <code>amount</code> provided as zero.
+<strong>422 Unprocessable Entity</strong> — <code>amount</code> provided as zero; <code>amount</code> or <code>entryDate</code> provided as <code>null</code>; or <code>note</code> longer than 500 characters.
 </div>
 
 <h3>DELETE /api/v1/tracking/entries/{id}</h3>
@@ -570,10 +601,87 @@ A single read-only report endpoint that rolls up every balance ever recorded via
 
 <hr>
 
+<h2>Original Investment vs Profit (Phase 5)</h2>
+
+<div class="obj">
+A read-only rollup that pairs each tracked item's <strong>original invested amount</strong> (the signed sum of its Initial Investment Ledger entries) with its <strong>current balance</strong> (its latest recorded Update Tracking List balance), for the whole tracking set at once. Implemented in <code>app/api/v1/endpoints/dashboard.py</code> alongside the Phase 3 balance-grid route; profit math is the shared <code>app/services/profit_math.py — compute_profit()</code>; the set-wide assembly is <code>app/services/original_investment_rollup.py</code>. No request body, no query parameters beyond the path's <code>setId</code>; nothing is written or cached. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §12.13 and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §13.
+</div>
+
+<h3>GET /api/v1/tracking/sets/{setId}/dashboard/original-investment</h3>
+
+<h4>Definitions</h4>
+<ul>
+  <li><strong>Net original investment</strong> — running signed sum of every ledger entry <code>amount</code> for the item. <code>null</code> (render "—", never 0) when the item has no entries.</li>
+  <li><strong>Current value</strong> — the item's balance in its most-recent populated <code>(year, quarter)</code> slot, from the same winning-list selection the balance grid uses. <code>null</code> when the item has never had a recorded balance.</li>
+  <li><strong>Profit</strong> — <code>currentValue - netOriginalInvestment</code>; <code>null</code> unless both are present.</li>
+  <li><strong>Profit %</strong> — <code>profit / netOriginalInvestment * 100</code>, only when <code>netOriginalInvestment &gt; 0</code> and a current value exists; otherwise <code>null</code> (the profit amount is still shown). Never <code>Infinity</code> / <code>NaN</code>.</li>
+  <li><strong>Covered</strong> — flag on AND at least one entry AND a current value exists. Does not require a positive net.</li>
+</ul>
+
+<h4>Scope</h4>
+<p><code>items[]</code> and <code>coverage.totalCount</code> (<em>M</em>) include every <strong>non-<code>exclusive</code></strong> item in the set with <code>initialInvestmentTracking = true</code> — covered items and not-yet-covered items alike (the latter with <code>null</code> numeric fields). Items with the flag off, and <code>exclusive</code> items, are excluded entirely — never a row, never in a total. <code>coverage.shownCount</code> (<em>N</em>) is the covered count; <code>coverage.excludedItemNames</code> lists the in-scope items that are not covered. <code>totals</code> aggregate covered items only; <code>totals.profitPercent</code> is <code>null</code> when the summed net is <code>0</code> or negative.</p>
+
+<h4>Response field reference</h4>
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>trackingSetId</code></td><td>UUID</td><td>Echoes the path parameter.</td></tr>
+    <tr><td><code>generatedAt</code></td><td>string</td><td>ISO 8601 UTC timestamp of when the rollup was computed.</td></tr>
+    <tr><td><code>coverage.shownCount</code> / <code>.totalCount</code></td><td>integer</td><td><em>N</em> covered of <em>M</em> in-scope — drives the "shown for N of M tracked items" badge.</td></tr>
+    <tr><td><code>coverage.excludedItemNames</code></td><td>string[]</td><td>Names of in-scope items that are not covered.</td></tr>
+    <tr><td><code>items[].itemId</code> / <code>itemName</code> / <code>categoryName</code> / <code>subCategoryName</code></td><td>string</td><td>Identity and current hierarchy position of the row.</td></tr>
+    <tr><td><code>items[].netOriginalInvestment</code> / <code>currentValue</code> / <code>profit</code> / <code>profitPercent</code></td><td>number, nullable</td><td>Per the definitions above; <code>null</code> for a not-yet-covered row.</td></tr>
+    <tr><td><code>items[].currentValueSlot</code></td><td><code>{year, quarter}</code>, nullable</td><td>Which slot <code>currentValue</code> came from; <code>null</code> when there is no current value.</td></tr>
+    <tr><td><code>items[].isCovered</code></td><td>boolean</td><td>Whether this row is included in <code>totals</code>.</td></tr>
+    <tr><td><code>totals.netOriginalInvestment</code> / <code>currentValue</code> / <code>profit</code> / <code>profitPercent</code></td><td>number, nullable</td><td>Summed across covered items only. <code>profitPercent</code> is <code>null</code> when the summed net is <code>0</code> or negative.</td></tr>
+  </tbody>
+</table>
+
+<pre><code>// Response 200
+{
+  "trackingSetId": "b1a2c3d4-...",
+  "generatedAt": "2026-08-30T12:00:00+00:00",
+  "coverage": {
+    "shownCount": 2,
+    "totalCount": 3,
+    "excludedItemNames": ["Gold bars"]
+  },
+  "items": [
+    {
+      "itemId": "e4d5f6a7-...", "itemName": "SCB LTF", "categoryName": "Assets", "subCategoryName": "Long-term Investment",
+      "netOriginalInvestment": 300000.00, "currentValue": 342000.00,
+      "currentValueSlot": { "year": 2026, "quarter": 2 },
+      "profit": 42000.00, "profitPercent": 14.00, "isCovered": true
+    },
+    {
+      "itemId": "a1b2c3d4-...", "itemName": "Condo down-payment fund", "categoryName": "Assets", "subCategoryName": "Property",
+      "netOriginalInvestment": 0.00, "currentValue": 15000.00,
+      "currentValueSlot": { "year": 2026, "quarter": 1 },
+      "profit": 15000.00, "profitPercent": null, "isCovered": true
+    },
+    {
+      "itemId": "c9d8e7f6-...", "itemName": "Gold bars", "categoryName": "Assets", "subCategoryName": "Materials",
+      "netOriginalInvestment": 120000.00, "currentValue": null,
+      "currentValueSlot": null,
+      "profit": null, "profitPercent": null, "isCovered": false
+    }
+  ],
+  "totals": {
+    "netOriginalInvestment": 300000.00,
+    "currentValue": 357000.00,
+    "profit": 57000.00,
+    "profitPercent": 19.00
+  }
+}</code></pre>
+<div class="obj"><strong>Reading the example:</strong> the second item has a zero cost basis (contributions and withdrawals net to nothing) — its <code>profit</code> of +15,000 is still reported, but <code>profitPercent</code> is <code>null</code> because a percentage of zero is meaningless. The third item has ledger entries but no balance snapshot, so it is <em>not</em> covered: it appears as a row with <code>null</code> figures, is named in <code>coverage.excludedItemNames</code>, and does not contribute to <code>totals</code>. <code>totals</code> therefore sum only the first two items (300000 + 0 net; 342000 + 15000 value; 57000 profit; 19.00%).</div>
+<div class="err"><strong>404 Not Found</strong> — tracking set does not exist or belongs to another user (same bare-404, never-403 ownership pattern as every other resource): <code>{"detail": "Tracking set not found"}</code></div>
+
+<hr>
+
 <h2>Export (Phase 4)</h2>
 
 <div class="obj">
-A single read-only endpoint returning a full, restorable snapshot of one Tracking Set — every Category, Sub-category, Tracking Item, Update Tracking List, Update Tracking List balance, and Initial Investment Ledger entry it contains, as raw fields with no derived or calculated values. Implemented in <code>app/api/v1/endpoints/export.py</code>; schemas in <code>app/schemas/export.py</code>. This is the JSON backup attached to the email sent by the Dashboard page's "Email Dashboard" button. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §13 for user-facing behaviour and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §12.1 for the ownership and query-scoping detail.
+A single read-only endpoint returning a full, restorable snapshot of one Tracking Set — every Category, Sub-category, Tracking Item, Update Tracking List, Update Tracking List balance, and Initial Investment Ledger entry it contains, as raw fields with no derived or calculated values. Implemented in <code>app/api/v1/endpoints/export.py</code>; schemas in <code>app/schemas/export.py</code>. This is the JSON backup attached to the email sent by the Dashboard page's "Email Dashboard" button. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §13 for user-facing behaviour and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §12.1 for the ownership and query-scoping detail. <em>(Phase 5)</em> <code>exportVersion</code> is now <code>2</code>: <code>initialInvestmentEntries[]</code> rows carry the new optional <code>note</code> field.
 </div>
 
 <h3>GET /api/v1/tracking/sets/{setId}/export</h3>
@@ -583,7 +691,7 @@ A single read-only endpoint returning a full, restorable snapshot of one Trackin
 <table>
   <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
   <tbody>
-    <tr><td><code>exportVersion</code></td><td>integer</td><td>Currently <code>1</code>. A future incompatible change to this shape bumps this value.</td></tr>
+    <tr><td><code>exportVersion</code></td><td>integer</td><td>Currently <code>2</code> <em>(Phase 5 bumped it from 1)</em>. The bump is additive / backward-compatible: a v1 export lacking <code>initialInvestmentEntries[].note</code> is still valid and a restore defaults the field to <code>null</code>.</td></tr>
     <tr><td><code>exportedAt</code></td><td>string</td><td>ISO 8601 UTC timestamp of when the snapshot was assembled.</td></tr>
     <tr><td><code>trackingSet</code></td><td>object</td><td><code>{id, name, description, createdAt, updatedAt}</code>. <strong>No <code>userId</code> field</strong> — deliberately omitted for restore-safety (see TECHNICAL.html §12.1).</td></tr>
     <tr><td><code>categories[]</code></td><td>array</td><td>Flat array; each row includes <code>trackingSetId</code>, <code>orderIndex</code>, and every other raw <code>ft_category</code> column.</td></tr>
@@ -591,14 +699,14 @@ A single read-only endpoint returning a full, restorable snapshot of one Trackin
     <tr><td><code>trackingItems[]</code></td><td>array</td><td>Flat array; each row includes <code>subCategoryId</code>, <code>type</code>, <code>initialInvestmentTracking</code>, <code>exclusive</code>, <code>orderIndex</code>, and every other raw <code>ft_tracking_item</code> column.</td></tr>
     <tr><td><code>updateTrackingLists[]</code></td><td>array</td><td>Every Phase 2 snapshot header for this set, verbatim (<code>transactionDate</code>, <code>quarter</code>, <code>year</code>, etc.).</td></tr>
     <tr><td><code>updateTrackingListBalances[]</code></td><td>array</td><td>Every Phase 2 per-item balance row for this set's lists, verbatim.</td></tr>
-    <tr><td><code>initialInvestmentEntries[]</code></td><td>array</td><td>Every Phase 1 ledger entry for any item in this set, verbatim.</td></tr>
+    <tr><td><code>initialInvestmentEntries[]</code></td><td>array</td><td>Every Phase 1 ledger entry for any item in this set, verbatim — including the <em>(Phase 5)</em> <code>note</code> field (<code>null</code> for entries with no note).</td></tr>
   </tbody>
 </table>
 <div class="obj"><strong>Note:</strong> <code>orderIndex</code> is used verbatim here (not aliased to <code>order</code>), matching the same convention already used by the Update Tracking List detail and Dashboard responses above — see TECHNICAL.html §11 TD-FT-06.</div>
 
 <pre><code>// Response 200
 {
-  "exportVersion": 1,
+  "exportVersion": 2,
   "exportedAt": "2026-08-29T12:00:00+00:00",
   "trackingSet": {
     "id": "a1b2c3d4-...", "name": "Personal", "description": null,
@@ -619,7 +727,9 @@ A single read-only endpoint returning a full, restorable snapshot of one Trackin
   "updateTrackingListBalances": [
     { "id": "a6b7c8d9-...", "updateTrackingListId": "f5e6a7b8-...", "trackingItemId": "e4d5f6a7-...", "balance": 110000.00, "createdAt": "...", "updatedAt": "..." }
   ],
-  "initialInvestmentEntries": []
+  "initialInvestmentEntries": [
+    { "id": "b7c8d9e0-...", "trackingItemId": "e4d5f6a7-...", "amount": 100000.00, "entryDate": "2026-01-10", "note": "initial purchase", "createdAt": "...", "updatedAt": "..." }
+  ]
 }</code></pre>
 <div class="err"><strong>404 Not Found</strong> — tracking set does not exist or belongs to another user (same bare-404, never-403 ownership pattern as every other resource): <code>{"detail": "Tracking set not found"}</code></div>
 
@@ -632,7 +742,7 @@ A single read-only endpoint returning a full, restorable snapshot of one Trackin
   <tr><td>401</td><td>Missing/invalid/expired Bearer token, missing <code>jti</code> claim, or token revoked (blacklisted)</td><td>"Missing authentication credentials" / "Invalid token: ..." / "Token missing jti claim" / "Token has been revoked"</td></tr>
   <tr><td>404</td><td>Resource UUID not found, or belongs to another user (ownership check never distinguishes the two — see TECHNICAL.html §5.1)</td><td>"&lt;Resource&gt; not found"</td></tr>
   <tr><td>409</td><td>Duplicate Tracking Set name for the same user</td><td>"A tracking set with this name already exists"</td></tr>
-  <tr><td>422</td><td>Missing required field, wrong type, invalid <code>type</code> enum value, or zero-amount ledger entry</td><td>Pydantic validation error array</td></tr>
+  <tr><td>422</td><td>Missing required field, wrong type, invalid <code>type</code> enum value, zero-amount ledger entry, ledger <code>note</code> longer than 500 chars, or an explicit <code>null</code> for a ledger entry's <code>amount</code> / <code>entryDate</code> on <code>PUT /entries/{id}</code> <em>(Phase 5)</em></td><td>Pydantic validation error array</td></tr>
   <tr><td>503</td><td>Redis unreachable while checking the token blacklist (fails closed, not open)</td><td>"Authentication service temporarily unavailable"</td></tr>
 </table>
 

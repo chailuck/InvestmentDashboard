@@ -72,14 +72,96 @@ export interface Entry {
   trackingItemId: string
   amount: number
   entryDate: string
+  /** Optional free-text note (UTF-8 / Thai OK), max 500 chars. `null` when unset. */
+  note: string | null
   createdAt: string
   updatedAt: string
+}
+
+/** The (year, quarter) grid slot a `currentValue` figure was read from — the most-recent populated balance slot for the item. */
+export interface CurrentValueSlot {
+  year: number
+  quarter: number
+}
+
+/**
+ * Read-time "profit vs original investment" figures for a single tracking
+ * item. ALWAYS present on `RunningTotal`; every inner field is `null` when
+ * the underlying data is absent:
+ *  - `netOriginalInvestment` — `null` when the item has 0 ledger entries (NOT 0).
+ *  - `currentValue` / `currentValueSlot` — `null` when the item has no
+ *    populated update-list balance slot.
+ *  - `profit` — `null` unless BOTH `netOriginalInvestment` and `currentValue`
+ *    are present.
+ *  - `profitPercent` — `null` unless `netOriginalInvestment > 0` AND
+ *    `currentValue` is present. Never computed client-side.
+ *  - `isCovered` — `(>= 1 entry) AND (currentValue not null)`.
+ */
+export interface ProfitVsOriginal {
+  netOriginalInvestment: number | null
+  currentValue: number | null
+  currentValueSlot: CurrentValueSlot | null
+  profit: number | null
+  profitPercent: number | null
+  isCovered: boolean
 }
 
 export interface RunningTotal {
   itemId: string
   currentTotal: number
   entries: (Entry & { runningTotal: number })[]
+  /** Always present. See `ProfitVsOriginal` — inner fields are `null` when data is absent. */
+  profitVsOriginal: ProfitVsOriginal
+}
+
+// ── Original-investment rollup (Dashboard "Original Investment vs Profit") ────
+// `GET /tracking/sets/{setId}/dashboard/original-investment` — a per-item
+// rollup of each in-scope (non-exclusive, `initialInvestmentTracking=true`)
+// item's cost basis vs its most-recent balance snapshot. `items[]` contains
+// BOTH covered rows and not-covered rows (the latter carrying `null`
+// numeric fields). Cross-user `setId` -> 404.
+
+export interface OriginalInvestmentCoverage {
+  /** Items with a computable profit figure. */
+  shownCount: number
+  /** All in-scope tracked items. */
+  totalCount: number
+  /** In-scope items with no computable profit figure — surfaced as a footnote. */
+  excludedItemNames: string[]
+}
+
+export interface OriginalInvestmentItemRow {
+  itemId: string
+  itemName: string
+  categoryName: string
+  subCategoryName: string
+  /** Signed sum of the item's ledger entries; `null` when not covered. */
+  netOriginalInvestment: number | null
+  /** Balance in the item's most-recent populated slot; `null` when none. */
+  currentValue: number | null
+  currentValueSlot: CurrentValueSlot | null
+  profit: number | null
+  /** Server-computed; render `null` as "—". Never computed client-side. */
+  profitPercent: number | null
+  isCovered: boolean
+}
+
+export interface OriginalInvestmentTotals {
+  /** Aggregated over COVERED items only; `null` when `shownCount === 0`. */
+  netOriginalInvestment: number | null
+  currentValue: number | null
+  profit: number | null
+  /** `null` when the summed `netOriginalInvestment` is <= 0. */
+  profitPercent: number | null
+}
+
+export interface OriginalInvestmentRollup {
+  trackingSetId: string
+  /** ISO-8601 UTC timestamp the rollup was generated. */
+  generatedAt: string
+  coverage: OriginalInvestmentCoverage
+  items: OriginalInvestmentItemRow[]
+  totals: OriginalInvestmentTotals
 }
 
 // ── Dashboard balance grid (Financial Tracker Phase 3) ───────────────────────
@@ -209,6 +291,12 @@ export interface EntryInput {
   /** Signed amount — positive to increase, negative to decrease. Must be non-zero. */
   amount: number
   entryDate: string
+  /**
+   * Optional free-text note (UTF-8 / Thai OK), max 500 chars. Send `null` (or
+   * omit) to clear it. The backend PUT is presence-aware: omitting the key
+   * leaves an existing note untouched; sending `null` clears it.
+   */
+  note?: string | null
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -347,6 +435,11 @@ export const trackingService = {
   async getBalanceGrid(setId: string): Promise<DashboardBalanceGridOut> {
     const { data } = await apiClient.get(p(`/sets/${setId}/dashboard/balance-grid`))
     return data as DashboardBalanceGridOut
+  },
+  /** Per-item cost-basis-vs-profit rollup for one tracking set (404 if it doesn't exist or isn't owned by the caller). */
+  async getOriginalInvestmentRollup(setId: string): Promise<OriginalInvestmentRollup> {
+    const { data } = await apiClient.get(p(`/sets/${setId}/dashboard/original-investment`))
+    return data as OriginalInvestmentRollup
   },
 
   // Full backup export ─────────────────────────────────────────────────────

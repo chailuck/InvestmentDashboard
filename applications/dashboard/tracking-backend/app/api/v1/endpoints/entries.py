@@ -45,10 +45,25 @@ async def update_entry(
     entry_id: uuid.UUID, body: EntryUpdate, user_id: UserId, db: DB
 ) -> InitialInvestmentEntry:
     entry = await _get_or_404(entry_id, user_id, db)
-    if body.amount is not None:
-        entry.amount = body.amount
-    if body.entry_date is not None:
-        entry.entry_date = body.entry_date
+
+    # Presence-aware update: only keys the client actually sent are applied,
+    # so an explicit `null` for `note` clears it while an omitted key leaves
+    # it untouched. `amount` and `entry_date` are NOT NULL at the DB layer,
+    # so an explicit `null` for either is a client error (422), not a
+    # clear-to-null request — same posture as update_update_tracking_list's
+    # handling of `transaction_date`.
+    data = body.model_dump(exclude_unset=True)
+    if "amount" in data:
+        if data["amount"] is None:
+            raise HTTPException(422, "amount cannot be null")
+        entry.amount = data["amount"]
+    if "entry_date" in data:
+        if data["entry_date"] is None:
+            raise HTTPException(422, "entryDate cannot be null")
+        entry.entry_date = data["entry_date"]
+    if "note" in data:
+        entry.note = data["note"]  # already blank -> None coerced by the schema
+
     await db.commit()
     await db.refresh(entry)
     _log.info("Entry updated", user_id=user_id, entry_id=str(entry.id))

@@ -6,6 +6,7 @@ import TrackingDashboardPage from '../page'
 import { trackingService } from '@/services/tracking'
 import type {
   TrackingSet, DashboardBalanceGridOut, BalanceCell, TrackingSetExport,
+  OriginalInvestmentRollup,
 } from '@/services/tracking'
 import { sendExportEmail } from '@/services/emailExport'
 import { utf8ToBase64 } from '@/lib/tracking-export-html'
@@ -23,6 +24,7 @@ vi.mock('@/services/tracking', () => ({
     listSets: vi.fn(),
     getBalanceGrid: vi.fn(),
     getExport: vi.fn(),
+    getOriginalInvestmentRollup: vi.fn(),
   },
 }))
 
@@ -444,11 +446,49 @@ const TARGET_GRID: DashboardBalanceGridOut = {
   },
 }
 
+/** An empty rollup — the default so the standalone "Original Investment vs Profit" section renders its inert "no tracked items" state and never collides with existing per-table text assertions. Individual tests override with `ROLLUP_FULL`. */
+const ROLLUP_EMPTY: OriginalInvestmentRollup = {
+  trackingSetId: 'set-1',
+  generatedAt: '2026-08-30T07:30:00+00:00',
+  coverage: { shownCount: 0, totalCount: 0, excludedItemNames: [] },
+  items: [],
+  totals: { netOriginalInvestment: null, currentValue: null, profit: null, profitPercent: null },
+}
+
+/** Two covered rows + one not-covered row, with two excluded names — "6 of 8" coverage. */
+const ROLLUP_FULL: OriginalInvestmentRollup = {
+  trackingSetId: 'set-1',
+  generatedAt: '2026-08-30T07:30:00+00:00',
+  coverage: { shownCount: 6, totalCount: 8, excludedItemNames: ['Condo Bangkok', 'SCB Savings'] },
+  items: [
+    {
+      itemId: 'oi-1', itemName: 'ARK Growth', categoryName: 'Investments', subCategoryName: 'US Equity',
+      netOriginalInvestment: 100000, currentValue: 132000,
+      currentValueSlot: { year: 2026, quarter: 2 },
+      profit: 32000, profitPercent: 32, isCovered: true,
+    },
+    {
+      itemId: 'oi-2', itemName: 'Gold Bar', categoryName: 'Materials', subCategoryName: 'Precious metals',
+      netOriginalInvestment: 50000, currentValue: 45000,
+      currentValueSlot: { year: 2026, quarter: 1 },
+      profit: -5000, profitPercent: -10, isCovered: true,
+    },
+    {
+      itemId: 'oi-3', itemName: 'Condo Bangkok', categoryName: 'Property', subCategoryName: 'Real estate',
+      netOriginalInvestment: null, currentValue: 5200000,
+      currentValueSlot: { year: 2026, quarter: 1 },
+      profit: null, profitPercent: null, isCovered: false,
+    },
+  ],
+  totals: { netOriginalInvestment: 150000, currentValue: 177000, profit: 27000, profitPercent: 18 },
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   mocked.listSets.mockResolvedValue(SETS)
   mocked.getBalanceGrid.mockResolvedValue(GRID)
+  mocked.getOriginalInvestmentRollup.mockResolvedValue(ROLLUP_EMPTY)
 })
 
 /**
@@ -1719,5 +1759,171 @@ describe('utf8ToBase64', () => {
     const decoded = Buffer.from(encoded, 'base64').toString('utf-8')
 
     expect(decoded).toBe(original)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Original Investment vs Profit — standalone section
+// ---------------------------------------------------------------------------
+
+/** The section's surrounding `.card`, scoped by its heading so per-row queries don't leak into the rest of the page. */
+function getRollupSection(): HTMLElement {
+  return screen.getByRole('heading', { name: 'Original Investment vs Profit' }).closest('.card') as HTMLElement
+}
+
+describe('TrackingDashboardPage — Original Investment vs Profit section', () => {
+  it('renders one row per rollup item, with a covered row\'s real figures and a not-covered row showing "—" in all four numeric cells', async () => {
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(ROLLUP_FULL)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const section = getRollupSection()
+    await within(section).findByText('ARK Growth')
+    // Scope to the table body — "Condo Bangkok" also appears in the excluded-names disclosure.
+    const table = within(section).getByRole('table')
+
+    // Covered row — real, server-provided numbers (percent shown verbatim, never recomputed).
+    const arkRow = within(table).getByText('ARK Growth').closest('tr')!
+    expect(within(arkRow).getByText('100,000.00')).toBeInTheDocument()
+    expect(within(arkRow).getByText(/132,000\.00/)).toBeInTheDocument()
+    expect(within(arkRow).getByText('+32,000.00')).toHaveClass('text-gain')
+    expect(within(arkRow).getByText('32.00%')).toBeInTheDocument()
+
+    // Covered loss row — negative profit takes the loss color.
+    const goldRow = within(table).getByText('Gold Bar').closest('tr')!
+    expect(within(goldRow).getByText('-5,000.00')).toHaveClass('text-loss')
+
+    // Not-covered row — name/category/sub-category still shown, all 4 numeric cells "—", NEVER 0 / 0% / 100%.
+    const condoRow = within(table).getByText('Condo Bangkok').closest('tr')!
+    expect(within(condoRow).getByText('Property')).toBeInTheDocument()
+    expect(within(condoRow).getByText('Real estate')).toBeInTheDocument()
+    const condoCells = within(condoRow).getAllByRole('cell')
+    expect(condoCells.slice(3).map(c => c.textContent)).toEqual(['—', '—', '—', '—'])
+    expect(condoRow.textContent).not.toMatch(/\b0(\.00)?%?\b/)
+    expect(condoRow.textContent).not.toContain('100%')
+  })
+
+  it('shows the coverage badge ("6 of 8") and a <details> disclosure listing the excluded item names', async () => {
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(ROLLUP_FULL)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const section = getRollupSection()
+    await within(section).findByText('ARK Growth')
+
+    expect(within(section).getByText(/Profit vs original shown for/i)).toHaveTextContent(
+      'Profit vs original shown for 6 of 8 tracked items',
+    )
+    const details = within(section).getByText('Which items are excluded?').closest('details')!
+    expect(within(details).getByText('Condo Bangkok')).toBeInTheDocument()
+    expect(within(details).getByText('SCB Savings')).toBeInTheDocument()
+  })
+
+  it('renders a covered-only totals row', async () => {
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(ROLLUP_FULL)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const section = getRollupSection()
+    const totalsRow = (await within(section).findByText('Total (covered items)')).closest('tr')!
+    expect(within(totalsRow).getByText('150,000.00')).toBeInTheDocument()
+    expect(within(totalsRow).getByText('177,000.00')).toBeInTheDocument()
+    expect(within(totalsRow).getByText('+27,000.00')).toBeInTheDocument()
+    expect(within(totalsRow).getByText('18.00%')).toBeInTheDocument()
+  })
+
+  it('renders a "—" totals cell for profitPercent when the rollup reports it as null', async () => {
+    mocked.getOriginalInvestmentRollup.mockResolvedValue({
+      ...ROLLUP_FULL,
+      totals: { netOriginalInvestment: 150000, currentValue: 177000, profit: 27000, profitPercent: null },
+    })
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const section = getRollupSection()
+    const totalsRow = (await within(section).findByText('Total (covered items)')).closest('tr')!
+    const cells = within(totalsRow).getAllByRole('cell')
+    expect(cells[cells.length - 1]).toHaveTextContent('—')
+  })
+
+  it('shows a short empty message (no table) when no items have original-investment tracking enabled', async () => {
+    // beforeEach default is ROLLUP_EMPTY (items: []).
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const section = getRollupSection()
+    expect(within(section).getByText('No items have original-investment tracking enabled yet.')).toBeInTheDocument()
+    expect(section.querySelector('table')).toBeNull()
+  })
+
+  it('keeps the rest of the page working when the rollup fetch fails (section shows its own error state only)', async () => {
+    mocked.getOriginalInvestmentRollup.mockRejectedValue(new Error('rollup down'))
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    // The per-year balance tables and charts are unaffected.
+    expect(getYearTable(2024)).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Category trend lines chart' })).toBeInTheDocument()
+
+    const section = getRollupSection()
+    expect(await within(section).findByText(/Failed to load the original-investment rollup/i)).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Email Dashboard — original-investment rollup integration (graceful degradation)
+// ---------------------------------------------------------------------------
+
+describe('TrackingDashboardPage — Email Dashboard rollup integration', () => {
+  const EXPORT_PAYLOAD: TrackingSetExport = {
+    exportVersion: 1,
+    exportedAt: '2026-08-24T00:00:00Z',
+    trackingSet: { id: 'set-1', name: 'Main Set', description: null, createdAt: '', updatedAt: '' },
+    categories: [], subCategories: [], trackingItems: [],
+    updateTrackingLists: [], updateTrackingListBalances: [], initialInvestmentEntries: [],
+  }
+  const mockedSendExportEmail = vi.mocked(sendExportEmail)
+  const mockedToastError = vi.mocked(toast.error)
+
+  it('passes the loaded rollup to the email builder so the profit section is included in the HTML body', async () => {
+    const user = userEvent.setup()
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(ROLLUP_FULL)
+    mocked.getExport.mockResolvedValue(EXPORT_PAYLOAD)
+    mockedSendExportEmail.mockResolvedValue({
+      success: true, recipient: 'user@example.com', sentAt: '2026-08-24T00:00:01Z', error: null,
+    })
+
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+    // Ensure the rollup query has resolved into the cache before clicking.
+    await within(getRollupSection()).findByText('ARK Growth')
+
+    await user.click(screen.getByRole('button', { name: /Email Dashboard/i }))
+    await waitFor(() => expect(mockedSendExportEmail).toHaveBeenCalledTimes(1))
+
+    const callArg = mockedSendExportEmail.mock.calls[0][0]
+    expect(callArg.htmlBody).toContain('Original Investment vs Profit')
+    expect(callArg.htmlBody).toContain('ARK Growth')
+    expect(callArg.htmlBody).toContain('Profit vs original shown for 6 of 8 tracked items.')
+  })
+
+  it('still sends the email (balance grid only, no profit section, no error toast) when the rollup is unavailable', async () => {
+    const user = userEvent.setup()
+    mocked.getOriginalInvestmentRollup.mockRejectedValue(new Error('rollup down'))
+    mocked.getExport.mockResolvedValue(EXPORT_PAYLOAD)
+    mockedSendExportEmail.mockResolvedValue({
+      success: true, recipient: 'user@example.com', sentAt: '2026-08-24T00:00:01Z', error: null,
+    })
+
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    await user.click(screen.getByRole('button', { name: /Email Dashboard/i }))
+    await waitFor(() => expect(mockedSendExportEmail).toHaveBeenCalledTimes(1))
+
+    const callArg = mockedSendExportEmail.mock.calls[0][0]
+    expect(callArg.htmlBody).toContain('Assets') // balance grid still present
+    expect(callArg.htmlBody).not.toContain('Original Investment vs Profit')
+    expect(mockedToastError).not.toHaveBeenCalled()
   })
 })

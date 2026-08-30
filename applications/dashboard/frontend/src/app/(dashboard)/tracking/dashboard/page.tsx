@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import toast from 'react-hot-toast'
 import {
@@ -16,6 +16,9 @@ import {
   type DashboardBalanceGridOut,
   type DashboardCategoryRow,
   type DashboardYearColumn,
+  type OriginalInvestmentCoverage,
+  type OriginalInvestmentItemRow,
+  type OriginalInvestmentRollup,
 } from '@/services/tracking'
 import { buildDashboardEmailHtml, utf8ToBase64 } from '@/lib/tracking-export-html'
 import { sendExportEmail } from '@/services/emailExport'
@@ -1460,10 +1463,177 @@ function CategoryStackedBarChart({
   )
 }
 
+// ── Original Investment vs Profit section ──────────────────────────────────────
+//
+// A standalone card near the top of the page — its OWN React Query, fully
+// independent of the balance-grid / chart machinery below (it must never
+// break the rest of the page when its fetch is slow or fails). "No original
+// investment logged" / not-covered is a first-class state on every row: the
+// four numeric columns render an em dash "—", NEVER a fabricated 0 cost
+// basis / "0%" / "100%". `profitPercent` comes straight from the server
+// (rounded for display only) — never derived client-side.
+
+/** Coverage line + an optional `<details>` disclosure of the excluded item names. */
+function CoverageBadge({ coverage }: { coverage: OriginalInvestmentCoverage }) {
+  return (
+    <div className="text-xs text-ink-muted space-y-1">
+      <p>
+        Profit vs original shown for{' '}
+        <span className="font-semibold text-ink-secondary">
+          {coverage.shownCount} of {coverage.totalCount}
+        </span>{' '}
+        tracked items
+      </p>
+      {coverage.excludedItemNames.length > 0 && (
+        <details>
+          <summary className="cursor-pointer hover:text-brand-400 transition-colors">
+            Which items are excluded?
+          </summary>
+          <ul className="mt-1 ml-4 list-disc space-y-0.5 text-ink-disabled">
+            {coverage.excludedItemNames.map((name, i) => (
+              <li key={`${name}-${i}`}>{name}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
+/** The four numeric `<td>`s for one rollup row — all "—" when the row is not covered. */
+function RollupNumericCells({ row }: { row: OriginalInvestmentItemRow }) {
+  if (!row.isCovered) {
+    return (
+      <>
+        <td className="px-3 py-1.5 text-right text-ink-disabled">—</td>
+        <td className="px-3 py-1.5 text-right text-ink-disabled">—</td>
+        <td className="px-3 py-1.5 text-right text-ink-disabled">—</td>
+        <td className="px-3 py-1.5 text-right text-ink-disabled">—</td>
+      </>
+    )
+  }
+  return (
+    <>
+      <td className="px-3 py-1.5 text-right font-mono text-ink-secondary whitespace-nowrap">
+        {row.netOriginalInvestment === null ? '—' : fmtBalance(row.netOriginalInvestment)}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-ink-secondary whitespace-nowrap">
+        {row.currentValue === null ? '—' : fmtBalance(row.currentValue)}
+        {row.currentValueSlot && (
+          <span className="ml-1 text-[10px] text-ink-disabled">
+            Q{row.currentValueSlot.quarter} {row.currentValueSlot.year}
+          </span>
+        )}
+      </td>
+      <td
+        className={cn(
+          'px-3 py-1.5 text-right font-mono whitespace-nowrap',
+          row.profit === null ? 'text-ink-disabled' : row.profit >= 0 ? 'text-gain' : 'text-loss',
+        )}
+      >
+        {row.profit === null ? '—' : fmtAmount(row.profit)}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-ink-secondary whitespace-nowrap">
+        {row.profitPercent === null ? '—' : `${row.profitPercent.toFixed(2)}%`}
+      </td>
+    </>
+  )
+}
+
+function OriginalInvestmentSection({ setId }: { setId: string }) {
+  const { data: rollup, isLoading, isError } = useQuery({
+    queryKey: ['tracking-original-investment', setId],
+    queryFn: () => trackingService.getOriginalInvestmentRollup(setId),
+    enabled: !!setId,
+    staleTime: 10_000,
+  })
+
+  return (
+    <div className="card p-4 space-y-3">
+      <h2 className="text-sm font-semibold text-ink-primary flex items-center gap-2">
+        <Target className="w-4 h-4 text-brand-400" /> Original Investment vs Profit
+      </h2>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-ink-muted text-xs py-4">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading original-investment rollup…
+        </div>
+      ) : isError || !rollup ? (
+        <div className="flex items-center gap-2 text-loss text-xs py-4">
+          <AlertCircle className="w-3.5 h-3.5" /> Failed to load the original-investment rollup.
+        </div>
+      ) : rollup.items.length === 0 ? (
+        <p className="text-xs text-ink-muted py-2">
+          No items have original-investment tracking enabled yet.
+        </p>
+      ) : (
+        <>
+          <CoverageBadge coverage={rollup.coverage} />
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="border-b-2 border-border text-ink-muted">
+                  <th scope="col" className="px-3 py-2 text-left font-medium">Item</th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">Category</th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">Sub-category</th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">Original investment</th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">Current value</th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">Profit</th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">Profit %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rollup.items.map(row => (
+                  <tr key={row.itemId} className="border-b border-border/40">
+                    <td
+                      className="px-3 py-1.5 text-ink-primary max-w-[16rem] truncate"
+                      title={row.itemName}
+                    >
+                      {row.itemName}
+                    </td>
+                    <td className="px-3 py-1.5 text-ink-secondary">{row.categoryName}</td>
+                    <td className="px-3 py-1.5 text-ink-secondary">{row.subCategoryName}</td>
+                    <RollupNumericCells row={row} />
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-border bg-surface-elevated/40 font-semibold">
+                  <td className="px-3 py-2 text-ink-primary" colSpan={3}>Total (covered items)</td>
+                  <td className="px-3 py-2 text-right font-mono text-ink-primary whitespace-nowrap">
+                    {rollup.totals.netOriginalInvestment === null ? '—' : fmtBalance(rollup.totals.netOriginalInvestment)}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-ink-primary whitespace-nowrap">
+                    {rollup.totals.currentValue === null ? '—' : fmtBalance(rollup.totals.currentValue)}
+                  </td>
+                  <td
+                    className={cn(
+                      'px-3 py-2 text-right font-mono whitespace-nowrap',
+                      rollup.totals.profit === null
+                        ? 'text-ink-disabled'
+                        : rollup.totals.profit >= 0 ? 'text-gain' : 'text-loss',
+                    )}
+                  >
+                    {rollup.totals.profit === null ? '—' : fmtAmount(rollup.totals.profit)}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-ink-primary whitespace-nowrap">
+                    {rollup.totals.profitPercent === null ? '—' : `${rollup.totals.profitPercent.toFixed(2)}%`}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function TrackingDashboardPage() {
   const [selectedSetId, setSelectedSetId] = useState<string>('')
+  const queryClient = useQueryClient()
 
   const { data: sets = [], isLoading: setsLoading, isError: setsError } = useQuery({
     queryKey: ['tracking-sets'],
@@ -1647,11 +1817,32 @@ export default function TrackingDashboardPage() {
     if (!grid || !selectedSetId) return
     setSendingEmail(true)
     try {
-      const html = buildDashboardEmailHtml(grid, {
-        collapsedYears: collapsedYears.set,
-        collapsedCategories: collapsedCategories.set,
-        collapsedSubCategories: collapsedSubCategories.set,
-      })
+      // Graceful degradation: reuse the already-loaded rollup from the query
+      // cache (populated by <OriginalInvestmentSection>), else fetch it once
+      // here. If that fetch fails, the email STILL sends with the balance
+      // grid only — `rollup = null` simply omits the profit section.
+      let rollup: OriginalInvestmentRollup | null =
+        queryClient.getQueryData<OriginalInvestmentRollup>(
+          ['tracking-original-investment', selectedSetId],
+        ) ?? null
+      if (!rollup) {
+        try {
+          rollup = await trackingService.getOriginalInvestmentRollup(selectedSetId)
+        } catch {
+          rollup = null
+          console.warn('Original-investment rollup unavailable — emailing the balance grid only')
+        }
+      }
+
+      const html = buildDashboardEmailHtml(
+        grid,
+        {
+          collapsedYears: collapsedYears.set,
+          collapsedCategories: collapsedCategories.set,
+          collapsedSubCategories: collapsedSubCategories.set,
+        },
+        rollup,
+      )
 
       let exportPayload: Awaited<ReturnType<typeof trackingService.getExport>>
       try {
@@ -1769,6 +1960,10 @@ export default function TrackingDashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Standalone "Original Investment vs Profit" rollup — its own query,
+          independent of the balance-grid state machine below. */}
+      {selectedSetId && <OriginalInvestmentSection setId={selectedSetId} />}
 
       {/* Category trend chart + per-year balance tables (Grand Total now lives
           inside each YearTable — see requirement 3) */}

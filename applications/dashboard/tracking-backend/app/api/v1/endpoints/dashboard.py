@@ -33,8 +33,17 @@ from app.schemas.dashboard import (
     DashboardPropertyBreakdown,
     DashboardSubCategoryRow,
     DashboardYearColumn,
+    OriginalInvestmentCoverage,
+    OriginalInvestmentItemRow,
+    OriginalInvestmentRollupOut,
+    OriginalInvestmentTotals,
 )
+from app.schemas.initial_investment_entry import CurrentValueSlot
 from app.services.dashboard_balance_grid import BalanceGridResult, Cell, get_balance_grid
+from app.services.original_investment_rollup import (
+    OriginalInvestmentRollupResult,
+    get_original_investment_rollup,
+)
 
 router = APIRouter(tags=["Dashboard"])
 
@@ -108,3 +117,59 @@ async def get_dashboard_balance_grid(
     tracking_set = await _get_set_or_404(set_id, user_id, db)
     result = await get_balance_grid(db, tracking_set_id=tracking_set.id)
     return _to_response(result)
+
+
+def _to_rollup_response(
+    result: OriginalInvestmentRollupResult,
+) -> OriginalInvestmentRollupOut:
+    return OriginalInvestmentRollupOut(
+        tracking_set_id=result.tracking_set_id,
+        generated_at=result.generated_at,
+        coverage=OriginalInvestmentCoverage(
+            shown_count=result.coverage.shown_count,
+            total_count=result.coverage.total_count,
+            excluded_item_names=list(result.coverage.excluded_item_names),
+        ),
+        items=[
+            OriginalInvestmentItemRow(
+                item_id=it.item_id,
+                item_name=it.item_name,
+                category_name=it.category_name,
+                sub_category_name=it.sub_category_name,
+                net_original_investment=it.net_original_investment,
+                current_value=it.current_value,
+                current_value_slot=(
+                    CurrentValueSlot(
+                        year=it.current_value_slot.year,
+                        quarter=it.current_value_slot.quarter,
+                    )
+                    if it.current_value_slot is not None
+                    else None
+                ),
+                profit=it.profit,
+                profit_percent=it.profit_percent,
+                is_covered=it.is_covered,
+            )
+            for it in result.items
+        ],
+        totals=OriginalInvestmentTotals(
+            net_original_investment=result.totals.net_original_investment,
+            current_value=result.totals.current_value,
+            profit=result.totals.profit,
+            profit_percent=result.totals.profit_percent,
+        ),
+    )
+
+
+@router.get(
+    "/sets/{set_id}/dashboard/original-investment",
+    response_model=OriginalInvestmentRollupOut,
+)
+async def get_original_investment(
+    set_id: uuid.UUID, user_id: UserId, db: DB
+) -> OriginalInvestmentRollupOut:
+    tracking_set = await _get_set_or_404(set_id, user_id, db)
+    result = await get_original_investment_rollup(
+        db, tracking_set_id=tracking_set.id, user_id=tracking_set.user_id
+    )
+    return _to_rollup_response(result)

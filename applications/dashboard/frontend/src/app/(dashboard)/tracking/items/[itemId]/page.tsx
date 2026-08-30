@@ -8,13 +8,13 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
 import {
   ArrowLeft, Save, Loader2, AlertCircle, Plus, Edit2, Trash2, X,
-  BookOpen, Info,
+  BookOpen, Info, TrendingUp,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 import {
   trackingService, TRACKING_ITEM_TYPES,
-  type TrackingItem, type TrackingItemType, type Entry,
+  type TrackingItem, type TrackingItemType, type Entry, type ProfitVsOriginal,
 } from '@/services/tracking'
 import { extractApiError } from '@/services/api'
 import { ConfirmDeleteModal } from '@/components/tracking/ConfirmDeleteModal'
@@ -67,10 +67,11 @@ function EntryForm({
 }: {
   initial?: Entry | null
   onClose: () => void
-  onSave: (entryDate: string, amount: number) => Promise<void>
+  onSave: (entryDate: string, amount: number, note: string | null) => Promise<void>
 }) {
   const [entryDate, setEntryDate] = useState(initial?.entryDate ?? todayIso())
   const [amount, setAmount] = useState(initial ? String(initial.amount) : '')
+  const [note, setNote] = useState(initial?.note ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -84,7 +85,7 @@ function EntryForm({
     setSaving(true)
     setError(null)
     try {
-      await onSave(entryDate, amt)
+      await onSave(entryDate, amt, note.trim() || null)
     } catch (err) {
       setError(extractApiError(err))
     } finally {
@@ -128,6 +129,18 @@ function EntryForm({
             required
           />
         </div>
+        <div className="space-y-1 w-full">
+          <label htmlFor="entry-note" className="text-xs font-medium text-ink-secondary">Note (optional)</label>
+          <textarea
+            id="entry-note"
+            rows={2}
+            maxLength={500}
+            className="input text-sm w-full resize-none"
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="Optional — up to 500 characters"
+          />
+        </div>
         <button type="submit" disabled={saving} className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           {initial ? 'Update' : 'Add'}
@@ -137,6 +150,75 @@ function EntryForm({
         <p className="text-xs text-loss px-3 py-2 rounded-lg bg-loss/10 border border-loss/20">{error}</p>
       )}
     </motion.div>
+  )
+}
+
+// ── Profit vs Original panel ──────────────────────────────────────────────────
+//
+// Read-only view of the item's cost basis vs its most-recent balance
+// snapshot, driven entirely by the server-computed `profitVsOriginal` block
+// on the running-total response. "No original investment logged" / no
+// snapshot is a first-class state here — every absent figure renders as an
+// em dash, NEVER as a fabricated 0 / "0%" / "100%". `profitPercent` is shown
+// verbatim from the server (rounded for display only) and never derived
+// client-side.
+
+function fmtSigned(n: number): string {
+  return (n >= 0 ? '+' : '') + n.toFixed(2)
+}
+
+function ProfitVsOriginalPanel({ data }: { data: ProfitVsOriginal }) {
+  const { netOriginalInvestment, currentValue, currentValueSlot, profit, profitPercent } = data
+
+  return (
+    <div className="card p-4 border border-border/60 space-y-2" data-testid="profit-vs-original">
+      <h3 className="text-xs font-semibold text-ink-primary flex items-center gap-2">
+        <TrendingUp className="w-3.5 h-3.5 text-brand-400" /> Profit vs Original
+      </h3>
+
+      {currentValue === null ? (
+        <p className="text-xs text-ink-muted">
+          No snapshot yet — profit vs original appears once this item has a balance in an update list.
+        </p>
+      ) : (
+        <dl className="text-xs space-y-1.5">
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-ink-muted">Original investment (cost basis)</dt>
+            <dd className="font-mono text-ink-primary">
+              {netOriginalInvestment === null ? '—' : fmtSigned(netOriginalInvestment)}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-ink-muted">Current balance / snapshot</dt>
+            <dd className="font-mono text-ink-primary">
+              {fmtSigned(currentValue)}
+              {currentValueSlot && (
+                <span className="ml-1.5 font-sans text-ink-disabled">
+                  as of Q{currentValueSlot.quarter} {currentValueSlot.year}
+                </span>
+              )}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-ink-muted">Profit vs original</dt>
+            <dd
+              className={cn(
+                'font-mono font-medium',
+                profit === null ? 'text-ink-disabled' : profit >= 0 ? 'text-gain' : 'text-loss',
+              )}
+            >
+              {profit === null ? '—' : fmtSigned(profit)}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-ink-muted">Profit %</dt>
+            <dd className="font-mono text-ink-primary">
+              {profitPercent === null ? '—' : `${profitPercent.toFixed(2)}%`}
+            </dd>
+          </div>
+        </dl>
+      )}
+    </div>
   )
 }
 
@@ -158,16 +240,16 @@ function LedgerSection({ itemId }: { itemId: string }) {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['tracking-running-total', itemId] })
 
-  const handleAdd = async (entryDate: string, amount: number) => {
-    await trackingService.createEntry(itemId, { entryDate, amount })
+  const handleAdd = async (entryDate: string, amount: number, note: string | null) => {
+    await trackingService.createEntry(itemId, { entryDate, amount, note })
     setShowAdd(false)
     await invalidate()
     toast.success('Entry added')
   }
 
-  const handleEdit = async (entryDate: string, amount: number) => {
+  const handleEdit = async (entryDate: string, amount: number, note: string | null) => {
     if (!editEntry) return
-    await trackingService.updateEntry(editEntry.id, { entryDate, amount })
+    await trackingService.updateEntry(editEntry.id, { entryDate, amount, note })
     setEditEntry(null)
     await invalidate()
     toast.success('Entry updated')
@@ -214,6 +296,10 @@ function LedgerSection({ itemId }: { itemId: string }) {
         {editEntry && <EntryForm initial={editEntry} onClose={() => setEditEntry(null)} onSave={handleEdit} />}
       </AnimatePresence>
 
+      {data && data.entries.length >= 1 && (
+        <ProfitVsOriginalPanel data={data.profitVsOriginal} />
+      )}
+
       {isLoading ? (
         <div className="flex items-center justify-center py-8 gap-2 text-ink-muted text-sm">
           <Loader2 className="w-4 h-4 animate-spin" /> Loading ledger…
@@ -234,6 +320,7 @@ function LedgerSection({ itemId }: { itemId: string }) {
                 <th className="px-3 py-2 text-left font-medium">Date</th>
                 <th className="px-3 py-2 text-right font-medium">Amount</th>
                 <th className="px-3 py-2 text-right font-medium">Running Total</th>
+                <th className="px-3 py-2 text-left font-medium">Note</th>
                 <th className="px-3 py-2 text-left font-medium">Actions</th>
               </tr>
             </thead>
@@ -245,6 +332,9 @@ function LedgerSection({ itemId }: { itemId: string }) {
                     {fmtAmount(entry.amount)}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-ink-primary">{fmtAmount(entry.runningTotal)}</td>
+                  <td className="px-3 py-2 text-ink-secondary">
+                    <div className="max-w-[16rem] truncate" title={entry.note ?? ''}>{entry.note ?? '—'}</div>
+                  </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1">
                       <button onClick={() => setEditEntry(entry)} aria-label={`Edit entry on ${fmtDate(entry.entryDate)}`} className="btn-icon w-7 h-7">

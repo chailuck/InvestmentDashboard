@@ -19,6 +19,7 @@ import uuid
 from decimal import Decimal
 
 from app.schemas.common import CamelModel
+from app.schemas.initial_investment_entry import CurrentValueSlot
 
 
 class BalanceCell(CamelModel):
@@ -72,3 +73,40 @@ class DashboardBalanceGridOut(CamelModel):
     categories: list[DashboardCategoryRow]
     grand_total: list[BalanceCell]  # excludes exclusive items, entire set
     property_breakdown: DashboardPropertyBreakdown
+
+
+# ── Profit vs original investment rollup (GET /sets/{id}/dashboard/original-investment) ──
+
+
+class OriginalInvestmentCoverage(CamelModel):
+    shown_count: int  # items with a computable profit figure
+    total_count: int  # all in-scope non-exclusive items
+    excluded_item_names: list[str]  # in-scope items with no computable profit
+
+
+class OriginalInvestmentItemRow(CamelModel):
+    item_id: uuid.UUID
+    item_name: str
+    category_name: str
+    sub_category_name: str
+    net_original_investment: Decimal | None  # signed sum of the item's ledger entries
+    current_value: Decimal | None  # balance in its most-recent populated slot
+    current_value_slot: CurrentValueSlot | None
+    profit: Decimal | None
+    profit_percent: Decimal | None
+    is_covered: bool
+
+
+class OriginalInvestmentTotals(CamelModel):
+    net_original_investment: Decimal | None  # summed over COVERED items only
+    current_value: Decimal | None
+    profit: Decimal | None
+    profit_percent: Decimal | None
+
+
+class OriginalInvestmentRollupOut(CamelModel):
+    tracking_set_id: uuid.UUID
+    generated_at: str  # ISO-8601 UTC
+    coverage: OriginalInvestmentCoverage
+    items: list[OriginalInvestmentItemRow]
+    totals: OriginalInvestmentTotals

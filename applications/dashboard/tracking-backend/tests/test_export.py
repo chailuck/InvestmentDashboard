@@ -84,10 +84,13 @@ async def _set_balance(client, list_id: str, item_id: str, balance) -> None:
     assert resp.status_code == 200, resp.text
 
 
-async def _make_entry(client, item_id: str, amount: str, entry_date: str) -> str:
-    resp = await client.post(
-        f"{PREFIX}/items/{item_id}/entries", json={"amount": amount, "entryDate": entry_date}
-    )
+async def _make_entry(
+    client, item_id: str, amount: str, entry_date: str, note: str | None = None
+) -> str:
+    body = {"amount": amount, "entryDate": entry_date}
+    if note is not None:
+        body["note"] = note
+    resp = await client.post(f"{PREFIX}/items/{item_id}/entries", json=body)
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
@@ -127,13 +130,13 @@ async def test_fully_populated_set_exports_every_record(auth_client):
     await _set_balance(auth_client, list2_id, item1_id, "1200.75")
     # list2/item2 deliberately left with NO balance row at all.
 
-    entry1_id = await _make_entry(auth_client, item1_id, "100.25", "2026-01-01")
+    entry1_id = await _make_entry(auth_client, item1_id, "100.25", "2026-01-01", note="เงินโบนัส")
     entry2_id = await _make_entry(auth_client, item1_id, "-50", "2026-02-01")
 
     export = await _get_export(auth_client, set_id)
 
     # Envelope
-    assert export["exportVersion"] == 1
+    assert export["exportVersion"] == 2  # bumped by ADR-018 (entry `note` added)
     assert "exportedAt" in export and export["exportedAt"]
 
     # Tracking set (no userId leaked)
@@ -197,7 +200,9 @@ async def test_fully_populated_set_exports_every_record(auth_client):
     assert entries_by_id[entry1_id]["amount"] == "100.2500"
     assert entries_by_id[entry1_id]["entryDate"] == "2026-01-01"
     assert entries_by_id[entry1_id]["trackingItemId"] == item1_id
+    assert entries_by_id[entry1_id]["note"] == "เงินโบนัส"  # note round-trips in the export
     assert entries_by_id[entry2_id]["amount"] == "-50.0000"
+    assert entries_by_id[entry2_id]["note"] is None  # no note -> explicit null, not omitted
 
 
 async def test_null_balance_serializes_as_json_null_not_zero_or_omitted(auth_client):

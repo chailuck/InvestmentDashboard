@@ -30,7 +30,10 @@ from decimal import Decimal
 
 from app.schemas.common import CamelModel
 
-EXPORT_VERSION = 1
+# v2 (2026-08-30): `InitialInvestmentEntryExport` gained the nullable `note`
+# field (ADR-018). A v1 export re-imported under v2 has no `note` key; the
+# schema default (None) covers that, so v1 payloads stay forward-compatible.
+EXPORT_VERSION = 2
 
 
 class TrackingSetExport(CamelModel):
@@ -100,6 +103,7 @@ class InitialInvestmentEntryExport(CamelModel):
     tracking_item_id: uuid.UUID
     amount: Decimal
     entry_date: date
+    note: str | None = None  # default matters for re-importing a pre-note (v1) export
     created_at: datetime
     updated_at: datetime
 

@@ -58,6 +58,7 @@ import type {
   BalanceCell,
   DashboardBalanceGridOut,
   DashboardCategoryRow,
+  OriginalInvestmentRollup,
 } from '@/services/tracking'
 
 /** The three collapse/expand `Set`s from `page.tsx`'s `useToggleSet` state, as of the moment the user clicked "Email Dashboard". */
@@ -248,13 +249,89 @@ export function utf8ToBase64(str: string): string {
 }
 
 /**
+ * Renders the optional "Original Investment vs Profit" section appended
+ * after the year tables — one row per `rollup.items[]` (covered rows carry
+ * real figures; not-covered rows render an em dash in every numeric cell,
+ * NEVER a fabricated 0 / "0%"), a covered-only totals row, and a coverage
+ * footnote. Every name/text cell goes through `escapeHtml` (this is an email
+ * body); numeric cells use `formatNumber` / `toFixed`. Thai text passes
+ * through `escapeHtml` unchanged.
+ */
+function originalInvestmentSectionHtml(rollup: OriginalInvestmentRollup): string {
+  const numericCell = (covered: boolean, value: number | null): string =>
+    !covered || value === null
+      ? `<td style="${TD_BASE}${TD_DASH}">&mdash;</td>`
+      : `<td style="${TD_BASE}">${formatNumber(value)}</td>`
+
+  const percentCell = (covered: boolean, value: number | null): string =>
+    !covered || value === null
+      ? `<td style="${TD_BASE}${TD_DASH}">&mdash;</td>`
+      : `<td style="${TD_BASE}">${value.toFixed(2)}%</td>`
+
+  const itemRows = rollup.items.map(item => (
+    '<tr>' +
+      `<td style="${TD_LABEL_BASE}">${escapeHtml(item.itemName)}</td>` +
+      `<td style="${TD_LABEL_BASE}">${escapeHtml(item.categoryName)}</td>` +
+      `<td style="${TD_LABEL_BASE}">${escapeHtml(item.subCategoryName)}</td>` +
+      numericCell(item.isCovered, item.netOriginalInvestment) +
+      numericCell(item.isCovered, item.currentValue) +
+      numericCell(item.isCovered, item.profit) +
+      percentCell(item.isCovered, item.profitPercent) +
+    '</tr>'
+  )).join('')
+
+  const t = rollup.totals
+  const totalsRow =
+    '<tr style="background:#f1f5f9;">' +
+      `<td style="${TD_LABEL_BASE}font-weight:bold;" colspan="3">Total (covered items)</td>` +
+      `<td style="${TD_BASE}font-weight:bold;">${t.netOriginalInvestment === null ? '&mdash;' : formatNumber(t.netOriginalInvestment)}</td>` +
+      `<td style="${TD_BASE}font-weight:bold;">${t.currentValue === null ? '&mdash;' : formatNumber(t.currentValue)}</td>` +
+      `<td style="${TD_BASE}font-weight:bold;">${t.profit === null ? '&mdash;' : formatNumber(t.profit)}</td>` +
+      `<td style="${TD_BASE}font-weight:bold;">${t.profitPercent === null ? '&mdash;' : `${t.profitPercent.toFixed(2)}%`}</td>` +
+    '</tr>'
+
+  // Footnote: the fixed prose has no HTML-significant characters, and each
+  // excluded name is individually `escapeHtml`-ed before being joined in, so
+  // the assembled string is NOT escaped again here (that would double-encode
+  // an `&` in a name to `&amp;amp;`).
+  const cov = rollup.coverage
+  let footnote = `Profit vs original shown for ${cov.shownCount} of ${cov.totalCount} tracked items.`
+  if (cov.excludedItemNames.length > 0) {
+    footnote += ` Not shown: ${cov.excludedItemNames.map(escapeHtml).join(', ')}.`
+  }
+
+  return (
+    `<h2 style="${FONT}font-size:15px;margin:0 0 6px 0;">Original Investment vs Profit</h2>` +
+    `<table style="${TABLE_STYLE}">` +
+      '<thead><tr>' +
+        `<th style="${TH_LABEL_STYLE}">Item</th>` +
+        `<th style="${TH_LABEL_STYLE}">Category</th>` +
+        `<th style="${TH_LABEL_STYLE}">Sub-category</th>` +
+        `<th style="${TH_STYLE}">Original investment</th>` +
+        `<th style="${TH_STYLE}">Current value</th>` +
+        `<th style="${TH_STYLE}">Profit</th>` +
+        `<th style="${TH_STYLE}">Profit %</th>` +
+      '</tr></thead>' +
+      `<tbody>${itemRows}${totalsRow}</tbody>` +
+    '</table>' +
+    `<p style="${FONT}font-size:11px;color:#64748b;margin:0 0 16px 0;">${footnote}</p>`
+  )
+}
+
+/**
  * Builds the full dashboard email HTML body from an already-loaded balance
  * grid and the page's current collapse/expand state. See the module
  * docblock for the full set of design decisions.
+ *
+ * `rollup` is optional and degrades gracefully: when it is `undefined` /
+ * `null` (or has zero items) the output is byte-identical to the pre-rollup
+ * version — the profit section is simply omitted, so the "Email Dashboard"
+ * button can still send the balance grid alone if the rollup fetch fails.
  */
 export function buildDashboardEmailHtml(
   grid: DashboardBalanceGridOut,
   visibility: VisibilitySnapshot,
+  rollup?: OriginalInvestmentRollup | null,
 ): string {
   const parts: string[] = []
   parts.push(`<div style="${FONT}color:#0f172a;">`)
@@ -288,6 +365,14 @@ export function buildDashboardEmailHtml(
     parts.push('</tbody>')
     parts.push('</table>')
   })
+
+  // Optional profit section — appended after every year table. Omitted
+  // entirely (output byte-identical to the pre-rollup version) when `rollup`
+  // is null/undefined or carries no items, so a failed rollup fetch never
+  // blocks the email.
+  if (rollup && rollup.items.length > 0) {
+    parts.push(originalInvestmentSectionHtml(rollup))
+  }
 
   parts.push('</div>')
   return parts.join('')
