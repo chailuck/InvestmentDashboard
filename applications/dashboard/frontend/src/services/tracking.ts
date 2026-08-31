@@ -327,6 +327,85 @@ const p = (suffix: string) => `/tracking${suffix}`
 const toOrderItems = (orderedIds: string[]) =>
   orderedIds.map((id, idx) => ({ id, order: idx + 1 }))
 
+// ── Decimal coercion ────────────────────────────────────────────────────────
+// The tracking backend serializes every Pydantic `Decimal` field as a JSON
+// STRING ("0", "1200.4000", …), never a number. Every money field in the
+// interfaces above is declared `number` / `number | null` and consumer code
+// calls `.toFixed()` / arithmetic on them directly, so any response carrying
+// those fields MUST be coerced here at the service boundary — otherwise the
+// UI throws "n.toFixed is not a function" on first render (mirrors the
+// dashboard page's own `toFiniteOrNull`).
+
+type Wire = Record<string, unknown>
+
+/** Coerce a JSON number-or-string to a finite number; non-finite / missing → 0. */
+const num = (v: unknown): number => {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+/** Coerce a JSON number-or-string to a finite number, preserving null/absent as null. */
+const numOrNull = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+const normalizeProfitVsOriginal = (p: Wire | null | undefined): ProfitVsOriginal => {
+  const w = (p ?? {}) as Wire
+  return {
+    netOriginalInvestment: numOrNull(w.netOriginalInvestment),
+    currentValue: numOrNull(w.currentValue),
+    currentValueSlot: (w.currentValueSlot as CurrentValueSlot | null) ?? null,
+    profit: numOrNull(w.profit),
+    profitPercent: numOrNull(w.profitPercent),
+    isCovered: Boolean(w.isCovered),
+  }
+}
+
+const normalizeRunningTotal = (d: Wire): RunningTotal => ({
+  itemId: String(d.itemId),
+  currentTotal: num(d.currentTotal),
+  entries: ((d.entries as Wire[] | undefined) ?? []).map(e => ({
+    id: String(e.id),
+    trackingItemId: String(e.trackingItemId ?? ''),
+    amount: num(e.amount),
+    entryDate: String(e.entryDate),
+    note: (e.note as string | null) ?? null,
+    createdAt: String(e.createdAt ?? ''),
+    updatedAt: String(e.updatedAt ?? ''),
+    runningTotal: num(e.runningTotal),
+  })),
+  profitVsOriginal: normalizeProfitVsOriginal(d.profitVsOriginal as Wire | null | undefined),
+})
+
+const normalizeOriginalInvestmentRollup = (d: Wire): OriginalInvestmentRollup => {
+  const totals = (d.totals ?? {}) as Wire
+  return {
+    trackingSetId: String(d.trackingSetId),
+    generatedAt: String(d.generatedAt),
+    coverage: d.coverage as OriginalInvestmentCoverage,
+    items: ((d.items as Wire[] | undefined) ?? []).map(r => ({
+      itemId: String(r.itemId),
+      itemName: String(r.itemName),
+      categoryName: String(r.categoryName),
+      subCategoryName: String(r.subCategoryName),
+      netOriginalInvestment: numOrNull(r.netOriginalInvestment),
+      currentValue: numOrNull(r.currentValue),
+      currentValueSlot: (r.currentValueSlot as CurrentValueSlot | null) ?? null,
+      profit: numOrNull(r.profit),
+      profitPercent: numOrNull(r.profitPercent),
+      isCovered: Boolean(r.isCovered),
+    })),
+    totals: {
+      netOriginalInvestment: numOrNull(totals.netOriginalInvestment),
+      currentValue: numOrNull(totals.currentValue),
+      profit: numOrNull(totals.profit),
+      profitPercent: numOrNull(totals.profitPercent),
+    },
+  }
+}
+
 export const trackingService = {
   // Tracking Sets ────────────────────────────────────────────────────────────
   async listSets(): Promise<TrackingSet[]> {
@@ -428,7 +507,7 @@ export const trackingService = {
   },
   async getRunningTotal(itemId: string): Promise<RunningTotal> {
     const { data } = await apiClient.get(p(`/items/${itemId}/running-total`))
-    return data as RunningTotal
+    return normalizeRunningTotal(data as Wire)
   },
 
   // Dashboard ──────────────────────────────────────────────────────────────
@@ -439,7 +518,7 @@ export const trackingService = {
   /** Per-item cost-basis-vs-profit rollup for one tracking set (404 if it doesn't exist or isn't owned by the caller). */
   async getOriginalInvestmentRollup(setId: string): Promise<OriginalInvestmentRollup> {
     const { data } = await apiClient.get(p(`/sets/${setId}/dashboard/original-investment`))
-    return data as OriginalInvestmentRollup
+    return normalizeOriginalInvestmentRollup(data as Wire)
   },
 
   // Full backup export ─────────────────────────────────────────────────────

@@ -61,4 +61,50 @@ describe('TrendChart', () => {
     const live = container.querySelector('[aria-live="polite"]')
     expect(live?.textContent).toMatch(/Q[1-4] 20\d\d:/)
   })
+
+  it('balance tooltip renders the period-over-period delta on its own line (not concatenated onto the value)', async () => {
+    const m = model()
+    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" onDrill={vi.fn()} />)
+    const svg = screen.getByRole('img', { name: /trend of balance/i })
+    svg.focus()
+    // Walk the cursor to the last (fully populated) period so the aggregate row
+    // has a real prior-period delta; this renders <ChartTooltip>.
+    await userEvent.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}')
+
+    // Each tooltip row is a translated <g>; within a row the right-anchored
+    // <text> nodes are the main value line and the new "sub" delta line.
+    const rowGroups = Array.from(svg.querySelectorAll('g[transform]')).filter(
+      g => g.querySelectorAll('text[text-anchor="end"]').length > 0,
+    )
+    expect(rowGroups.length).toBeGreaterThan(0)
+
+    const endTexts = Array.from(rowGroups[0].querySelectorAll('text[text-anchor="end"]'))
+    // Two DISTINCT elements: the balance value and its own delta sub-line.
+    expect(endTexts).toHaveLength(2)
+    const [valueText, subText] = endTexts
+    expect(valueText).not.toBe(subText)
+
+    // Main line is a bare fmtBalance string — no whitespace, no "(" percent,
+    // no "%"; a regression that re-concatenates value + delta would break this.
+    const value = valueText.textContent ?? ''
+    expect(value).toMatch(/฿[\d,]/)
+    expect(value).not.toMatch(/\s/)
+    expect(value).not.toContain('(')
+    expect(value).not.toContain('%')
+
+    // Sub line carries the period-over-period delta by itself.
+    const sub = subText.textContent ?? ''
+    expect(sub).toMatch(/([+-]฿[\d,]|No prior data)/)
+    expect(sub === 'No prior data' || sub.includes('%') || sub.includes('฿0')).toBe(true)
+
+    // Distinct effective y: main at the row baseline, sub ~12px below it.
+    const translateY = (el: Element) => {
+      const t = el.parentElement?.getAttribute('transform') ?? ''
+      const mm = /translate\([^,]+,\s*(-?[\d.]+)\s*\)/.exec(t)
+      return mm ? parseFloat(mm[1]) : 0
+    }
+    const effY = (el: Element) => translateY(el) + parseFloat(el.getAttribute('y') ?? '0')
+    expect(effY(subText)).toBeGreaterThan(effY(valueText))
+    expect(effY(subText) - effY(valueText)).toBeGreaterThanOrEqual(10)
+  })
 })

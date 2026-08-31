@@ -308,6 +308,56 @@ describe('trackingService — Ledger entries', () => {
     expect(mockedGet).toHaveBeenCalledWith('/tracking/items/i1/running-total')
     expect(result).toEqual(runningTotal)
   })
+
+  it('getRunningTotal coerces backend Decimal-as-string money fields to numbers', async () => {
+    // The tracking backend serializes every Pydantic Decimal as a JSON STRING
+    // ("0", "1200.4000", …). Consumer UI calls .toFixed()/arithmetic on these,
+    // so the service must coerce them or the ledger page throws on first render
+    // ("n.toFixed is not a function").
+    mockedGet.mockResolvedValueOnce({
+      data: {
+        itemId: 'i1',
+        currentTotal: '0',
+        entries: [
+          { id: 'e1', trackingItemId: 'i1', amount: '1000.0000', entryDate: '2026-01-01', note: null, createdAt: '', updatedAt: '', runningTotal: '1000.0000' },
+        ],
+        profitVsOriginal: {
+          netOriginalInvestment: '1000.0000', currentValue: '1250.5000',
+          currentValueSlot: { year: 2026, quarter: 2 },
+          profit: '250.5000', profitPercent: '25.0500', isCovered: true,
+        },
+      },
+    })
+
+    const r = await trackingService.getRunningTotal('i1')
+
+    expect(r.currentTotal).toBe(0)
+    expect(typeof r.currentTotal).toBe('number')
+    expect(r.entries[0].amount).toBe(1000)
+    expect(r.entries[0].runningTotal).toBe(1000)
+    expect(r.profitVsOriginal.netOriginalInvestment).toBe(1000)
+    expect(r.profitVsOriginal.currentValue).toBe(1250.5)
+    expect(r.profitVsOriginal.profit).toBe(250.5)
+    expect(r.profitVsOriginal.profitPercent).toBe(25.05)
+    expect(() => r.profitVsOriginal.profitPercent?.toFixed(2)).not.toThrow()
+  })
+
+  it('getRunningTotal keeps null profitVsOriginal fields null (never a fabricated 0)', async () => {
+    mockedGet.mockResolvedValueOnce({
+      data: {
+        itemId: 'i1', currentTotal: '0', entries: [],
+        profitVsOriginal: {
+          netOriginalInvestment: null, currentValue: null, currentValueSlot: null,
+          profit: null, profitPercent: null, isCovered: false,
+        },
+      },
+    })
+    const r = await trackingService.getRunningTotal('i1')
+    expect(r.profitVsOriginal.netOriginalInvestment).toBeNull()
+    expect(r.profitVsOriginal.profit).toBeNull()
+    expect(r.profitVsOriginal.profitPercent).toBeNull()
+    expect(r.currentTotal).toBe(0)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -381,6 +431,42 @@ describe('trackingService — Dashboard', () => {
 
     expect(mockedGet).toHaveBeenCalledWith('/tracking/sets/s1/dashboard/original-investment')
     expect(result).toEqual(rollup)
+  })
+
+  it('getOriginalInvestmentRollup coerces Decimal-as-string fields and preserves nulls', async () => {
+    mockedGet.mockResolvedValueOnce({
+      data: {
+        trackingSetId: 's1', generatedAt: '2026-08-31T00:00:00+00:00',
+        coverage: { shownCount: 1, totalCount: 2, excludedItemNames: ['Condo'] },
+        items: [
+          {
+            itemId: 'it1', itemName: 'ARK', categoryName: 'Inv', subCategoryName: 'US',
+            netOriginalInvestment: '100000.0000', currentValue: '132000.0000',
+            currentValueSlot: { year: 2026, quarter: 2 },
+            profit: '32000.0000', profitPercent: '32.0000', isCovered: true,
+          },
+          {
+            itemId: 'it2', itemName: 'Condo', categoryName: 'Prop', subCategoryName: 'RE',
+            netOriginalInvestment: null, currentValue: '5200000.0000',
+            currentValueSlot: { year: 2026, quarter: 1 },
+            profit: null, profitPercent: null, isCovered: false,
+          },
+        ],
+        totals: { netOriginalInvestment: '100000.0000', currentValue: '132000.0000', profit: '32000.0000', profitPercent: '32.0000' },
+      },
+    })
+
+    const r = await trackingService.getOriginalInvestmentRollup('s1')
+
+    expect(r.items[0].netOriginalInvestment).toBe(100000)
+    expect(r.items[0].currentValue).toBe(132000)
+    expect(r.items[0].profitPercent).toBe(32)
+    expect(() => r.items[0].profitPercent?.toFixed(2)).not.toThrow()
+    expect(r.items[1].netOriginalInvestment).toBeNull()
+    expect(r.items[1].profit).toBeNull()
+    expect(r.items[1].profitPercent).toBeNull()
+    expect(r.totals.profit).toBe(32000)
+    expect(r.totals.profitPercent).toBe(32)
   })
 
   it('propagates errors from the API client for getOriginalInvestmentRollup', async () => {
