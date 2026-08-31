@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Functional Specification</h1>
 
-<p><strong>Version:</strong> 3.5 (Phase 1 + Phase 2 + Phase 3 + Phase 4 — "Email Dashboard" button added to the Dashboard page) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-29 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code>, <code>/tracking/dashboard</code></p>
+<p><strong>Version:</strong> 3.7 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 — Phase 5 (ADR-018) adds an optional Note on each Initial Investment Ledger entry, a per-item "Profit vs Original" panel, and an "Original Investment vs Profit" section on the Dashboard; Phase 6 (ADR-019) adds the read-only "Analysis" view — see §14) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-30 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code>, <code>/tracking/dashboard</code>, <code>/tracking/analysis</code></p>
 
 <hr>
 
@@ -48,18 +48,19 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 
 <p>A user can maintain multiple independent Tracking Sets — for example, a personal set and a family set — each with its own category tree. A tracking set belongs to exactly one user; it is never shared or visible to other users.</p>
 
-<div class="callout">This document covers <strong>Phase 1</strong> (creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger — §3–§9), <strong>Phase 2</strong> (the "Updates" sub-menu — periodic balance snapshots against a tracking set's hierarchy — §11), <strong>Phase 3</strong> (the "Dashboard" sub-menu — a read-only quarterly/yearly balance-grid rollup built from the data captured by Updates — §12), and <strong>Phase 4</strong> (the "Email Dashboard" button on the Dashboard page, emailing the user their currently-displayed dashboard plus a full backup export — §13).</div>
+<div class="callout">This document covers <strong>Phase 1</strong> (creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger — §3–§9), <strong>Phase 2</strong> (the "Updates" sub-menu — periodic balance snapshots against a tracking set's hierarchy — §11), <strong>Phase 3</strong> (the "Dashboard" sub-menu — a read-only quarterly/yearly balance-grid rollup built from the data captured by Updates — §12), and <strong>Phase 4</strong> (the "Email Dashboard" button on the Dashboard page, emailing the user their currently-displayed dashboard plus a full backup export — §13). It also covers <strong>Phase 5</strong> (ADR-018 — the optional per-entry Note on the Initial Investment Ledger (§7.1), the per-item "Profit vs Original" panel (§7.4), and the Dashboard's "Original Investment vs Profit" section (§12.13)).</div>
 
 <hr>
 
 <h2>2. Navigation</h2>
-<p>The sidebar shows a <strong>Tracking</strong> accordion group (positioned directly below Action Plan, above Analytics) that expands to reveal three sub-links:</p>
+<p>The sidebar shows a <strong>Tracking</strong> accordion group (positioned directly below Action Plan, above Analytics) that expands to reveal four sub-links:</p>
 <table>
   <thead><tr><th>Sub-link</th><th>Route</th><th>Purpose</th></tr></thead>
   <tbody>
     <tr><td>Category</td><td><code>/tracking/category</code></td><td>Manage Tracking Sets, Categories, Sub-categories, and Tracking Items</td></tr>
     <tr><td>Updates</td><td><code>/tracking/updates</code></td><td>Record and review periodic balance snapshots ("Update Tracking Lists") — see §11</td></tr>
     <tr><td>Dashboard</td><td><code>/tracking/dashboard</code></td><td>Read-only quarterly/yearly balance-grid rollup across the whole tracking set — see §12</td></tr>
+    <tr><td>Analysis</td><td><code>/tracking/analysis</code></td><td>Read-only exploration of the same data — trend, composition, delta-trend, a scoped tabular readout and CSV export — see §14</td></tr>
   </tbody>
 </table>
 
@@ -143,20 +144,38 @@ Liabilities
 <p>When a tracking item's <strong>Initial Investment Tracking</strong> flag is set to Yes, its detail page gains an "Initial Investment Ledger" section beneath the main form. This is a running log of changes to the item's original invested amount over time — separate from any later balance updates.</p>
 
 <h3>7.1 Adding entries</h3>
-<p>Each ledger entry has a <strong>Date</strong> and a signed <strong>Amount</strong>:</p>
+<p>Each ledger entry has a <strong>Date</strong>, a signed <strong>Amount</strong>, and an optional <strong>Note</strong>:</p>
 <ul>
   <li>A positive amount records an increase to the invested total (e.g. an additional deposit).</li>
   <li>A negative amount records a decrease (e.g. a partial withdrawal).</li>
   <li>An amount of exactly zero is rejected — a zero-value entry carries no meaning in a ledger.</li>
+  <li>The <strong>Note</strong> <em>(Phase 5)</em> is optional free text, up to 500 characters, for recording why the entry was made (e.g. "annual top-up", "sold half position"). Thai text is accepted and stored exactly as typed. A note left blank — or one containing only spaces — is stored as "no note" rather than an empty string. A note longer than 500 characters is rejected.</li>
 </ul>
+<p><em>(Phase 5)</em> The ledger table shows a <strong>Note</strong> column alongside Date, Amount, and Running Total. Entries created before this feature simply have no note. The note is for the user's own reference on this page only — it is never included in the Email Dashboard export's HTML body (§13).</p>
 
 <h3>7.2 Running total</h3>
 <p>The ledger table lists every entry in date order together with a <strong>Running Total</strong> column — the cumulative sum of all entries up to and including that row — plus a headline "Current total" figure above the table (the sum of all entries).</p>
 
 <h3>7.3 Editing and deleting entries</h3>
-<p>Any entry can be edited (date and/or amount) or deleted from the ledger table. Editing recomputes the running total for every row from that point forward the next time the ledger is loaded.</p>
+<p>Any entry can be edited (date, amount, and/or note) or deleted from the ledger table. Editing recomputes the running total for every row from that point forward the next time the ledger is loaded. Clearing the note field on an existing entry — or replacing it with blank/whitespace — removes the note.</p>
+<div class="callout warn"><em>(Phase 5)</em> Entry edits are <strong>last-write-wins</strong>. There is no optimistic-locking or conflict check: if the same entry is edited from two places at once, the later save silently overwrites the earlier one. This is an accepted trade-off for a single-user personal tool.</div>
 
 <div class="callout warn">The ledger section — and the ability to add or view entries — is only available once <strong>Initial Investment Tracking</strong> has actually been saved as Yes on the item. Toggling the switch on the item's edit form does not reveal the ledger until "Save Changes" is clicked; this prevents the page from querying a ledger that the backend would still reject.</div>
+
+<h3>7.4 "Profit vs Original" panel <em>(Phase 5)</em></h3>
+<p>Beneath the ledger table, the item detail page shows a <strong>Profit vs Original</strong> panel that compares what the user has actually invested in this item against what it is currently worth. The panel is only rendered once the item has <strong>at least one</strong> ledger entry — an item with Initial Investment Tracking on but no entries yet shows no panel at all.</p>
+<p>The panel shows four figures, using deliberately distinct wording so the two "amount" figures are never confused:</p>
+<table>
+  <thead><tr><th>Figure</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Original investment (cost basis)</strong></td><td>The running signed sum of every ledger entry for this item — the same "Current total" figure shown above the ledger table (§7.2). This is what the user has put in, net of withdrawals.</td></tr>
+    <tr><td><strong>Current balance / snapshot</strong></td><td>This item's balance from its most recent populated quarter across all Update Tracking Lists — the same value the Dashboard balance grid would show as this item's latest figure (§12). Shown as "—" if this item has never had a balance recorded on any Update Tracking List.</td></tr>
+    <tr><td><strong>Profit vs original</strong></td><td>Current balance / snapshot minus original investment (cost basis). Only shown when <strong>both</strong> of the above are available; otherwise "—".</td></tr>
+    <tr><td><strong>Profit %</strong></td><td>Profit vs original as a percentage of the original investment. Shown only when the original investment is greater than zero <em>and</em> a current balance exists. When the original investment is zero or negative (e.g. the user has withdrawn as much as or more than they put in), the profit <em>amount</em> is still shown but Profit % renders "—" — never "∞", "NaN", or "N/A".</td></tr>
+  </tbody>
+</table>
+<p>When the item has ledger entries but no current balance has ever been recorded for it on an Update Tracking List, the panel collapses to a single "no snapshot yet" line instead of showing the four figures — there is nothing to compare the cost basis against until at least one balance snapshot exists.</p>
+<div class="callout tip"><em>(Phase 5)</em> Every figure in this panel is recomputed from scratch each time the page is loaded — nothing is cached or stored. Editing a ledger entry, or recording a new balance on an Update Tracking List, is reflected the next time the item detail page is opened. All labels on this panel are in English.</div>
 
 <hr>
 
@@ -204,6 +223,15 @@ Liabilities
     <tr><td>Email Dashboard HTML content</td><td>Mirrors the ACTUAL on-screen collapse state at the moment the button is clicked — a collapsed year/category/sub-category is genuinely omitted from the emailed HTML, not merely hidden (§13.2)</td></tr>
     <tr><td>Email Dashboard failure handling</td><td>Three distinct, separately-worded failure states (backup-build failure, SMTP-not-configured, send failure) so the user always knows whether an email was attempted at all (§13.4)</td></tr>
     <tr><td>Email Dashboard button availability</td><td>Disabled while a send is in progress; always re-enabled afterward regardless of outcome (§13.3)</td></tr>
+    <tr><td>Ledger entry note (Phase 5)</td><td>Optional; max 500 chars; Thai text stored verbatim; blank/whitespace-only stored as no note; over-length rejected. Pre-existing entries have no note (§7.1)</td></tr>
+    <tr><td>Ledger entry edit concurrency (Phase 5)</td><td>Last-write-wins; no optimistic locking or conflict check — an accepted trade-off (§7.3)</td></tr>
+    <tr><td>Original investment / cost basis (Phase 5)</td><td>Running signed sum of an item's ledger entries; shown as "—" (never 0) when the item has no entries (§7.4)</td></tr>
+    <tr><td>Current balance / snapshot (Phase 5)</td><td>The item's balance in its most-recent populated quarter, from the same winning-Update-Tracking-List logic as the Dashboard balance grid; "—" when the item has never had a recorded balance (§7.4)</td></tr>
+    <tr><td>Profit vs original (Phase 5)</td><td>Current balance minus cost basis; shown only when both inputs exist, otherwise "—" (§7.4)</td></tr>
+    <tr><td>Profit % (Phase 5)</td><td>Shown only when cost basis is greater than 0 and a current balance exists; when cost basis is zero or negative the profit amount still shows but Profit % renders "—" (never ∞/NaN/"N/A") (§7.4)</td></tr>
+    <tr><td>Profit vs Original panel visibility (Phase 5)</td><td>Item-detail panel appears only once the item has at least one ledger entry; collapses to a "no snapshot yet" line when there is no current balance (§7.4)</td></tr>
+    <tr><td>Dashboard "Original Investment vs Profit" scope (Phase 5)</td><td>In scope = non-Exclusive items with Initial Investment Tracking = Yes. Covered = in-scope AND at least one entry AND a current balance exists (does not require positive cost basis). Set-level totals aggregate covered items only; untracked and Exclusive items never affect totals (§12.13)</td></tr>
+    <tr><td>Profit-vs-original recompute (Phase 5)</td><td>All profit figures recomputed at read time on every page load; nothing cached or stored (§7.4, §12.13)</td></tr>
   </tbody>
 </table>
 
@@ -374,6 +402,24 @@ Liabilities
 <h4>Color convention when the target is met</h4>
 <p>When the current figure meets or exceeds the target, the current-value text and the progress bar switch to this app's existing "gain" (green) color — the same color already used elsewhere on this page for a positive balance change. Below target, the indicator intentionally uses a neutral color rather than the "loss" (red) color: falling short of a personal savings goal is not the same thing as a balance going down, so this page does not reuse its loss color to describe it.</p>
 
+<h3>12.13 "Original Investment vs Profit" section <em>(Phase 5)</em></h3>
+<p>Below the balance-grid year tables, the Dashboard shows a separate <strong>Original Investment vs Profit</strong> section (ADR-018). It answers "for the items where I track an original invested amount, how does that compare to what they are worth now?" — rolled up across the whole tracking set in one place, instead of opening each item's detail page (§7.4) one at a time. This section loads independently of the balance grid and the two charts; the grid tables and the Category Trend / Category Breakdown charts (§12.10, §12.11) are unchanged by it.</p>
+<h4>What it shows</h4>
+<ul>
+  <li>A <strong>per-item table</strong>, one row per in-scope tracking item, showing the item's category and sub-category, its <strong>original investment (cost basis)</strong>, its <strong>current balance / snapshot</strong>, its <strong>profit vs original</strong>, and its <strong>profit %</strong> — the same four figures, same wording, and same "—" rules as the per-item panel in §7.4.</li>
+  <li>A <strong>set-level total</strong> row: the summed original investment, summed current value, summed profit, and an overall profit % across the covered items only (see coverage below). The overall profit % is shown as "—" when the summed original investment is zero or negative.</li>
+</ul>
+<h4>Which items are in scope</h4>
+<p>The section considers every tracking item in the set that has <strong>Initial Investment Tracking = Yes</strong> and is <strong>not</strong> marked Exclusive. Items with the flag off, and Exclusive items, are left out entirely — they never appear as a row and never affect any total.</p>
+<p>Within that in-scope set, an item is <strong>covered</strong> when it has at least one ledger entry <em>and</em> a current balance has been recorded for it on some Update Tracking List. A covered item does <strong>not</strong> need its cost basis to be positive.</p>
+<ul>
+  <li>Covered items show all four figures and are the only items included in the set-level totals.</li>
+  <li>In-scope items that are not yet covered (no ledger entries yet, or no balance snapshot yet) still appear as a row, but their numeric cells show "—" and they are excluded from the totals so they cannot distort them.</li>
+</ul>
+<h4>Coverage indicator</h4>
+<p>The section header carries a coverage badge reading <strong>"Profit vs original shown for N of M tracked items"</strong>, where <em>M</em> is the number of in-scope items and <em>N</em> is the number of covered items. Next to it, a collapsible disclosure lists by name the in-scope items that are <strong>not</strong> covered, so the user can see exactly which items are missing a cost basis or a balance snapshot.</p>
+<div class="callout tip"><em>(Phase 5)</em> Every figure in this section is recomputed at read time from the ledger entries and the Update Tracking List balances — nothing is cached or stored. Untracked items and Exclusive items are structurally incapable of affecting the totals, since they are filtered out before any summation.</div>
+
 <hr>
 
 <h2>13. Email Dashboard export — Phase 4</h2>
@@ -386,6 +432,7 @@ Liabilities
   <li><strong>A full backup of the tracking set</strong>, as a JSON file attached to the email — every Tracking Set, Category, Sub-category, Tracking Item, Update Tracking List, Update Tracking List balance, and Initial Investment Ledger entry the user has ever recorded under this tracking set, not only what happens to be visible in the current view. This is the same complete data the Dashboard's figures are computed from, captured as a point-in-time snapshot.</li>
 </ul>
 <div class="callout">The email always goes to the user's own registered account email address. There is no address field anywhere — on the button, in a dialog, or otherwise — where a different recipient could be entered. This is a deliberate security choice, reviewed and confirmed during this feature's build: the recipient is always resolved from the user's own signed-in session, never typed in by anyone, so there is no way for this feature to be used to send a user's financial data to an address that isn't their own.</div>
+<p><em>(Phase 5)</em> When available, the emailed HTML table is followed by an "Original Investment vs Profit" table (§12.13) plus a short coverage footnote ("shown for N of M tracked items"). The ledger Note field (§7.1) is never included anywhere in the email.</p>
 
 <h3>13.2 What the button does, step by step</h3>
 <ol>
@@ -394,6 +441,7 @@ Liabilities
   <li>Once both the HTML table and the backup are ready, it sends them together as one email to the user's own address.</li>
   <li>A confirmation message names the address the email was sent to once sending succeeds.</li>
 </ol>
+<p><em>(Phase 5)</em> Between steps 1 and 3 the button also attempts to fetch the "Original Investment vs Profit" rollup (§12.13) so its table can be appended to the HTML body. This fetch is best-effort: if it fails, the email still goes out with the balance tables and the backup attachment, just without the profit section. A failed profit-section fetch is not one of the three failure states in §13.4 — those concern the backup and the send itself.</p>
 
 <h3>13.3 Button behaviour while sending</h3>
 <p>The button shows a spinner and is disabled for the duration of the click — a second click cannot start an overlapping send. It always returns to its normal, clickable state again once the attempt finishes, whether it succeeded or failed, so a failed attempt never leaves the button stuck.</p>
@@ -419,6 +467,46 @@ Liabilities
   <li>There is no history or log of previously sent emails visible in the app; the record of what was sent lives only in the user's own inbox.</li>
   <li>There is no restore/import feature that consumes the backup JSON attachment yet — today it is a one-way export intended to be a safety copy the user holds onto, not something the app itself can currently read back in.</li>
 </ul>
+
+<hr>
+
+<h2>14. Analysis view ("Analysis" sub-menu) — Phase 6 (ADR-019)</h2>
+<p>The <strong>Analysis</strong> sub-link (<code>/tracking/analysis</code>, the 4th item in the Tracking accordion) is a <strong>read-only exploration surface</strong> over the exact same data the Dashboard (§12) already rolls up — the periodic balances recorded via Updates (§11). It adds no data entry, no new stored data, and no new backend: it is built entirely in the browser from one call to the Dashboard balance-grid endpoint.</p>
+
+<div class="callout">This section is a user-facing summary. The full functional and technical reference for the Analysis view — every control, chart, the Scoped Dashboard section, the CSV format, the derivation library, and ADR-019 — lives in <a href="ANALYSIS.html">ANALYSIS.html</a> ("Analysis View" in the docs tree). The design record (Phases 1–2, acceptance criteria, resolved open questions) is <a href="ANALYSIS-DESIGN.html">ANALYSIS-DESIGN.html</a>.</div>
+
+<h3>14.1 What the user can do</h3>
+<ul>
+  <li><strong>Four instruments over one dataset:</strong> a <strong>Trend</strong> chart (values over time), a <strong>Composition</strong> chart (100% stacked share over time) with a companion ranked-bar <strong>Breakdown at a period</strong>, a <strong>Delta-trend</strong> chart (period-over-period change as diverging bars, with a waterfall toggle), and a <strong>Scoped Dashboard</strong> section that reproduces the main Dashboard's numeric table constrained to the current drill scope.</li>
+  <li><strong>Amount-type lens:</strong> Grand Total / Property / No Property. "Property" is item type <code>Property</code>; the other five types are "No Property". Exclusive items are always excluded from every total, series, breakdown and export, exactly as on the Dashboard (§12.7).</li>
+  <li><strong>Group by</strong> Category, Sub-category, Item, or Item type; <strong>drill</strong> Lens → Category → Sub-category → Item with a breadcrumb and an "Up" control. Clicking a chart mark, or an item row in the Scoped Dashboard, drills in.</li>
+  <li><strong>Granularity</strong> Quarterly or Yearly. Yearly uses an <strong>"as-of year end"</strong> rule: a year's value is the balance of its latest populated quarter, and every yearly label names that quarter (e.g. "2025 (as of Q3)").</li>
+  <li><strong>Measure</strong> Balance / Δ Amount / Δ %. As on the Dashboard (§10, §12.6), Δ % is suppressed only when the prior populated value is exactly ฿0 — never shown as a misleading 0% or "∞".</li>
+  <li><strong>Comparison panel:</strong> Off / QoQ / YoY / Custom — a dedicated panel showing two periods side by side per bucket. YoY falls back to the nearest earlier populated period and names the actual periods used. A granularity change clears an active comparison.</li>
+  <li><strong>Five KPI tiles</strong> (latest value, latest change, change over range, annualized change, populated periods) that react to both the lens and the drill node.</li>
+  <li><strong>Export view (CSV):</strong> a client-side CSV of exactly what is on screen — UTF-8 with BOM (Thai text opens correctly in Excel), with <code>#</code> header comment lines recording the tracking set, lens, drill path, group-by, granularity, measure and timestamp (plus the comparison periods when active). One file covers the chart rows and, when the Scoped Dashboard is expanded, its grid rows too; a second file is produced when a comparison is active. No exclusive items appear in any export.</li>
+</ul>
+
+<h3>14.2 The Scoped Dashboard section</h3>
+<p>Below the KPI tiles and above the charts, a collapsible <strong>Scoped Dashboard</strong> card shows the Dashboard's tabular readout — per-year quarterly grid or a yearly "as-of" grid, with a scope-total row, sub-category subtotals, item rows and per-period deltas — for just the drilled category, sub-category or item.</p>
+<ul>
+  <li>It renders only once the user has drilled in (depth ≥ 1). At the set level it stays collapsed with a hint; if expanded there it shows only a 3-row Grand Total / Property / Non-Property strip.</li>
+  <li>Under the <strong>Grand Total</strong> lens the scope-total and subtotal rows use the server's own subtotal figures verbatim. Under <strong>Property</strong> / <strong>No Property</strong> they are re-derived from only the qualifying items, because the server subtotals are not type-filtered.</li>
+  <li>Under the Grand Total lens, a category / sub-category scope also shows "Property portion" / "Non-Property portion" split rows; a sub-category whose items are all one type shows a note instead.</li>
+  <li>Exclusive descendants appear in a separate "Excluded from total (exclusive)" block and never in any rollup.</li>
+  <li>A single-item scope adds a "scope facts" strip (first/last populated period, populated count, peak and trough with their periods, net change, latest Δ).</li>
+  <li>If the current lens has no qualifying items in the scope, an explicit "Switch to Grand Total" recovery action is shown rather than misleading zeros.</li>
+</ul>
+
+<h3>14.3 Scope and limitations</h3>
+<ul>
+  <li><strong>Read-only exploration only.</strong> No data entry, no saved / named views, no annotations, no real-time or scheduled refresh, no emailed snapshots. A URL that encodes the current view is the only "saved view" and is ephemeral — data loads once per navigation.</li>
+  <li><strong>Dark theme only.</strong> A light theme is deferred to an app-wide effort.</li>
+  <li><strong>Quarterly and yearly granularity only</strong> — no monthly or finer.</li>
+  <li>Ownership and privacy follow the same rule as the rest of the Financial Tracker (§9): a request for a set that does not exist or belongs to another user is rejected as a bare not-found, never confirming it exists.</li>
+</ul>
+
+<div class="callout tip">Every figure on the Analysis view is derived on the fly from the recorded Update Tracking Lists — nothing is cached or stored. If a number looks wrong, the fix is made on the Updates page (§11.3); the Analysis view reflects it on the next load.</div>
 
 </body>
 </html>

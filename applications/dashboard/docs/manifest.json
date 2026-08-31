@@ -123,6 +123,7 @@
       "children": [
         { "id": "ft-functional", "label": "Functional Spec",  "file": "18-financial-tracker/FUNCTIONAL.html" },
         { "id": "ft-technical",  "label": "Technical Design", "file": "18-financial-tracker/TECHNICAL.html"  },
+        { "id": "ft-analysis",   "label": "Analysis View",    "file": "18-financial-tracker/ANALYSIS.html" },
         { "id": "ft-api",        "label": "API Reference",    "file": "02-infrastructure/API-FINANCIAL-TRACKER.html" }
       ]
     },

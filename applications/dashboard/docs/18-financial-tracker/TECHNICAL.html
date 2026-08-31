@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Technical Design</h1>
 
-<p><strong>Version:</strong> 3.5 (Phase 1 + Phase 2 + Phase 3 + Phase 4 — Email Dashboard export: a new tracking-backend export endpoint, a new main-backend send-export endpoint, and a Dashboard-page "Email Dashboard" button) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-29</p>
+<p><strong>Version:</strong> 3.7 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 — Phase 5 (ADR-018): a <code>note</code> column on <code>ft_initial_investment_entry</code> (migration <code>e7c4d9b21a83</code>), a shared <code>profit_math.compute_profit</code> helper, the <code>original_investment_rollup</code> service and its <code>GET /sets/{set_id}/dashboard/original-investment</code> endpoint, a <code>profitVsOriginal</code> block on the running-total response, and export version 2; Phase 6 (ADR-019): the read-only frontend-only "Analysis" view at <code>/tracking/analysis</code> — no backend, schema, or migration change — see §14) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-30</p>
 
 <hr>
 
@@ -52,8 +52,9 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 │   │   ├── database/session.py ← own async SQLAlchemy engine/session/Base
 │   │   ├── database/redis.py   ← own Redis client (blacklist check only)
 │   │   ├── models/              (7 ORM models — 5 from Phase 1 + 2 from
-│   │   │                          Phase 2 — see §3. Phase 3 adds no new
-│   │   │                          tables/models — see §8)
+│   │   │                          Phase 2 — see §3. Phase 3 and Phase 4 add
+│   │   │                          no new tables/models; Phase 5 adds only a
+│   │   │                          `note` column to InitialInvestmentEntry — see §13)
 │   │   ├── schemas/              (Pydantic v2, camelCase — see §5)
 │   │   │   ├── dashboard.py    ← Phase 3: balance-grid response schemas (no request schema — GET only)
 │   │   │   └── export.py       ← Phase 4: full-snapshot export response schemas (no request schema — GET only) — see §12.1
@@ -67,7 +68,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 │   │                              sub_categories, tracking_items, entries,
 │   │                              update_tracking_lists (Phase 2),
 │   │                              dashboard (Phase 3), export (Phase 4)
-│   ├── alembic/                ← OWN migration chain (see §4) — unchanged by Phase 3 AND Phase 4 (no schema change)
+│   ├── alembic/                ← OWN migration chain (see §4) — unchanged by Phase 3 AND Phase 4; Phase 5 adds ONE nullable column (migration e7c4d9b21a83)
 │   └── tests/
 ├── docker/Dockerfile.tracking-backend
 └── frontend/                   ← SHARED — new pages/components/service added
@@ -221,11 +222,13 @@ backend/                                  ← EXISTING main API service — Phas
     <tr><td><code>tracking_item_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_tracking_item.id</code> ON DELETE CASCADE.</td></tr>
     <tr><td><code>amount</code></td><td>NUMERIC(19,4)</td><td>No</td><td>Signed. Positive = increase, negative = decrease. Zero is rejected.</td></tr>
     <tr><td><code>entry_date</code></td><td>DATE</td><td>No</td><td>—</td></tr>
+    <tr><td><code>note</code></td><td>VARCHAR(500)</td><td>Yes</td><td><em>(Phase 5 — migration <code>e7c4d9b21a83</code>)</em> Optional free text, max 500 chars. Blank or whitespace-only input is coerced to <code>NULL</code> by a Pydantic validator; any other value (Thai text included) is stored verbatim. Over-length input is rejected with HTTP 422 before the write. Rows that existed before this migration are <code>NULL</code> — backward compatible.</td></tr>
     <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td>—</td></tr>
   </tbody>
 </table>
 <p><strong>Constraint:</strong> <code>ck_ft_entry_amount_nonzero</code> — <code>CHECK (amount &lt;&gt; 0)</code>.</p>
 <p><strong>Indexes:</strong> <code>ix_ft_entry_tracking_item_id</code> on <code>(tracking_item_id)</code>; <code>ix_ft_entry_item_date</code> on <code>(tracking_item_id, entry_date)</code> — supports the running-total query's chronological ordering.</p>
+<p><em>(Phase 5)</em> Migration <code>e7c4d9b21a83</code> adds only the nullable <code>note</code> column above — <code>ck_ft_entry_amount_nonzero</code> and both <code>ix_ft_entry_*</code> indexes are untouched, and no index, CHECK, or other constraint is added for <code>note</code>.</p>
 <div class="callout">The model docstring explicitly notes that the FK column intentionally omits SQLAlchemy's <code>index=True</code> shortcut here: the approved design calls for the shorter, explicit index names <code>ix_ft_entry_*</code> rather than the longer name SQLAlchemy would auto-generate (<code>ix_ft_initial_investment_entry_tracking_item_id</code>), so both indexes are declared explicitly in <code>__table_args__</code> instead.</div>
 
 <h3>ft_update_tracking_list (Phase 2)</h3>
@@ -287,8 +290,8 @@ item cascades to remove the balance row.</code></pre>
   <tbody>
     <tr><td>Config location</td><td><code>tracking-backend/alembic.ini</code>, <code>tracking-backend/alembic/env.py</code></td></tr>
     <tr><td><code>version_table</code></td><td><strong><code>ft_alembic_version</code></strong> — distinct from the main backend's default <code>alembic_version</code> table, so neither service's <code>alembic upgrade head</code> can stamp or read the other's current revision</td></tr>
-    <tr><td>Current head</td><td><code>20260827_1000_d112fa78e9c2</code> — <code>split_quarter_year_label_into_quarter_and_year</code> (2026-08-27) — drops <code>ft_update_tracking_list.quarter_year_label</code> (VARCHAR(50)) and replaces it with two independent nullable <code>INTEGER</code> columns, <code>quarter</code> and <code>year</code>; <code>down_revision = c001eb66b381</code></td></tr>
-    <tr><td>Chain</td><td><code>f1a2b3c4d5e6</code> — <code>create_ft_tables</code> (2026-08-22) — creates all 5 Phase 1 tables in one migration; <code>down_revision = None</code> (first migration in the chain) → <code>c001eb66b381</code> — <code>create_ft_update_tracking_list_tables</code> (2026-08-25) — creates the 2 Phase 2 tables → <code>20260827_1000_d112fa78e9c2</code> (head, above)</td></tr>
+    <tr><td>Current head</td><td><code>e7c4d9b21a83</code> — <code>add_note_to_ft_initial_investment_entry</code> (2026-08-30) <em>(Phase 5 / ADR-018)</em> — hand-written revision adding a single additive nullable column, <code>ft_initial_investment_entry.note VARCHAR(500) NULL</code>; <code>down_revision = d112fa78e9c2</code> (the prior head). <code>upgrade()</code> is <code>op.add_column("ft_initial_investment_entry", sa.Column("note", sa.String(500), nullable=True))</code>; <code>downgrade()</code> is <code>op.drop_column(...)</code> and is <strong>LOSSY</strong> — it permanently discards any note text, which the migration docstring states explicitly. No index / constraint / CHECK change.</td></tr>
+    <tr><td>Chain</td><td><code>f1a2b3c4d5e6</code> — <code>create_ft_tables</code> (2026-08-22) — creates all 5 Phase 1 tables in one migration; <code>down_revision = None</code> (first migration in the chain) → <code>c001eb66b381</code> — <code>create_ft_update_tracking_list_tables</code> (2026-08-25) — creates the 2 Phase 2 tables → <code>20260827_1000_d112fa78e9c2</code> — <code>split_quarter_year_label_into_quarter_and_year</code> (2026-08-27) — drops <code>ft_update_tracking_list.quarter_year_label</code> (VARCHAR(50)) and replaces it with two independent nullable <code>INTEGER</code> columns, <code>quarter</code> and <code>year</code> → <code>e7c4d9b21a83</code> — <code>add_note_to_ft_initial_investment_entry</code> (2026-08-30 — Phase 5 / ADR-018, head — see the row above)</td></tr>
     <tr><td>Startup behaviour</td><td>Unlike the main backend, this service does <strong>not</strong> call <code>Base.metadata.create_all</code> at startup as a dev convenience. Migrations must be applied out-of-band (<code>alembic upgrade head</code>) before the service starts.</td></tr>
   </tbody>
 </table>
@@ -647,6 +650,26 @@ item cascades to remove the balance row.</code></pre>
       <td><em>(Phase 2)</em> An Update Tracking List's detail view always reflects the tracking set's <strong>current</strong> category/sub-category/item hierarchy rather than a point-in-time structural snapshot (§7.1, FUNCTIONAL.html §11.5) — a reviewed and approved simplicity trade-off, not an oversight.</td>
       <td>Renaming, reorganising, or deleting tracking items retroactively changes how every past Update Tracking List displays, even though the balance <em>values</em> themselves remain exactly as recorded. Acceptable while there is no requirement for point-in-time hierarchy-shape accuracy; would need a structural-snapshot redesign if that requirement appears later.</td>
     </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-08</span></td>
+      <td><em>(Phase 5)</em> <code>GET /items/{item_id}/running-total</code> now builds the full balance grid for the item's tracking set just to extract that one item's current value (§13.6), raising its per-request query cost from ~2 to ~7.</td>
+      <td>Bounded and constant (no N+1), but wasteful for a single-item read. Backlog: a lighter single-item current-value lookup that does not build the whole grid.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-09</span></td>
+      <td><em>(Phase 5)</em> Ledger entry edits are last-write-wins — <code>EntryUpdate</code> has no optimistic-locking / version check (§13.1, FUNCTIONAL.html §7.3).</td>
+      <td>Concurrent edits to the same entry silently overwrite each other. Accepted trade-off for a single-user personal tool; would need a version column or an <code>updated_at</code> precondition if multi-user editing ever appears.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-10</span></td>
+      <td>The tracking-backend test bootstrap builds its schema with <code>Base.metadata.create_all</code>, so the Alembic migrations themselves (including <code>e7c4d9b21a83</code>) are not exercised by the automated test run.</td>
+      <td>Pre-existing and project-wide, not introduced by Phase 5 — a broken migration would not be caught by CI. Mitigated only by hand-running <code>alembic upgrade head</code> during deployment (§4).</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-11</span></td>
+      <td><em>(Phase 5)</em> When a tracking set has no Update Tracking List with both <code>year</code> and <code>quarter</code> set, the balance grid yields no current values, so no item is covered and the "Original Investment vs Profit" section is omitted from the Email Dashboard export.</td>
+      <td>Minor and correct-by-consequence rather than a bug: with zero eligible snapshots there is genuinely nothing to compare a cost basis against. The email still sends with its balance tables and backup attachment.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -748,6 +771,155 @@ item cascades to remove the balance row.</code></pre>
 <h3>12.6 API documentation coverage — a pre-existing gap, not new</h3>
 <p>The tracking-backend export endpoint (§12.1) is documented in <a href="../02-infrastructure/API-FINANCIAL-TRACKER.html">API-FINANCIAL-TRACKER.html</a>'s new "Export (Phase 4)" section, alongside the Dashboard and Update Tracking List endpoints — it is a tracking-backend route and that file's stated scope ("Served by the independent tracking-backend microservice") covers it directly.</p>
 <div class="callout warn">The main-backend <code>send-export</code> endpoint (§12.2) is documented <strong>here only</strong>, not in a dedicated API reference page. This project's docs tree has <strong>no standalone API doc file for any <code>/email/*</code> endpoint</strong> — this is a pre-existing gap that predates this feature: even the long-standing <code>POST /email/send-now</code> and <code>GET</code>/<code>PUT /email/settings</code> endpoints have never had a dedicated reference page anywhere in <code>docs/</code>. <code>API-FINANCIAL-TRACKER.html</code>'s objective statement is explicit that its scope is the tracking-backend service only, so adding a main-backend endpoint into that file would misstate its own stated coverage rather than close the real gap. This feature does not attempt to backfill that pre-existing, project-wide gap for <code>/email/*</code> as a whole — it documents its own new endpoint's full contract here in TECHNICAL.html (§12.2, §12.3) instead, which is the more accurate fix for one new endpoint than partially seeding a cross-service API reference file that does not otherwise exist yet.</div>
+
+<hr>
+
+<h2>13. Original investment note &amp; profit-vs-original (Phase 5 / ADR-018)</h2>
+<p>Phase 5 completes the dated cost-basis capability on top of the Phase 1 Initial Investment Ledger. It adds: an optional <code>note</code> on each ledger entry (§13.1), a single shared profit-formula helper (§13.2), a set-wide "profit vs original investment" rollup service and endpoint (§13.3–§13.4), an export version bump (§13.5), a <code>profitVsOriginal</code> block on the existing per-item running-total response (§13.6), and the matching frontend surfaces (§13.7). The only schema change is the additive nullable <code>note</code> column (migration <code>e7c4d9b21a83</code>, §3, §4); everything else is read-time computation over existing tables.</p>
+
+<h3>13.1 The <code>note</code> column and presence-aware <code>EntryUpdate</code></h3>
+<p>Source: <code>app/models/initial_investment_entry.py</code> (column), <code>app/schemas/entry.py</code> (<code>EntryCreate</code> / <code>EntryUpdate</code> / <code>EntryOut</code>), <code>app/api/v1/endpoints/tracking_items.py</code> and <code>entries.py</code> (handlers).</p>
+<ul>
+  <li><code>ft_initial_investment_entry.note</code> — <code>VARCHAR(500) NULL</code> (§3). Blank or whitespace-only input is normalised to <code>NULL</code> by a Pydantic field validator before it reaches the DB; any other string is stored verbatim, Thai included. Input longer than 500 characters fails schema validation → HTTP 422.</li>
+  <li><code>EntryCreate</code> and <code>EntryUpdate</code> gain a camelCase <code>note</code> field. <code>EntryOut</code> and each <code>RunningTotalRow</code> gain <code>note: str | null</code>.</li>
+  <li><code>EntryUpdate</code> is now <strong>presence-aware</strong>: the handler applies <code>model_dump(exclude_unset=True)</code>, so a field the client omits is left untouched, whereas an explicit <code>note: null</code> or <code>note: ""</code> clears the note. <code>amount: null</code> and <code>entryDate: null</code> are rejected with 422 — those fields are non-nullable and may only be <em>omitted</em>, not nulled.</li>
+</ul>
+<div class="callout">Existing rows created before this migration have <code>note = NULL</code> and are unaffected. No endpoint requires a note; every ledger read simply returns <code>null</code> for entries that have none.</div>
+
+<h3>13.2 <code>profit_math.compute_profit</code> — the single profit formula</h3>
+<p>Source: new pure module <code>app/services/profit_math.py</code>. <code>compute_profit(*, net_original_investment, current_value) -&gt; ProfitFigures</code> is the <strong>only</strong> place the profit amount and the profit-percentage guard are implemented. Both the per-item running-total endpoint (§13.6) and the rollup service (§13.3) call it; the frontend never recomputes a percentage of its own.</p>
+<table>
+  <thead><tr><th>Output field</th><th>Rule</th></tr></thead>
+  <tbody>
+    <tr><td><code>profit</code></td><td><code>current_value - net_original_investment</code>, only when <strong>both</strong> inputs are non-null; otherwise <code>None</code>.</td></tr>
+    <tr><td><code>profit_percent</code></td><td><code>profit / net_original_investment * 100</code>, only when <code>profit</code> is computable <strong>and</strong> <code>net_original_investment &gt; 0</code>. When the net is <code>0</code> or negative the profit amount is still returned but <code>profit_percent</code> is <code>None</code> — never <code>inf</code>, <code>nan</code>, or a string sentinel. Same zero-guard philosophy as <code>update_tracking.py</code>'s <code>_compute_item_delta</code> (§7.3) and <code>dashboard_balance_grid.py</code>'s <code>compute_series_deltas</code> (§8.2), except the guard here is <code>&gt; 0</code> rather than <code>!= 0</code>, because a negative cost basis also produces a meaningless percentage.</td></tr>
+  </tbody>
+</table>
+<p>Definitions the callers pass in:</p>
+<ul>
+  <li><strong>Net original investment</strong> (cost basis) — the running signed sum of every <code>ft_initial_investment_entry.amount</code> for the item. <code>None</code> when the item has zero entries; callers render that as "—", never <code>0</code>.</li>
+  <li><strong>Current value / snapshot</strong> — the item's balance in its most-recent populated <code>(year, quarter)</code> slot, taken from the same winning-<code>UpdateTrackingList</code> selection the Dashboard balance grid already uses (§8.4). <code>None</code> when the item has never appeared in any Update Tracking List balance.</li>
+  <li><strong>Covered</strong> — <code>initial_investment_tracking = true</code> AND at least one entry AND a current value exists. Being covered does <strong>not</strong> require the net to be positive.</li>
+</ul>
+
+<h3>13.3 <code>original_investment_rollup</code> — the set-wide rollup service</h3>
+<p>Source: new service <code>app/services/original_investment_rollup.py</code>. <code>get_original_investment_rollup(db, *, tracking_set_id, user_id)</code> builds the per-item and set-level "profit vs original investment" figures for a whole tracking set. As in §7 and §8, aggregation is business logic and lives in a service module, not the endpoint.</p>
+<h4>Scope and coverage</h4>
+<ul>
+  <li><strong>In scope</strong> (<code>items[]</code>, and <code>coverage.totalCount</code> = <em>M</em>): every non-<code>exclusive</code> item in the set with <code>initial_investment_tracking = true</code> — covered rows and not-yet-covered rows alike (the latter serialised with <code>null</code> numerics). <code>exclusive</code> items and flag-off items are excluded entirely — never a row, never in a total.</li>
+  <li><strong><code>coverage.shownCount</code></strong> (<em>N</em>) — the number of covered items (§13.2).</li>
+  <li><strong><code>coverage.excludedItemNames</code></strong> — the names of in-scope items that are not covered.</li>
+  <li><strong>Set-level <code>totals</code></strong> aggregate covered items only. <code>totals.profitPercent</code> is <code>null</code> when the summed net original investment is <code>0</code> or negative (the same <code>compute_profit</code> guard, §13.2, applied to the summed inputs).</li>
+</ul>
+<h4>Reuse of the balance grid</h4>
+<p>The service calls the existing <code>get_balance_grid()</code> (§8) plus a new additive helper in <code>app/services/dashboard_balance_grid.py</code>, <code>current_value_by_item(BalanceGridResult) -&gt; dict[item_id, Decimal | None]</code>, which walks each item's already-materialised cells newest-slot-first and returns the first populated balance — i.e. the item's "current value / snapshot" (§13.2), using the grid's own winner-selection and slot ordering rather than a second, independently-written query path. Net original investment per item comes from one bulk query of all ledger entries for the in-scope item ids, summed in Python.</p>
+<h4>Fixed query budget — exactly 8</h4>
+<p><code>get_original_investment_rollup</code> issues a constant <strong>8 database queries end-to-end</strong>, independent of item, entry, or slot count — no N+1:</p>
+<ol>
+  <li>1 — tracking-set ownership check (<code>_get_or_404</code>, §5.1).</li>
+  <li>5 — the queries inside <code>get_balance_grid()</code> (§8.5: update-lists, winning balances, categories, sub-categories, tracking items).</li>
+  <li>1 — the in-scope item ids (non-exclusive, <code>initial_investment_tracking = true</code>) for the set.</li>
+  <li>1 — all <code>ft_initial_investment_entry</code> rows for those item ids.</li>
+</ol>
+<div class="callout tip">An earlier design draft cited 9 queries; that double-counted the ownership check. The shipped and documented figure is <strong>8</strong>.</div>
+
+<h3>13.4 Endpoint — <code>GET /sets/{set_id}/dashboard/original-investment</code></h3>
+<p>Source: <code>app/api/v1/endpoints/dashboard.py</code> — a second route added alongside the Phase 3 <code>/sets/{set_id}/dashboard/balance-grid</code> route, under the same already-existing <code>/sets/{set_id}/dashboard/...</code> family (no new router, no new prefix — each route spells out its own path, §5).</p>
+<ul>
+  <li>Read-only. Nothing is cached or stored — every field is recomputed per call.</li>
+  <li>Ownership uses the same <code>_get_or_404</code> as every other resource: a cross-user or unknown <code>set_id</code> returns a bare <strong>404</strong>, never 403 (§5.1).</li>
+  <li>Response <code>OriginalInvestmentRollupOut</code> (camelCase <code>CamelModel</code>): <code>{ trackingSetId, generatedAt (ISO-8601 UTC string), coverage: { shownCount, totalCount, excludedItemNames: string[] }, items: OriginalInvestmentItemRow[], totals: { netOriginalInvestment, currentValue, profit, profitPercent } }</code>, where <code>OriginalInvestmentItemRow = { itemId, itemName, categoryName, subCategoryName, netOriginalInvestment: number|null, currentValue: number|null, currentValueSlot: {year,quarter}|null, profit: number|null, profitPercent: number|null, isCovered: boolean }</code>. Full field-by-field reference and a worked example live in <a href="../02-infrastructure/API-FINANCIAL-TRACKER.html">API-FINANCIAL-TRACKER.html</a> ("Original Investment vs Profit" section).</li>
+</ul>
+
+<h3>13.5 Full JSON export — version bump to 2</h3>
+<p><code>GET /sets/{set_id}/export</code> (§12.1) now emits <code>initialInvestmentEntries[].note</code>, and the <code>EXPORT_VERSION</code> constant is bumped from <code>1</code> to <strong><code>2</code></strong>. The change is additive and backward-compatible: an older export produced at version 1 that lacks <code>note</code> is still valid, and a future restore path defaults the missing field to <code>null</code>.</p>
+
+<h3>13.6 Running-total endpoint extension and its query-cost change</h3>
+<p><code>GET /items/{item_id}/running-total</code> (<code>app/api/v1/endpoints/tracking_items.py</code>) gains a nested <code>profitVsOriginal</code> object on <code>RunningTotalOut</code>, always present:</p>
+<pre><code>profitVsOriginal: {
+  netOriginalInvestment: number | null,
+  currentValue:          number | null,
+  currentValueSlot:      { year, quarter } | null,
+  profit:                number | null,
+  profitPercent:         number | null,
+  isCovered:             boolean
+}</code></pre>
+<p>Inner fields follow §13.2's null rules exactly (they are produced by the same <code>compute_profit</code> call). The endpoint still returns HTTP <strong>400</strong> when the item's <code>initial_investment_tracking</code> flag is <code>false</code>, unchanged from Phase 1 — the new block does not relax that gate.</p>
+<div class="callout warn">To populate <code>currentValue</code>, the handler now also resolves the item's tracking set (one <code>Category</code>-join query filtered by <code>user_id</code>) and calls <code>get_balance_grid()</code> for that set. Its per-request query cost therefore rises from roughly <strong>2 to about 7</strong> — bounded, constant, and free of N+1, but a real amplification for what used to be a cheap endpoint. A lighter single-item current-value lookup (avoiding the full balance-grid build) is a logged backlog optimisation — see §11 TD-FT-08.</div>
+
+<h3>13.7 Frontend integration</h3>
+<p>Source: <code>frontend/src/services/tracking.ts</code>, <code>frontend/src/app/(dashboard)/tracking/items/[itemId]/page.tsx</code>, <code>frontend/src/app/(dashboard)/tracking/dashboard/page.tsx</code>, <code>frontend/src/lib/tracking-export-html.ts</code>.</p>
+<h4>Service layer</h4>
+<p><code>tracking.ts</code> adds <code>note</code> to the <code>Entry</code> and <code>EntryInput</code> types, <code>profitVsOriginal</code> to <code>RunningTotal</code>, the new <code>OriginalInvestmentRollup</code> / <code>OriginalInvestmentItemRow</code> interfaces, and a <code>getOriginalInvestmentRollup(setId)</code> method — a single <code>GET</code> to <code>/tracking/sets/{setId}/dashboard/original-investment</code>, added to this same file (like <code>getBalanceGrid()</code>, §9.2, it is one read-only method and does not warrant its own module).</p>
+<h4>Item detail page</h4>
+<ul>
+  <li><code>EntryForm</code> gains an optional note <code>&lt;textarea&gt;</code> with <code>maxLength={500}</code>; the ledger table gains a Note column.</li>
+  <li>A new <strong>"Profit vs Original"</strong> panel renders only when the item has at least one ledger entry. When the running-total response reports no current value, the panel collapses to a single "no snapshot yet" line instead of the four figures. The panel reads <code>profitVsOriginal</code> straight off the running-total response — it does not compute the percentage itself (§13.2).</li>
+</ul>
+<h4>Dashboard page</h4>
+<ul>
+  <li>A new standalone <strong>"Original Investment vs Profit"</strong> section with its own React Query key (<code>['tracking-original-investment-rollup', selectedSetId]</code>), independent of the balance-grid query and of the Detail/Sub-category/Summary and year-collapse state. The balance-grid tables and both SVG charts (§9.3.3, §9.3.4) are untouched.</li>
+  <li>A coverage badge reads "Profit vs original shown for <em>N</em> of <em>M</em> tracked items" (<code>shownCount</code> / <code>totalCount</code>), with a <code>&lt;details&gt;</code> disclosure listing <code>excludedItemNames</code>. Not-covered rows render their numeric cells as "—"; the set-level totals row shows only covered items.</li>
+</ul>
+<h4>Email export</h4>
+<p><code>buildDashboardEmailHtml</code> (<code>tracking-export-html.ts</code>) gains an optional 3rd <code>rollup</code> argument. When supplied it appends an inline-styled profit table plus a coverage footnote to the email HTML; when the rollup fetch in <code>handleEmailDashboard()</code> fails, the email is still sent without that section (the balance tables and JSON backup attachment are unaffected). Ledger <code>note</code> text is never rendered into the email HTML.</p>
+<p>Labels on every surface are English, and "Original investment (cost basis)" vs "Current balance / snapshot" are kept as deliberately distinct wording so the two amounts are never conflated.</p>
+
+<hr>
+
+<h2>14. "Analysis" view — client-side derivation (Phase 6 / ADR-019)</h2>
+<div class="callout"><strong>Frontend-only.</strong> This section documents a change confined to <code>frontend/</code>. No endpoint, request/response field, database table, column, enum, or Alembic migration was added or modified. <code>API-FINANCIAL-TRACKER.html</code> and <code>DATABASE.html</code> are unchanged. The full reference is <a href="ANALYSIS.html">ANALYSIS.html</a>; ADR-019 in full is in <a href="ANALYSIS-DESIGN.html">ANALYSIS-DESIGN.html</a> §5.</div>
+
+<h3>14.1 Route and the single data source</h3>
+<p>New route <code>frontend/src/app/(dashboard)/tracking/analysis/page.tsx</code>, reached from a 4th <code>&lt;SubLink href="/tracking/analysis" …/&gt;</code> added to the Tracking accordion in <code>components/layouts/Sidebar.tsx</code> (the only pre-existing file touched). The page issues exactly the reads it already needs: <code>trackingService.listSets()</code> and <code>trackingService.getBalanceGrid(setId)</code> — the latter is the same <code>GET /api/v1/tracking/sets/{set_id}/dashboard/balance-grid</code> call the Dashboard page uses (§8.6, §9.2), via React Query key <code>['tracking-analysis-balance-grid', setId]</code>. <strong>No other network request is made</strong> for any control change (lens, drill, granularity, measure, comparison, export, Scoped Dashboard collapse). <code>services/tracking.ts</code> is not modified — the existing wire types (<code>BalanceCell</code>, <code>DashboardBalanceGridOut</code>, <code>DashboardCategoryRow</code>, …) are sufficient and the feature's view-model types stay local to <code>tracking/analysis/types.ts</code>.</p>
+
+<h3>14.2 Component and library inventory</h3>
+<p>All under <code>frontend/src/</code>. New unless noted.</p>
+<table>
+  <thead><tr><th>Path</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>app/(dashboard)/tracking/analysis/page.tsx</code></td><td>Container: fetches, owns <code>ViewState</code>, runs derivations in <code>useMemo</code>, serialises state ⇄ URL, validates a URL-hydrated drill path against the grid, assembles the CSV input.</td></tr>
+    <tr><td><code>.../analysis/types.ts</code></td><td><code>ViewState</code> and derived view-model shapes (<code>AxisPoint</code>, <code>AnalysisSeries</code>, <code>DrillPath</code>, <code>PeriodRef</code>, <code>ComparisonConfig</code>).</td></tr>
+    <tr><td><code>.../analysis/components/</code> (18)</td><td><code>AnalysisControlBar</code>, <code>LensSelect</code>, <code>GroupBySelect</code>, <code>GranularityToggle</code>, <code>MeasureSelect</code>, <code>ComparisonControl</code>, <code>DrillBreadcrumb</code>, <code>StatRow</code>, <code>TrendChart</code>, <code>CompositionChart</code>, <code>CompositionSnapshot</code>, <code>DeltaTrendChart</code>, <code>ComparisonPanel</code>, <code>ExportButton</code>, <code>ChartCard</code>, <code>ScopedDashboardSection</code>, <code>ScopedBalanceGrid</code>, <code>ScopeFactsStrip</code>. All presentational / controlled; the page owns every stateful concern.</td></tr>
+    <tr><td><code>lib/tracking-analysis.ts</code></td><td>Pure derivations (no React, no I/O) — see §14.3.</td></tr>
+    <tr><td><code>lib/tracking-analysis-export.ts</code></td><td>Pure CSV string builders: <code>buildAnalysisCsv</code>, <code>buildComparisonCsv</code>, <code>csvField</code> (RFC-4180 quoting + formula-injection neutralisation), header-comment builder, filename helpers.</td></tr>
+    <tr><td><code>lib/tracking-format.ts</code></td><td>Shared cell / number / delta formatting (wraps the app-wide <code>formatNumber</code>); the "–" / "No prior data" / "n/a (prior was ฿0)" conventions defined once for the charts and the Scoped grid.</td></tr>
+    <tr><td><code>components/charts/svg-primitives.tsx</code></td><td>Shared inline-SVG primitives (<code>linearScale</code>, <code>niceTicks</code>, <code>buildLinePath</code>/<code>buildAreaPath</code>/<code>buildStackedAreaPaths</code> with null-gap breaking, <code>formatPeriodLabel</code>, <code>&lt;AxisX&gt;</code>/<code>&lt;AxisY&gt;</code>/<code>&lt;ChartTooltip&gt;</code>). A light additive extraction of logic currently inline on <code>tracking/dashboard/page.tsx</code> and <code>analytics/daily-performance/page.tsx</code>; those two pages were <strong>not</strong> refactored this iteration. <strong>No charting library</strong> (ADR-019 #5).</td></tr>
+    <tr><td><code>components/layouts/Sidebar.tsx</code></td><td><em>touched</em> — one <code>&lt;SubLink&gt;</code> line added.</td></tr>
+  </tbody>
+</table>
+
+<h3>14.3 Derivation approach — <code>lib/tracking-analysis.ts</code></h3>
+<p>Everything Analysis shows is a pure transform of the one <code>DashboardBalanceGridOut</code> response, memoised in the page on <code>[grid, viewState]</code>. Key functions:</p>
+<ul>
+  <li><code>periodsAsc</code> / <code>cellIndex</code> / <code>readCellSeries</code> — reverse the response's descending <code>years</code> to an ascending <code>(year, quarter)</code> axis and read the positionally-aligned <code>BalanceCell[]</code> arrays into ascending order.</li>
+  <li><code>nodeTotalSeries(grid, drill)</code> — the authoritative series for the current drill node: depth 0 → the lens aggregate array verbatim; depth 1/2 under Grand Total → <code>subtotal[]</code> verbatim; depth 1/2 under Property / No-Property → a <strong>derived</strong> per-period sum (<code>rollupBalances</code>) over lens-qualifying non-exclusive leaf items; depth 3 → the item's <code>cells[]</code>.</li>
+  <li><code>deriveChartModel</code> — builds group-by buckets (verbatim vs derived per lens/depth/groupBy), applies the "Other" rollup (<code>rollupOther</code>, cap 8), trims leading/trailing all-null periods (<code>trimEmptyEnds</code>, the exact rule the dashboard chart uses), applies granularity, and computes 100%-stacked shares (<code>computeComposition</code>).</li>
+  <li><code>asOfYearlySeries(balances, axis)</code> — the one genuinely new derivation: per year, pick the highest-index quarter that has data (Q4→Q3→Q2→Q1); <code>null</code> if none; also returns the as-of quarter for labelling ("2025 (as of Q3)").</li>
+  <li><code>buildScopedGrid(grid, viewState)</code> — the Scoped Dashboard model: drill-subtree selection, verbatim-vs-derived scope total per lens, split-row derivation, exclusive block, per-depth row shape, and the empty / lens-mismatch states. Reacts to <code>lens</code> + <code>drill</code>; <code>groupBy</code> + <code>comparison</code> are ignored.</li>
+  <li><code>resolveComparison</code>, <code>buildStatRow</code> (scope-aware — computed from the same <code>nodeTotalSeries</code>), <code>annualisedChange</code>.</li>
+</ul>
+
+<h3>14.4 The delta-engine TypeScript replica and parity tests</h3>
+<p>The authoritative delta math is <code>compute_series_deltas</code> in <code>tracking-backend/app/services/dashboard_balance_grid.py</code> (§8.2). Analysis uses the <strong>server-provided <code>deltaAmount</code> / <code>deltaPercent</code> verbatim</strong> wherever a matching row exists (every item's <code>cells[]</code>; every category / sub-category <code>subtotal[]</code> under the Grand Total lens). It re-computes deltas in TypeScript (<code>computeSeriesDeltas</code> in <code>lib/tracking-analysis.ts</code>) <strong>only for derived series with no server row</strong>: item-type buckets, lens-filtered hierarchy subtotals (Property / No-Property), yearly as-of series, Scoped Dashboard derived totals and split rows, and the "Other" band.</p>
+<p>The replica is byte-for-byte: a blank slot yields <code>null</code> deltas and does not advance the "last seen" value; the first populated slot yields <code>null</code> (never 0); <code>deltaPercent</code> is <code>null</code> <strong>only</strong> when the prior populated value is exactly <code>0</code> (no epsilon, no cap); year boundaries are crossed freely. Two tests in <code>lib/__tests__/tracking-analysis.test.ts</code> lock this:</p>
+<ul>
+  <li><strong>Golden-fixture delta parity</strong> — <code>balance</code> / <code>deltaAmount</code> / <code>deltaPercent</code> values copied from a real <code>balance-grid</code> response; the TS replica must reproduce the server deltas on the Grand Total lens.</li>
+  <li><strong>Trim parity</strong> — <code>trimEmptyEnds</code> must produce the identical leading/trailing-null window the dashboard chart produces for the same data.</li>
+</ul>
+<p>ADR-019's Consequences note that this parity must be re-verified on any change to the server engine.</p>
+
+<h3>14.5 URL serialisation and hostile-input handling</h3>
+<p><code>ViewState</code> ⇄ URL via flat query params (<code>lens</code>, <code>g</code>, <code>m</code>, <code>groupBy</code>, <code>cat</code>/<code>sub</code>/<code>item</code>, <code>delta</code>, <code>cmp</code>/<code>cmpA</code>/<code>cmpB</code>, <code>snap</code>, <code>scoped</code>), each omitted at its default; this shareable link is the only "saved view". <code>queryToViewState</code> clamps every enum param through an allow-list back to the default, parses period refs with a strict <code>^(\d{4})(?:Q([1-4]))?$</code> regex, only honours a deeper drill id if its parent id is present, and forces <code>groupBy</code> to a value allowed for the hydrated depth. After the grid loads, the page validates the drill path against it and <strong>resets to the default landing view</strong> when any <code>categoryId</code> / <code>subCategoryId</code> / <code>itemId</code> no longer resolves (renamed, deleted, or a cross-set link). No secret or PII is placed in the query string.</p>
+
+<h3>14.6 Security and testing</h3>
+<ul>
+  <li>No new endpoint or auth surface; per-user isolation is inherited from the reused endpoint (bare 404, never 403). The CSV is built and downloaded entirely client-side and contains only the user's own on-screen figures. <strong>Formula-injection neutralisation</strong> (a leading <code>=</code> <code>+</code> <code>-</code> <code>@</code> or tab in any text field is prefixed with <code>'</code>) was added in the security review — <code>csvField</code> in <code>tracking-analysis-export.ts</code>. Security Gate 4: approved.</li>
+  <li>Coverage: <code>lib/tracking-analysis.ts</code> ≈ 95%; feature surface ≈ 88–91%; ≈ 130 feature-level test cases across the derivation lib, the export lib, the page and seven component suites. QA Gate 5: conditional pass.</li>
+</ul>
+
+<h3>14.7 Deployment</h3>
+<p>Frontend-only build; no migration, no config change, no service restart beyond the normal frontend deploy. Rollback = revert the route directory, the three <code>lib/</code> files, <code>components/charts/svg-primitives.tsx</code>, and the one <code>Sidebar.tsx</code> line. Independent of ADR-018 (they do not overlap).</p>
 
 </body>
 </html>

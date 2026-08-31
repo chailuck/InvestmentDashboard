@@ -85,7 +85,7 @@ describe('Sidebar — Tracking navigation entry', () => {
     expect(screen.queryByRole('link', { name: 'Category' })).not.toBeInTheDocument()
   })
 
-  it('reveals "Dashboard", "Updates", and "Category" sublinks, in that order, once expanded', async () => {
+  it('reveals "Dashboard", "Updates", "Category", and "Analysis" sublinks, in that order, once expanded', async () => {
     render(<Sidebar {...defaultProps} />)
     await screen.findByText('Action Plan')
 
@@ -97,6 +97,9 @@ describe('Sidebar — Tracking navigation entry', () => {
     const updatesLink = await screen.findByRole('link', { name: 'Updates' })
     expect(updatesLink).toHaveAttribute('href', '/tracking/updates')
 
+    const analysisLink = await screen.findByRole('link', { name: 'Analysis' })
+    expect(analysisLink).toHaveAttribute('href', '/tracking/analysis')
+
     // "Dashboard" also names the top-level `/dashboard` NavLink, so scope
     // this lookup to the Tracking accordion's own nested list.
     const trackingButton = screen.getByRole('button', { name: /Tracking/i })
@@ -104,26 +107,27 @@ describe('Sidebar — Tracking navigation entry', () => {
     const dashboardLink = within(trackingGroup).getByRole('link', { name: 'Dashboard' })
     expect(dashboardLink).toHaveAttribute('href', '/tracking/dashboard')
 
-    // Dashboard, Updates, Category render in that order in the accordion.
+    // Dashboard, Updates, Category, Analysis render in that order in the accordion.
     const linkTexts = Array.from(trackingGroup.querySelectorAll('a')).map(a => a.textContent)
     expect(linkTexts.indexOf('Dashboard')).toBeLessThan(linkTexts.indexOf('Updates'))
     expect(linkTexts.indexOf('Updates')).toBeLessThan(linkTexts.indexOf('Category'))
+    expect(linkTexts.indexOf('Category')).toBeLessThan(linkTexts.indexOf('Analysis'))
   })
 
-  it('does not render extra sublinks under Tracking beyond Dashboard, Updates, and Category', async () => {
+  it('renders exactly the four Tracking sublinks (Dashboard, Updates, Category, Analysis)', async () => {
     render(<Sidebar {...defaultProps} />)
     await screen.findByText('Action Plan')
 
     fireEvent.click(screen.getByRole('button', { name: /Tracking/i }))
     await screen.findByRole('link', { name: 'Category' })
 
-    // The Tracking group's nested list should contain exactly three links.
     const trackingButton = screen.getByRole('button', { name: /Tracking/i })
     const trackingGroup = trackingButton.parentElement!
     const links = trackingGroup.querySelectorAll('a')
-    expect(links).toHaveLength(3)
+    expect(links).toHaveLength(4)
     expect(links[0]).toHaveTextContent('Dashboard')
     expect(links[1]).toHaveTextContent('Updates')
     expect(links[2]).toHaveTextContent('Category')
+    expect(links[3]).toHaveTextContent('Analysis')
   })
 })

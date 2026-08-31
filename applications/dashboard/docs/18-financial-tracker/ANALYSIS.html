@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financial Tracker — Analysis View — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Financial Tracker — "Analysis" View</h1>
+
+<p><strong>Version:</strong> 1.0 (as built — Feature 2 / ADR-019) &nbsp;|&nbsp; <strong>Status:</strong> <span class="badge green">Built — QA Gate 5 conditional pass, Security Gate 4 approved</span> &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-30 &nbsp;|&nbsp; <strong>Route:</strong> <code>/tracking/analysis</code> &nbsp;|&nbsp; <strong>ADR:</strong> ADR-019 (Accepted)</p>
+
+<div class="callout"><strong>Scope of this document.</strong> This page consolidates the <strong>Functional</strong> (Part I) and <strong>Technical</strong> (Part II) reference for the shipped Analysis view. It is the build-time promotion of <code>18-financial-tracker/ANALYSIS-DESIGN.html</code> (design spec rev 2, Phases 1–2): the substance is carried over, the "design-only / not yet built / open questions pending" framing is dropped, and what was actually implemented in Phase 3 is folded in. Where this document and the design spec differ, <strong>this document governs</strong> for the built feature; the design spec remains the record of why the decisions were made (see its §5 ADR-019 and §8 open-question resolutions).</p></div>
+
+<div class="callout warn"><strong>No API or database documentation changes.</strong> This feature adds no endpoint, schema, column, enum, or migration. <code>API-FINANCIAL-TRACKER.html</code> and <code>DATABASE.html</code> are unchanged. Analysis is built entirely client-side from the response of the existing <code>GET /api/v1/tracking/sets/{set_id}/dashboard/balance-grid</code> endpoint.</div>
+
+<h2>Contributors</h2>
+<table>
+<thead><tr><th>Agent</th><th>Contribution</th></tr></thead>
+<tbody>
+<tr><td>program-director</td><td>Orchestration across Phases 1–8; quality-gate validation; ADR-019 framing; consolidation of this reference.</td></tr>
+<tr><td>business-analyst</td><td>Phase 1 — business objective, user stories, functional requirements FR-1…12, acceptance criteria AC-1…25 and AC-SD-1…43, NFRs, assumptions, risks.</td></tr>
+<tr><td>solution-architect</td><td>Phase 2 — solution approach (client-side derivation), <code>ViewState</code> model, data-derivation spec, "no new endpoint" contract decision, the "as-of year end" yearly rule, the Scoped Dashboard section design, ADR-019.</td></tr>
+<tr><td>frontend-engineer</td><td>Phase 2–3 — UX layout &amp; wireframe, chart appearance/behaviour, accessibility model; Phase 3 implementation of the route, the 18 components, the three helper libraries, the shared SVG primitives, and the feature test suite.</td></tr>
+<tr><td>qa-engineer</td><td>Phase 4 — functional / edge-case / failure verification; golden-fixture delta-parity and trim-parity checks; acceptance-criteria coverage. Gate 5: conditional pass.</td></tr>
+<tr><td>security-engineer</td><td>Phase 5 — confirmed no new endpoint or auth surface; confirmed the CSV blob path leaks nothing beyond on-screen data and that URL params carry only non-secret view state; required the CSV formula-injection neutralisation now in <code>tracking-analysis-export.ts</code>. Gate 4: approved.</td></tr>
+<tr><td>technical-writer</td><td>Phase 6 — this page; the Analysis sections added to <code>FUNCTIONAL.html</code> and <code>TECHNICAL.html</code>; <code>manifest.json</code> and <code>app-guide.html</code> updates.</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h1 style="font-size:1.35rem;border:none;margin:2rem 0 1rem">Part I — Functional</h1>
+
+<h2>1. Overview &amp; purpose</h2>
+<p>The <strong>Analysis</strong> view is a read-only exploration surface over the data already captured by the Tracking <strong>Updates</strong> sub-menu (§11 of <code>FUNCTIONAL.html</code>) and already exposed by the Dashboard <strong>balance-grid</strong> endpoint (§12). It adds no data entry and no new stored data. It lets a single investor answer, from one screen fed by one API call, four questions about their tracked net worth:</p>
+<table>
+<thead><tr><th>Instrument</th><th>Question it answers</th></tr></thead>
+<tbody>
+<tr><td><strong>Trend</strong></td><td>How has a value moved over time? (multi-series line / area across quarters or years)</td></tr>
+<tr><td><strong>Composition</strong></td><td>What share of a total does each part hold, and how is the mix shifting? (100% stacked area over time; ranked horizontal bar at one period)</td></tr>
+<tr><td><strong>Delta trend</strong></td><td>How large was each period-over-period change, and when did the big moves happen? (diverging bars around a zero baseline; waterfall toggle)</td></tr>
+<tr><td><strong>Scoped Dashboard</strong></td><td>What does the main Dashboard's numeric table look like for just this category / sub-category / item? (per-year quarterly grid or a yearly "as-of" grid, with scope totals, sub-totals, item rows and per-period deltas)</td></tr>
+</tbody>
+</table>
+<p>Every instrument is sliceable by an <strong>amount-type lens</strong>, by the <strong>category hierarchy</strong> (drill Category → Sub-category → Item), and — for the charts — optionally by <strong>item type</strong>. Granularity is <strong>quarterly or yearly only</strong>. A quarter-vs-quarter / year-vs-year comparison panel and a client-side CSV export of the current view are also provided.</p>
+
+<h3>1.1 Navigation</h3>
+<p>Analysis is the <strong>4th sub-link</strong> under the <strong>Tracking</strong> sidebar accordion, after Category, Updates and Dashboard, at <code>/tracking/analysis</code>. The set is chosen with the same on-page tracking-set <code>&lt;select&gt;</code> used on the other tracking pages; it defaults to the user's first set.</p>
+
+<h3>1.2 What it is not (this iteration)</h3>
+<ul>
+<li>No data entry or editing — balances are recorded only via Updates.</li>
+<li>No persistent <strong>saved / named views</strong>. The current view is serialised to the URL query string; that link is the only "saved view" and is ephemeral, not a stored preset.</li>
+<li>No annotations, notes, thresholds or alerts on charts or grid rows.</li>
+<li>No real-time, auto, or scheduled refresh, and no emailed / pushed snapshots. Data loads once per navigation from the single <code>balance-grid</code> call; the user re-navigates or reloads to refresh.</li>
+<li>No monthly or finer granularity.</li>
+<li>No server-rendered / PDF / formatted export report — CSV only.</li>
+<li><strong>Dark theme only.</strong> A light theme is deferred to an app-wide theming effort.</li>
+</ul>
+
+<h2>2. Global controls</h2>
+<p>All controls are global — one filter row scopes every chart, the Scoped Dashboard and the export. A single <code>ViewState</code> object is the source of truth; every control mutates it and one render pass follows. The control row is: Amount lens · Granularity · Measure · Group by · Comparison.</p>
+
+<h3>2.1 Amount-type lens</h3>
+<p>A 3-way selector: <strong>Grand Total</strong> / <strong>Property</strong> / <strong>No Property</strong>. The mapping is exactly the server's:</p>
+<ul>
+<li><strong>Grand Total</strong> — every non-exclusive tracking item.</li>
+<li><strong>Property</strong> — items of type <code>Property</code> only.</li>
+<li><strong>No Property</strong> — the other five types (<code>Bank account</code>, <code>Investment Account</code>, <code>TaxSaving</code>, <code>Materials</code>, <code>Insurance</code>).</li>
+</ul>
+<p><strong>Exclusive items are always excluded</strong> from every series, subtotal, total, breakdown and export, under every lens — they remain reachable only as an explicit leaf drill target, where they are shown greyed and annotated "excluded from totals". Switching the lens re-filters which items feed every series and re-renders everything. Changing the lens <strong>keeps the current drill path</strong> (a deliberate change from an earlier design draft) so a lens that has no qualifying items in the current scope surfaces an explicit "switch to Grand Total" recovery state rather than silently resetting; clicking the <em>lens breadcrumb crumb</em> still resets the drill to root.</p>
+
+<h3>2.2 Group by</h3>
+<p>The group-by options depend on drill depth:</p>
+<table>
+<thead><tr><th>Depth</th><th>Node shown</th><th>Default group-by</th><th>Allowed group-by</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>Lens total (whole set)</td><td>Category</td><td>Category, Item type</td></tr>
+<tr><td>1</td><td>One category</td><td>Sub-category</td><td>Sub-category, Item type</td></tr>
+<tr><td>2</td><td>One sub-category</td><td>Item</td><td>Item, Item type</td></tr>
+<tr><td>3</td><td>One item (leaf)</td><td>— (single series)</td><td>—</td></tr>
+</tbody>
+</table>
+<p><strong>Item type</strong> is an orthogonal cross-cut: at any depth it buckets the current node's descendant items by <code>TrackingItem.type</code>, ignoring category structure. Item-type buckets are <strong>not drillable</strong> and are most meaningful under the Grand Total lens.</p>
+
+<h3>2.3 Drill-down &amp; breadcrumb</h3>
+<p>The drill path is <code>Lens → Category → Sub-category → Item</code>. A breadcrumb shows the path with clickable ancestor crumbs and an <strong>Up</strong> control that steps one level. Clicking a chart line, band or bar drills into that bucket unless already at a leaf item; clicking an item row in the Scoped Dashboard also drills the whole view to that item (depth 3). Drilling one level advances the group-by to that depth's default and clears the breakdown snapshot period. A leaf shows a single series with a "most detailed level — drill disabled" note.</p>
+
+<h3>2.4 Granularity — and the "as-of year end" rule</h3>
+<p>Quarterly / Yearly only.</p>
+<ul>
+<li><strong>Quarterly</strong> plots one point per populated <code>(year, quarter)</code> slot; interior blanks are skipped (rendered as gaps, never interpolated); leading and trailing all-blank periods are trimmed.</li>
+<li><strong>Yearly</strong> uses the <strong>"as-of year end"</strong> rollup: a year's value is the balance of that year's <strong>latest populated quarter</strong> (Q4 if present, else Q3, else Q2, else Q1); <code>null</code> if the year has no populated quarter. Every yearly label and tooltip names the source quarter — e.g. <strong>"2025 (as of Q3)"</strong> — so a yearly number is never ambiguous. Year-over-year deltas run the same delta algorithm over the yearly series (one value per year, ascending), comparing to the nearest earlier year that has an as-of value; the first populated year shows "No prior data".</li>
+</ul>
+<p>Rationale: balances are <em>stock</em> quantities (point-in-time net worth), not flows — summing four quarters double-counts and averaging has no net-worth meaning, so both were rejected. "Latest populated quarter" approximates "net worth at year end" and degrades gracefully when Q4 is missing (normal for the in-progress year). A granularity change while a comparison is active <strong>clears the comparison</strong> with a transient notice ("Comparison cleared due to granularity change") — a comparison never mixes a quarter with a year.</p>
+
+<h3>2.5 Measure</h3>
+<p><strong>Balance</strong> / <strong>Δ Amount</strong> / <strong>Δ %</strong>. In the charts, <code>measure</code> selects the plotted quantity outright. In the Scoped Dashboard grid the Balance column is always shown and <code>measure</code> only selects the companion delta column (Δ Amount vs Δ %).</p>
+<div class="callout"><strong>Δ% is <code>null</code> only when the prior populated value is exactly <code>0</code></strong> — no epsilon, no magnitude cap. This matches the server engine (<code>compute_series_deltas</code>) verbatim. In that case a tooltip / cell reads "n/a (prior was ฿0)", never "∞" or "NaN". The first populated period of any series has <code>null</code> deltas (never <code>0</code>).</div>
+
+<h2>3. The four charts</h2>
+<p><strong>Common conventions.</strong> Charts render chronological ascending (the response's descending <code>years</code> is reversed once). Categorical palette <code>['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767']</code>, fixed order, modulo-wrapped; a bucket keeps its colour across all four charts of a view. The lens/scope-total overlay line is <code>#E2E8F0</code>, dashed and thicker, with a bold legend label — never a categorical slot. Interior nulls are gaps (never interpolated); leading/trailing all-null periods trimmed. More than 8 buckets → the smallest are folded into a muted, non-drillable <strong>"Other (n)"</strong> band (<code>#64748B</code>). Every chart <code>&lt;svg&gt;</code> is <code>role="img"</code> with a descriptive <code>aria-label</code>; sign is carried by an arrow and a <code>+</code>/<code>−</code> label as well as colour.</p>
+
+<h3>3.1 (a) Trend chart</h3>
+<table>
+<tbody>
+<tr><th>Purpose</th><td>How has this node — and its parts — moved over time?</td></tr>
+<tr><th>x</th><td>Ordered period index — one point per <code>(year, quarter)</code> ascending (quarterly) or one point per year ascending (yearly).</td></tr>
+<tr><th>y</th><td>The selected measure. Balance → currency; Δ Amount → signed currency with an emphasised zero baseline; Δ % → signed %.</td></tr>
+<tr><th>Series</th><td>One line per group-by bucket (categorical, fixed order); soft area fill only for a single / leaf series. Plus the dashed near-white lens/scope-total overlay.</td></tr>
+<tr><th>Interactions</th><td>Hover → vertical guide + tooltip (period, each visible series value, its Δ vs previous populated period, "(vs Q4 2022)" when a gap was crossed). Click a line → drill. Legend label click → toggle that series' visibility. Arrow keys move a period cursor with an <code>aria-live</code> tooltip.</td></tr>
+<tr><th>Empty / partial</th><td>Path breaks on null; an all-null series in the visible window drops from the legend; leading/trailing empties trimmed. Leaf with no data → "most detailed level" note.</td></tr>
+</tbody>
+</table>
+
+<h3>3.2 (b) Composition over time</h3>
+<table>
+<tbody>
+<tr><th>Purpose</th><td>How is the mix of this node, by the chosen dimension, shifting over time?</td></tr>
+<tr><th>Form</th><td>100%-stacked area (part-to-whole across an ordered continuum). Stack order is stable by <code>orderIndex</code>. No aggregate overlay (the whole is 100%).</td></tr>
+<tr><th>Measure</th><td>Always balance-derived share = <code>bucketBalance / periodTotal</code>. <code>periodTotal</code> is the lens aggregate value at depth 0, or the scoped node total when drilled. If <code>measure</code> is a delta the card notes "showing share of balance" and stays on share.</td></tr>
+<tr><th>Interactions</th><td>Hover → tooltip (period + every bucket's share % and absolute value). Band / legend click → drill.</td></tr>
+<tr><th>Empty / partial</th><td>Period with no populated bucket or <code>periodTotal ≤ 0</code> → blank column. A null bucket in a valid period contributes 0 (band pinches) and stays in the stack. Shares are rounded to 0.1%; the last band with a value absorbs the residual so a period's bands sum to exactly 100.0%.</td></tr>
+</tbody>
+</table>
+
+<h3>3.3 (c) Breakdown at a period</h3>
+<table>
+<tbody>
+<tr><th>Purpose</th><td>At this one period, what is the exact mix by the chosen dimension?</td></tr>
+<tr><th>Form</th><td>Horizontal bars, sorted descending by value (horizontal for long Thai/English labels; treemap explicitly rejected). Value / share % toggle.</td></tr>
+<tr><th>Period</th><td><code>ViewState.snapshotPeriod</code>; default = the latest populated period in the trimmed window. A ◀ ▶ stepper moves only across populated periods and disables at the first / last.</td></tr>
+<tr><th>Interactions</th><td>Hover → exact value, share, rank. Bar click → drill.</td></tr>
+<tr><th>Empty / partial</th><td>Null buckets render as a short muted "no data" tick, sorted last. Whole period empty → "No data for {period}".</td></tr>
+<tr><th>Yearly</th><td><code>snapshotPeriod</code> becomes a year; value from the yearly rollup; the label notes the as-of quarter.</td></tr>
+</tbody>
+</table>
+
+<h3>3.4 (d) Delta-trend chart</h3>
+<table>
+<tbody>
+<tr><th>Purpose</th><td>What was the period-over-period change of this node, and when were the big moves?</td></tr>
+<tr><th>Form</th><td>Diverging vertical bars around a zero baseline — gains up (<code>#22C55E</code>), losses down (<code>#EF4444</code>); sign also by arrow / <code>+</code>/<code>−</code> label. <strong>Waterfall</strong> toggle: a start-balance bar, floating Δ bars with dashed connectors, an end-balance bar. Secondary unit toggle Δ Amount / Δ %.</td></tr>
+<tr><th>x / y</th><td>x = transition index ascending, each bar at the later period of the pair; y = Δ amount (bars) or running balance (waterfall).</td></tr>
+<tr><th>Interactions</th><td>Hover → "from {A} → {B}", both balances, Δ amount, Δ %. Click a bar → set the breakdown snapshot period.</td></tr>
+<tr><th>Empty / partial</th><td>No bar where either endpoint is unpopulated; no bar for the first populated period; after an interior gap the bar is labelled "vs {last populated period}". Fewer than 2 populated periods → "Need at least two populated periods for a delta."</td></tr>
+</tbody>
+</table>
+
+<h2>4. KPI stat row</h2>
+<p>Five always-visible tiles below the breadcrumb. Each is a mono uppercase caption, a big value, a sign-coloured delta chip carrying an arrow + sign, and a muted label. The row is <strong>scope-aware</strong>: it reacts to both the lens <em>and</em> the drill node, and is computed from the <em>same</em> node-total series the Scoped Dashboard scope-total row uses, so the two never disagree by construction.</p>
+<table>
+<thead><tr><th>Tile</th><th>Definition</th></tr></thead>
+<tbody>
+<tr><td>Latest value</td><td>The latest populated period's value, plus its period label.</td></tr>
+<tr><td>Latest change</td><td>Δ amount + Δ % for the latest populated period vs the nearest earlier populated period.</td></tr>
+<tr><td>Change over range</td><td><code>last − first</code> populated value; % = <code>amount / first × 100</code>, <code>null</code> when <code>first</code> is 0; label spans e.g. "Q2 2022 → Q3 2025".</td></tr>
+<tr><td>Annualized change</td><td><code>(last / first)^(1/years) − 1</code>, only when <code>first &gt; 0</code>, <code>last &gt; 0</code> and the span is ≥ ~1 year; otherwise "n/a".</td></tr>
+<tr><td>Populated periods</td><td><code>count / total</code> in the visible range.</td></tr>
+</tbody>
+</table>
+<p>When the current node has no qualifying items for the lens, the row renders in a cleared state.</p>
+
+<h2>5. Scoped Dashboard section</h2>
+<p>A full-width, titled, collapsible card positioned <strong>below the KPI stat row and above the four charts</strong> — precise figures first, visual analysis second. It reproduces the main Tracking Dashboard's numeric readout but constrained to the current drill scope. It reacts to <code>lens</code>, <code>drill</code>, <code>granularity</code> and <code>measure</code>; it deliberately ignores <code>groupBy</code> and <code>comparison</code> and always rolls up the natural Category → Sub-category → Item hierarchy. It is 100% client-side off the one already-fetched <code>balance-grid</code> response — no new endpoint, no new fetch.</p>
+<p>Header: a chevron + "Scoped Dashboard" title and a right-aligned sub-caption echoing the live scope, e.g. <code>Category: Investments · Quarterly · Grand Total</code>. The header is one keyboard-operable <code>&lt;button&gt;</code> (<code>aria-expanded</code> + <code>aria-controls</code>). Wide grids scroll inside their own <code>overflow-x:auto</code> container; the page body never scrolls sideways.</p>
+
+<h3>5.1 The lens interaction rule (critical)</h3>
+<div class="callout"><strong>The server <code>subtotal[]</code> / <code>grandTotal[]</code> arrays are NOT type-filtered</strong> — they sum all non-exclusive items regardless of type. Therefore:
+<ul>
+<li>Under the <strong>Grand Total</strong> lens, a scoped category / sub-category total uses the server <code>subtotal[]</code> <strong>verbatim</strong>.</li>
+<li>Under the <strong>Property</strong> or <strong>No Property</strong> lens, the scoped total must be a <strong>derived</strong> per-period sum over only the lens-qualifying, non-exclusive <em>leaf</em> descendant items, with deltas from the client TS re-implementation of the server delta rule (§Part II).</li>
+</ul>
+Exclusive items are always their own badged row and never enter any total, verbatim or derived, and are never type-filtered by the lens.</div>
+
+<h3>5.2 Rendering by drill depth</h3>
+<h4>Depth 0 — the grid does not render</h4>
+<p>A whole-set grid would duplicate <code>/tracking/dashboard</code>, and the page's own KPI row + charts already cover the whole-set view. The card stays visible but collapsed, with the hint "Drill into a category, sub-category, or item to populate the Scoped Dashboard." If manually expanded at depth 0, it shows only a slim 3-row <strong>lens-total strip</strong> — Grand Total / Property / Non-Property, each as its as-of-latest-populated value, sourced verbatim from <code>grandTotal[]</code>, <code>propertyBreakdown.propertyTotal[]</code>, <code>propertyBreakdown.nonPropertyTotal[]</code>.</p>
+<h4>Depth 1 — category</h4>
+<p>Rows, top to bottom:</p>
+<ol>
+<li><strong>Scope total</strong> "Total: {category}" — Grand Total lens → <code>category.subtotal[]</code> verbatim; Property / No-Property → derived sum over the category's lens-qualifying non-exclusive leaf items.</li>
+<li>Per sub-category in <code>orderIndex</code> order: a bold <strong>subtotal row</strong> (same verbatim-vs-derived rule) then its indented <strong>item rows</strong> (<code>item.cells[]</code> verbatim; non-qualifying-type items hidden under a Property / No-Property lens).</li>
+<li><strong>Grand Total lens only:</strong> two <strong>split rows</strong> "Property portion" / "Non-Property portion" — derived sums split on <code>item.type === 'Property'</code> vs the other five types. Placed immediately under the scope total (a split <em>of</em> it), before the sub-category breakdown.</li>
+<li>If the category has exclusive descendants: a separated <strong>"Excluded from total (exclusive)"</strong> block — each row badged, no rollup.</li>
+</ol>
+<h4>Depth 2 — sub-category</h4>
+<p>Rows: (1) <strong>scope total</strong> "Total: {sub-category}" (verbatim <code>subCategory.subtotal[]</code> under Grand Total, else derived); (2) <strong>item rows</strong>, one per qualifying non-exclusive item; (3) split rows only under the Grand Total lens <em>and</em> only if the sub-category actually holds mixed item types, otherwise the one-line note "All items in this sub-category are type: X"; (4) an exclusive block if any.</p>
+<h4>Depth 3 — single item (leaf)</h4>
+<p>No scope total, no subtotal, no split, no child rows. Shows: a scope identity strip (item name, type badge, "Exclusive" badge if set); one <strong>balance row</strong> across the period axis with its deltas; a <strong>scope-facts strip</strong> (first populated period, last populated period, populated-period count in the window, peak balance + its period, trough + its period, net change over the window, latest Δ amount + %); and the note "This scope is a single item; its balance is shown directly."</p>
+
+<h3>5.3 Yearly "as-of year end" grid</h3>
+<p>In yearly granularity the section renders a single table: one column per year (descending); each row's cell is the as-of-quarter balance for that row's own series; the column header is annotated with the as-of quarter, e.g. "2025 (as of Q3)". Year-over-year delta compares a year's as-of balance to the nearest earlier year with an as-of balance (blank years skipped); the first populated year shows "No prior data"; Δ% is "—" when the prior as-of balance is exactly 0. A fully-blank year shows "no data" and "—" for delta. Interior all-blank quarters within a rendered year are kept; only whole leading/trailing blank years are trimmed.</p>
+
+<h3>5.4 Collapse behaviour</h3>
+<p>Default state is per-depth: <strong>expanded at drill depth ≥ 1, collapsed at depth 0</strong>. A manual toggle (<code>ViewState.scopedDashboardCollapsed</code>) sticks across lens / drill-at-same-depth / granularity / measure changes, but reverts to the per-depth default whenever the <strong>drill depth</strong> changes. Collapse state is client-side only (mirrored to the URL as <code>scoped=0|1</code> when overridden).</p>
+
+<h3>5.5 Empty / partial-data states</h3>
+<table>
+<thead><tr><th>Situation</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td>Scope with zero populated periods</td><td>Grid skeleton with every cell "–"; info line "No recorded balances for this scope yet"; footnote "0 of N periods populated".</td></tr>
+<tr><td>Single exclusive item scoped (depth 3)</td><td>Item row shown normally + a persistent banner that it is excluded from all sub-category / category / Property / Non-Property / Grand Total figures. No scope-total row; scope-facts strip still shown.</td></tr>
+<tr><td>Scope has no items qualifying for the current lens</td><td>No misleading zeros. Empty state: "No {Property|Non-Property} items in this scope. Switch the lens to Grand Total to see all {n} items." + a working "Switch to Grand Total" action (sets <code>lens='grandTotal'</code>, keeps <code>drill</code>). Scope-total row hidden, not zeroed. Any exclusive block still renders.</td></tr>
+<tr><td>Depth-3 item that itself fails the active lens</td><td>"This item (type: X) is not a {Property|Non-Property} item; the {lens} lens excludes it." + "Switch to Grand Total".</td></tr>
+<tr><td>Interior blank period</td><td>Row/column kept, cell "–"; the next populated period's delta reads across the gap; "No prior data" only when there is genuinely no earlier populated period.</td></tr>
+</tbody>
+</table>
+
+<h2>6. Comparison panel</h2>
+<p>Rendered only when comparison mode is not <strong>Off</strong>, at the bottom of the view (a dedicated panel, never an overlay on the primary charts). It shows paired bars per current group-by bucket (A muted, B brand) plus a table with value A, value B, Δ (sign-coloured), Δ %, and a bold lens-total row. The header states the exact resolved periods and any gap fallback, e.g. "YoY · by category · Q2 2024 → Q3 2025". Per bucket: <code>Δ = valueB − valueA</code>; <code>Δ% = Δ / valueA × 100</code>, <code>null</code> when <code>valueA</code> is <code>null</code> or ≤ 0. The panel is transient — it never persists and is cleared on a granularity change.</p>
+<table>
+<thead><tr><th>Mode</th><th>Resolution</th></tr></thead>
+<tbody>
+<tr><td>Off</td><td>Panel hidden.</td></tr>
+<tr><td>QoQ</td><td>B = latest populated quarter; A = the nearest earlier populated quarter.</td></tr>
+<tr><td>YoY</td><td>B = latest populated quarter; A = the same quarter one year earlier if populated, else the nearest earlier populated period in a prior year (the header names the actual fallback period), else "Insufficient data for a year-over-year comparison."</td></tr>
+<tr><td>Custom</td><td>The user picks A and B from the list of populated periods.</td></tr>
+</tbody>
+</table>
+<p>When fewer than two populated periods exist: "Need at least two populated periods to compare."</p>
+
+<h2>7. CSV export</h2>
+<p>An <strong>Export view (CSV)</strong> button, top-right. Export is <strong>client-side only</strong> — no server round-trip. The file is built in the browser, wrapped in a <code>Blob</code> with a leading <strong>UTF-8 BOM</strong> (<code>﻿</code>) so Thai text opens correctly in Excel, uses <code>\r\n</code> line endings and RFC-4180 quoting, and is offered through a transient <code>&lt;a download&gt;</code>.</p>
+
+<h3>7.1 Header comment lines</h3>
+<p>The file opens with <code>#</code>-prefixed comment lines recording the applied context, then the column header row:</p>
+<pre><code># tracking_set: &lt;name&gt;
+# lens: Grand Total | Property | No Property
+# drill_path: Grand Total › Investments › Stocks
+# group_by: Category | Sub-category | Item | Item type
+# granularity: Quarterly | Yearly
+# measure: balance | deltaAmount | deltaPercent
+# generated_at: &lt;ISO-8601&gt;
+# comparison: QOQ | YOY | CUSTOM            (only when a comparison is active)
+# comparison_period_a: &lt;label&gt;             (only when a comparison is active)
+# comparison_period_b: &lt;label&gt;             (only when a comparison is active)</code></pre>
+
+<h3>7.2 Body rows</h3>
+<p>One CSV covers <strong>both</strong> the chart-derived bucket rows (one row per bucket × period, plus a lens/scope-total "aggregate" row) <strong>and</strong> the Scoped Dashboard grid rows — the latter only when that section is expanded (at depth ≥ 1). Columns: <code>tracking_set, lens, drill_path, group_by, granularity, period_label, period_year, period_quarter</code> (blank for yearly), <code>as_of_quarter</code> (blank for quarterly), <code>bucket_name, bucket_kind, balance, delta_amount, delta_percent, share_percent, has_data</code>. Rows reflect the on-screen derived data (post lens filter, post trim, yearly rule applied). <code>bucket_kind</code> is one of <code>category, subCategory, item, itemType, other, aggregate, subCategoryTotal, scopeTotal</code>. <strong>No exclusive items appear in any export</strong> (split rows, exclusive rows and the depth-0 lens strip are also omitted from the CSV body).</p>
+
+<h3>7.3 Comparison CSV</h3>
+<p>When a comparison is active a <strong>second file</strong> <code>analysis_..._comparison.csv</code> is also downloaded, with the same <code>#</code> header lines and columns <code>bucket_name, period_a_label, value_a, period_b_label, value_b, delta_amount, delta_percent</code> (one row per bucket, plus the lens-total row).</p>
+
+<h3>7.4 Filename</h3>
+<p><code>analysis_{setSlug}_{lens}_{groupBy}_{granularity}_{YYYYMMDD}.csv</code> — the date stamp is UTC from <code>generated_at</code>; the comparison file appends <code>_comparison</code>.</p>
+
+<div class="callout warn"><strong>Formula-injection neutralisation (added in security review).</strong> Any CSV field whose value begins with <code>=</code>, <code>+</code>, <code>-</code>, <code>@</code> or a tab is prefixed with a single quote (<code>'</code>) before quoting, so a maliciously-named category or item cannot execute as a formula when the file is opened in a spreadsheet. Numeric columns are emitted as bare finite numbers (or blank) and bypass this path.</div>
+
+<h2>8. Empty &amp; isolation states</h2>
+<ul>
+<li>No tracking set → a "create a tracking set" prompt with a link to the Category page.</li>
+<li>Tracking set but no Update list with both a year and a quarter set → "No quarterly data yet" with a link to Updates.</li>
+<li>Drilled node with no qualifying items for the lens → a per-chart "No qualifying items for '{lens}' at this level" state; the KPI row clears.</li>
+<li>Leaf node → "most detailed level" note; drill disabled.</li>
+<li>Another user's set id → the endpoint returns a bare 404 and the client shows "Tracking set not found, or the balance grid failed to load." — no indication the set exists (same ownership convention as the rest of the module).</li>
+</ul>
+
+<hr>
+
+<h1 style="font-size:1.35rem;border:none;margin:2rem 0 1rem">Part II — Technical</h1>
+
+<h2>9. Governing principle</h2>
+<p><strong>Extend the existing read path; add no new aggregation and no pre-aggregated storage.</strong> Analysis fetches the one <code>balance-grid</code> response and performs only thin, pure, unit-tested transforms over it in the browser. The authoritative delta math stays single-sourced on the server; the client replicates <code>compute_series_deltas</code> semantics <em>only</em> for derived buckets that have no server-provided row. Frontend-only change: no new or modified endpoint, schema, migration, enum, or backend code.</p>
+
+<h2>10. File &amp; component inventory (as built)</h2>
+<p>All paths under <code>applications/dashboard/frontend/src/</code>.</p>
+<table>
+<thead><tr><th>File</th><th>Kind</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>app/(dashboard)/tracking/analysis/page.tsx</code></td><td>new</td><td>Page container. Fetches the tracking-set list and the balance grid (React Query), owns <code>ViewState</code>, runs all derivations in <code>useMemo</code>, serialises <code>ViewState</code> ⇄ URL, validates a URL-hydrated drill path against the fetched grid, lays out the cards, and assembles the CSV input. Wrapped in <code>&lt;Suspense&gt;</code> for <code>useSearchParams</code>.</td></tr>
+<tr><td><code>app/(dashboard)/tracking/analysis/types.ts</code></td><td>new</td><td><code>ViewState</code> and the derived view-model shapes (<code>AxisPoint</code>, <code>AnalysisSeries</code>, <code>SeriesKind</code>, <code>DrillPath</code>, <code>PeriodRef</code>, <code>ComparisonConfig</code>). Deliberately not added to <code>services/tracking.ts</code> — a client-only view concern.</td></tr>
+<tr><td colspan="3"><strong><code>app/(dashboard)/tracking/analysis/components/</code> — 18 presentational components</strong></td></tr>
+<tr><td><code>AnalysisControlBar.tsx</code></td><td>new</td><td>Groups the controls; computes which group-by options are enabled for the current depth.</td></tr>
+<tr><td><code>LensSelect.tsx</code></td><td>new</td><td>Grand Total / Property / No Property segmented control.</td></tr>
+<tr><td><code>GroupBySelect.tsx</code></td><td>new</td><td>Category / Sub-category / Item / Item type.</td></tr>
+<tr><td><code>GranularityToggle.tsx</code></td><td>new</td><td>Quarterly / Yearly.</td></tr>
+<tr><td><code>MeasureSelect.tsx</code></td><td>new</td><td>Balance / Δ Amount / Δ %.</td></tr>
+<tr><td><code>ComparisonControl.tsx</code></td><td>new</td><td>Off / QoQ / YoY / Custom + the two inline period pickers for Custom.</td></tr>
+<tr><td><code>DrillBreadcrumb.tsx</code></td><td>new</td><td>Lens ▸ Category ▸ Sub-category ▸ Item crumbs + an "Up" button.</td></tr>
+<tr><td><code>StatRow.tsx</code></td><td>new</td><td>The five scope-aware KPI tiles; also a cleared state.</td></tr>
+<tr><td><code>TrendChart.tsx</code></td><td>new</td><td>Multi-series line/area of the measure over time, with the dashed overlay.</td></tr>
+<tr><td><code>CompositionChart.tsx</code></td><td>new</td><td>100%-stacked area over time.</td></tr>
+<tr><td><code>CompositionSnapshot.tsx</code></td><td>new</td><td>Ranked horizontal bars for one period, with the ◀ ▶ stepper.</td></tr>
+<tr><td><code>DeltaTrendChart.tsx</code></td><td>new</td><td>Diverging bars around a zero baseline + a waterfall toggle.</td></tr>
+<tr><td><code>ComparisonPanel.tsx</code></td><td>new</td><td>Two-period paired bars + table; also the not-computable notes.</td></tr>
+<tr><td><code>ExportButton.tsx</code></td><td>new</td><td>Calls a <code>getFiles()</code> callback, builds each <code>Blob(['﻿' + content], …)</code>, triggers the download(s), revokes the object URL.</td></tr>
+<tr><td><code>ChartCard.tsx</code></td><td>new</td><td>Card shell (title / subtitle / surface token / <code>overflow-x</code> wrapper).</td></tr>
+<tr><td><code>ScopedDashboardSection.tsx</code></td><td>new</td><td>The titled collapsible Scoped Dashboard card: owns the collapse toggle, the scope identity strip, empty-state routing by depth × lens, and composition of the pieces.</td></tr>
+<tr><td><code>ScopedBalanceGrid.tsx</code></td><td>new</td><td>Pure presentational grid — renders the per-year quarterly sub-tables or the yearly as-of table from a normalised <code>ScopedRow[]</code>. A focused parallel implementation; the main dashboard's <code>YearTable</code> is not reused (it is coupled to the full tree and the whole-set summary rows).</td></tr>
+<tr><td><code>ScopeFactsStrip.tsx</code></td><td>new</td><td>Leaf-scope metadata (type, exclusive, first/last populated, populated count, peak/trough + period, net change, latest Δ).</td></tr>
+<tr><td colspan="3"><strong>Libraries &amp; shared</strong></td></tr>
+<tr><td><code>lib/tracking-analysis.ts</code></td><td>new</td><td>All pure derivations (§11). No React, no I/O.</td></tr>
+<tr><td><code>lib/tracking-analysis-export.ts</code></td><td>new</td><td>Pure CSV string builders: <code>buildAnalysisCsv</code>, <code>buildComparisonCsv</code>, <code>csvField</code> (RFC-4180 quoting + formula-injection neutralisation), the header-comment builder, and the filename helpers.</td></tr>
+<tr><td><code>lib/tracking-format.ts</code></td><td>new</td><td>Shared low-level cell / number / delta formatting — <code>toFiniteOrNull</code>, <code>fmtBalance</code>, <code>fmtDeltaAmount</code>, <code>fmtDeltaPercent</code>, <code>fmtSharePercent</code>, <code>fmtDelta</code>, <code>deltaColorClass</code>, <code>deltaArrow</code>, <code>fmtAxisNumber</code>, and the "–" / "No prior data" / "n/a (prior was ฿0)" constants. Wraps the app-wide <code>formatNumber</code> so every amount reads with the same "1,234,567.89" convention.</td></tr>
+<tr><td><code>components/charts/svg-primitives.tsx</code></td><td>new</td><td>Shared inline-SVG primitives: <code>linearScale</code>, <code>niceTicks</code>, <code>buildLinePath</code> / <code>buildAreaPath</code> (null-gap breaking), <code>buildStackedAreaPaths</code>, <code>formatPeriodLabel</code>, <code>thinLabelIndices</code>, and the <code>&lt;AxisX&gt;</code> / <code>&lt;AxisY&gt;</code> / <code>&lt;AxisYLabels&gt;</code> / <code>&lt;ChartTooltip&gt;</code> components. A light additive extraction of logic currently inline on <code>tracking/dashboard/page.tsx</code> and <code>analytics/daily-performance/page.tsx</code>; those two pages were <strong>not</strong> refactored to consume it this iteration.</td></tr>
+<tr><td><code>components/layouts/Sidebar.tsx</code></td><td>touch</td><td>One line added: <code>&lt;SubLink href="/tracking/analysis" label="Analysis" icon={LineChart} /&gt;</code> as the 4th item in the Tracking accordion group.</td></tr>
+<tr><td><code>services/tracking.ts</code></td><td>not touched</td><td>Existing wire types (<code>BalanceCell</code>, <code>DashboardBalanceGridOut</code>, …) and <code>trackingService.getBalanceGrid</code> are sufficient.</td></tr>
+<tr><td colspan="3"><strong>Tests</strong></td></tr>
+<tr><td><code>lib/__tests__/tracking-analysis.test.ts</code></td><td>new</td><td>Golden-fixture delta-parity vs the server engine; trim-parity vs the dashboard chart; <code>asOfYearlySeries</code>, <code>buildScopedGrid</code>, <code>computeComposition</code>, <code>rollupOther</code>, <code>resolveComparison</code>, URL (de)serialisation and clamping.</td></tr>
+<tr><td><code>lib/__tests__/tracking-analysis-export.test.ts</code></td><td>new</td><td>CSV shape, header comments, RFC-4180 quoting, formula-injection neutralisation, comparison file, filenames.</td></tr>
+<tr><td><code>app/(dashboard)/tracking/analysis/__tests__/page.test.tsx</code> + <code>fixtures.ts</code></td><td>new</td><td>Page render / interaction: lens, drill, granularity, comparison, export, empty states, Scoped Dashboard collapse.</td></tr>
+<tr><td><code>.../analysis/components/__tests__/*.test.tsx</code></td><td>new</td><td>Component tests for TrendChart, CompositionChart, CompositionSnapshot, DeltaTrendChart, ComparisonPanel, ExportButton, ScopedDashboardSection (null-gap / trim / interaction behaviour).</td></tr>
+</tbody>
+</table>
+
+<h2>11. <code>ViewState</code> and the derivation library</h2>
+
+<h3>11.1 <code>ViewState</code></h3>
+<pre><code>type Lens        = 'grandTotal' | 'property' | 'nonProperty';
+type Granularity = 'quarterly' | 'yearly';
+type Measure     = 'balance' | 'deltaAmount' | 'deltaPercent';
+type GroupByDim  = 'category' | 'subCategory' | 'item' | 'itemType';
+type DeltaMode   = 'bars' | 'waterfall';
+type ComparisonMode = 'off' | 'qoq' | 'yoy' | 'custom';
+
+interface DrillPath   { lens: Lens; categoryId?: string; subCategoryId?: string; itemId?: string }
+type PeriodRef        = { kind: 'quarter'; year: number; quarter: 1|2|3|4 }
+                      | { kind: 'year';    year: number };
+interface ComparisonConfig { mode: ComparisonMode; periodA?: PeriodRef; periodB?: PeriodRef }
+
+interface ViewState {
+  trackingSetId: string;
+  lens:        Lens;              // default 'grandTotal'
+  granularity: Granularity;       // default 'quarterly'
+  measure:     Measure;           // default 'balance'
+  groupBy:     GroupByDim;        // default follows drill depth
+  drill:       DrillPath;         // default { lens: 'grandTotal' }
+  snapshotPeriod?: PeriodRef;     // Breakdown focus; default = latest populated
+  deltaMode:   DeltaMode;         // default 'bars'
+  comparison:  ComparisonConfig;  // default { mode: 'off' }
+  scopedDashboardCollapsed?: boolean;  // undefined ⇒ per-depth default
+}</code></pre>
+<p>Drill depth is <code>drill.itemId ? 3 : drill.subCategoryId ? 2 : drill.categoryId ? 1 : 0</code>.</p>
+
+<h3>11.2 Pure functions in <code>lib/tracking-analysis.ts</code></h3>
+<table>
+<thead><tr><th>Function</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><code>periodsAsc(grid)</code></td><td>Reverse <code>grid.years</code> (descending) to ascending, cross-join with quarters 1–4 → ordered <code>{year, quarter, index}[]</code> of length <code>years.length × 4</code>.</td></tr>
+<tr><td><code>cellIndex(grid, year, quarter)</code></td><td>Cells are aligned to <code>years</code> <em>descending</em> × 1–4 ascending, so <code>index = yearPosDesc × 4 + (quarter − 1)</code>. Computed once, reused for every array.</td></tr>
+<tr><td><code>readCellSeries(grid, cells)</code></td><td>Reads a positionally-aligned <code>BalanceCell[]</code> into ascending-order <code>balance / deltaAmount / deltaPercent / hasData / hasPreviousData</code> arrays.</td></tr>
+<tr><td><code>computeSeriesDeltas(balances)</code></td><td><strong>The client TS replica of the server <code>compute_series_deltas</code></strong> — see §12.</td></tr>
+<tr><td><code>rollupBalances(itemBalances, length)</code></td><td>Per period, sum the populated values across the given item balance arrays ("at least one populated" rule); a period with zero contributors stays <code>null</code>, never 0. This is the "derived bucket sum".</td></tr>
+<tr><td><code>lensIncludes(lens, item)</code></td><td><code>!exclusive</code> for Grand Total; <code>!exclusive &amp;&amp; type === 'Property'</code> for Property; <code>!exclusive &amp;&amp; type !== 'Property'</code> for No Property.</td></tr>
+<tr><td><code>nodeTotalSeries(grid, drill)</code></td><td>The authoritative balance series for the current drill node under the current lens: depth 0 → the lens aggregate array verbatim; depth 1/2 under Grand Total → <code>subtotal[]</code> verbatim; depth 1/2 under Property/No-Property → derived Σ of lens-qualifying leaf descendants; depth 3 → the item's <code>cells[]</code>. Feeds the trend overlay, the composition <code>periodTotal</code>, and the scope-aware StatRow.</td></tr>
+<tr><td><code>asOfYearlySeries(balances, axis)</code></td><td>Per year, pick the highest-index quarter that has data (Q4 → Q3 → Q2 → Q1); <code>null</code> if the year has none. Returns <code>{year, index, value, asOfQuarter}[]</code>. The one genuinely new derivation.</td></tr>
+<tr><td><code>trimEmptyEnds(length, isEmptyAt)</code></td><td>Drops leading and trailing periods where every visible series is null — the exact rule the dashboard chart uses; interior gaps are kept.</td></tr>
+<tr><td><code>computeComposition(bucketBalances, periodTotal)</code></td><td>Share = <code>bucketBalance / periodTotal</code> when <code>periodTotal &gt; 0</code>, else the period is blank; null bucket contributes 0; shares rounded to 0.1% with the last valued band absorbing the residual to sum to exactly 100.0.</td></tr>
+<tr><td><code>rollupOther(buckets)</code></td><td>Keeps the top <code>MAX_BUCKETS − 1</code> (= 7) buckets by peak populated balance, folds the rest into a muted non-drillable "Other (n)"; ≤ 8 buckets returned unchanged, sorted by <code>orderIndex</code> for a stable stack.</td></tr>
+<tr><td><code>buildScopedGrid(grid, viewState)</code></td><td>Builds the Scoped Dashboard model (§5): drill-subtree selection, verbatim-vs-derived scope total per lens, split-row derivation, exclusive block, per-depth row shape, and the empty / lens-mismatch states. Reacts to <code>lens</code> + <code>drill</code>; <code>granularity</code> + <code>measure</code> are applied by the presentational grid; <code>groupBy</code> + <code>comparison</code> ignored.</td></tr>
+<tr><td><code>yearlyRowView(row, axis)</code></td><td>Yearly ("as-of year end") view of one scoped row for the yearly grid mode — <code>asOfYearlySeries</code> then <code>computeSeriesDeltas</code> over the yearly values.</td></tr>
+<tr><td><code>resolveComparison(comparison, axis, nodeBalance)</code></td><td>Resolves QoQ / YoY / Custom against the populated periods of the node-total series, including the YoY nearest-earlier fallback and the "insufficient data" / "&lt; 2 populated" states.</td></tr>
+<tr><td><code>deriveChartModel(grid, viewState)</code></td><td>The full chart-facing model: builds raw buckets (verbatim subtotal vs derived sum per lens/depth/groupBy), applies "Other" rollup, trims, applies granularity (quarterly slice, or per-bucket <code>asOfYearlySeries</code> + re-delta), computes composition, and returns <code>{axis, buckets, aggregate, composition, empty, leafExcluded}</code>.</td></tr>
+<tr><td><code>buildStatRow(axis, values)</code></td><td>The five KPI tiles, computed from the same node-total series the Scoped Dashboard scope-total uses.</td></tr>
+<tr><td><code>annualisedChange(first, last, spanYears)</code></td><td><code>(last/first)^(1/spanYears) − 1</code> as a %, only when <code>first &gt; 0</code>, <code>last &gt; 0</code>, <code>spanYears ≥ 1</code>; else <code>null</code>.</td></tr>
+<tr><td><code>defaultViewState</code>, <code>queryToViewState</code>, <code>viewStateToQuery</code></td><td>URL (de)serialisation — see §13.</td></tr>
+<tr><td>Navigation helpers</td><td><code>drillDepth</code>, <code>findCategory</code>, <code>findSubCategory</code>, <code>locateItem</code>, <code>itemsUnderCategory</code>, <code>subtreeItems</code>, <code>defaultGroupBy</code>, <code>allowedGroupBy</code>, <code>quarterLabel</code>, <code>buildQuarterAxis</code>, <code>buildYearlyAxis</code>, <code>periodRefLabel</code>, <code>samePeriodRef</code>, <code>firstPopulatedIndex</code>, <code>lastPopulatedIndex</code>, <code>applyGranularity</code>.</td></tr>
+</tbody>
+</table>
+
+<h2>12. The client TS replica of <code>compute_series_deltas</code></h2>
+<p>The authoritative delta math lives on the server (<code>tracking-backend/app/services/dashboard_balance_grid.py</code>, <code>compute_series_deltas</code>). Wherever a matching server row exists — every item's <code>cells[]</code>, and every category / sub-category <code>subtotal[]</code> under the Grand Total lens — the client uses the <strong>server deltas verbatim</strong>. It re-computes deltas in TypeScript <strong>only for derived series that have no server row</strong>:</p>
+<ul>
+<li>item-type buckets (<code>groupBy = 'itemType'</code>);</li>
+<li>lens-filtered hierarchy subtotals (any hierarchy bucket under the Property or No-Property lens — server subtotals are not type-filtered);</li>
+<li>yearly "as-of" series (any granularity = yearly series);</li>
+<li>Scoped Dashboard derived totals and split rows;</li>
+<li>the "Other" rollup band.</li>
+</ul>
+<p><code>computeSeriesDeltas</code> replicates the engine exactly:</p>
+<pre><code>lastSeen = null
+for v in balances:
+  if v == null:  deltaAmount = null; deltaPercent = null; lastSeen unchanged; continue
+  if lastSeen == null:  deltaAmount = null; deltaPercent = null          # first point — null, never 0
+  else:
+    deltaAmount  = v - lastSeen
+    deltaPercent = (lastSeen == 0) ? null : deltaAmount / lastSeen * 100  # null ONLY at exactly 0
+  lastSeen = v</code></pre>
+<p>Blank slots are skipped and year boundaries crossed freely, identical to the server. <strong>Parity is locked by tests:</strong> a golden-fixture parity test uses <code>balance</code> / <code>deltaAmount</code> / <code>deltaPercent</code> values copied from a real <code>balance-grid</code> response and asserts the TS replica reproduces the server deltas on the Grand Total lens; a trim-parity test asserts <code>trimEmptyEnds</code> yields the identical trimmed window the dashboard chart produces for the same data. Any change to the server engine must be re-verified against these tests (recorded in ADR-019 Consequences).</p>
+
+<h2>13. URL serialisation &amp; hostile-input handling</h2>
+<p><code>ViewState</code> is fully URL-serialisable via flat query params, and the URL is the only "saved view" (NFR-3, ADR-019 #8). Keys, all omitted when at their default: <code>lens</code>, <code>g</code> (granularity), <code>m</code> (measure), <code>groupBy</code>, <code>cat</code> / <code>sub</code> / <code>item</code> (drill), <code>delta</code> (deltaMode), <code>cmp</code> / <code>cmpA</code> / <code>cmpB</code> (comparison), <code>snap</code> (snapshot period), <code>scoped</code> (<code>0</code> = force-collapsed, <code>1</code> = force-expanded).</p>
+<ul>
+<li><strong>Enum clamping.</strong> <code>queryToViewState</code> passes every enum-valued param through <code>oneOf(value, allowed, fallback)</code>: an unrecognised value is silently reset to the default rather than propagated.</li>
+<li><strong>Period-ref parsing.</strong> <code>cmpA</code> / <code>cmpB</code> / <code>snap</code> are parsed by the regex <code>^(\d{4})(?:Q([1-4]))?$</code>; anything malformed yields <code>undefined</code>.</li>
+<li><strong>Drill hydration.</strong> <code>sub</code> is only honoured if <code>cat</code> is present; <code>item</code> only if <code>sub</code> is present. <code>groupBy</code> is forced to an allowed value for the hydrated depth (and to <code>'item'</code> at depth 3).</li>
+<li><strong>Invalid-drill-id reset to root.</strong> After the grid loads, the page validates the hydrated drill path against it: a <code>categoryId</code> / <code>subCategoryId</code> / <code>itemId</code> that no longer resolves (renamed, deleted, or a cross-set link) resets <code>drill</code> to <code>{ lens }</code>, <code>groupBy</code> to the depth-0 default, and clears <code>snapshotPeriod</code> and <code>scopedDashboardCollapsed</code> — the user lands on the default view rather than stranded on an empty state.</li>
+</ul>
+<p>No secret or PII is ever placed in the query string — only non-secret view state.</p>
+
+<h2>14. Rendering, data source &amp; memoisation</h2>
+<ul>
+<li><strong>Single data source.</strong> <code>trackingService.getBalanceGrid(setId)</code> → <code>GET /api/v1/tracking/sets/{set_id}/dashboard/balance-grid</code>, via React Query key <code>['tracking-analysis-balance-grid', selectedSetId]</code> (<code>staleTime</code> 10 s). The tracking-set list uses <code>['tracking-sets']</code>. <strong>No other network call is made</strong> on lens switch, drill, granularity toggle, measure change, comparison, export, or Scoped Dashboard collapse.</li>
+<li><strong>Memoisation.</strong> <code>chartModel = useMemo(() =&gt; deriveChartModel(grid, viewState), [grid, viewState])</code>; <code>scoped = useMemo(() =&gt; buildScopedGrid(grid, viewState), [grid, viewState])</code>; <code>statRow</code> is keyed on <code>[chartModel]</code>; the comparison model on <code>[chartModel, viewState.comparison, viewState.groupBy, viewState.lens]</code>. The "Other" cap bounds the series count; data is solo-investor scale (tens of periods × hundreds of items) so recomputation is trivial.</li>
+<li><strong>Charts.</strong> Hand-rolled inline SVG only, via <code>components/charts/svg-primitives.tsx</code> — no charting library (ADR-019 #5). Each chart <code>&lt;svg&gt;</code> scales via <code>viewBox</code> + <code>width:100%; height:auto</code>, is <code>role="img"</code> with an <code>aria-label</code>, and offers a table view so no value is hover-gated.</li>
+<li><strong>Theme.</strong> Dark-only; the view reuses the existing dark design tokens and card shells. No <code>prefers-color-scheme</code> or theme-toggle handling in this feature.</li>
+</ul>
+
+<h2>15. Security posture</h2>
+<ul>
+<li>No new endpoint, no new auth surface, no new stored data, no mutations, no audit-log entries for viewing. Same per-user isolation as the rest of the module — a bare 404 (never 403) for another user's set.</li>
+<li>The CSV blob path contains only the user's own on-screen figures; it makes no network request. <strong>Formula-injection neutralisation</strong> (leading <code>= + - @</code> or tab → prefixed <code>'</code>) is applied to every text field (§7).</li>
+<li>URL query params carry only non-secret view state.</li>
+<li>Security Gate 4: approved.</li>
+</ul>
+
+<h2>16. Test coverage summary</h2>
+<ul>
+<li><code>lib/tracking-analysis.ts</code> — statement coverage ≈ <strong>95%</strong> (target ≥ 90% for the derivation library).</li>
+<li>Feature surface (page + components + export lib) — ≈ <strong>88–91%</strong> (target ≥ 80% overall).</li>
+<li>≈ <strong>130</strong> feature-level test cases across the derivation lib, the export lib, the page, and the seven component suites.</li>
+<li>Locked invariants: golden-fixture delta parity vs the server engine (Grand Total lens); trim-parity vs the dashboard chart; <code>asOfYearlySeries</code> as-of-quarter selection / blank-year / YoY-delta / Δ%-at-zero; <code>buildScopedGrid</code> verbatim-vs-derived per lens, exclusive exclusion, per-depth row shape, empty / lens-mismatch states; URL clamping and invalid-drill reset; CSV shape, quoting and formula-injection neutralisation; chart null-gap and trim behaviour.</li>
+<li>QA Gate 5: <strong>conditional pass</strong>.</li>
+</ul>
+
+<h2>17. ADR-019 — summary</h2>
+<p><strong>Status:</strong> <span class="badge green">Accepted</span> (2026-08-30). Full text: <code>18-financial-tracker/ANALYSIS-DESIGN.html</code> §5.</p>
+<h4>Context</h4>
+<p>The <code>balance-grid</code> endpoint is recomputed from <code>UpdateTrackingList</code> / <code>UpdateTrackingListBalance</code> on every call (6 queries; all grouping / summation / delta done in-memory in Python). It is <strong>quarterly only</strong> — "years" is a display grouping; there is no yearly aggregation anywhere. Per-cell deltas come from <code>compute_series_deltas</code>. The frontend has no chart library; the app is dark-only; data scale is a single investor. A read-only Analysis view was wanted (trend, composition, delta-trend; sliceable by lens / hierarchy / item type; quarterly and yearly; QoQ / YoY; export) with no data entry, saved views, or annotations this iteration.</p>
+<h4>Decision</h4>
+<ol>
+<li>Build Analysis <strong>entirely on the frontend</strong> from the existing <code>balance-grid</code> response — no new endpoint, no pre-aggregated storage, no migration.</li>
+<li><strong>Yearly rollup = "as-of year end"</strong>: a year's value is the balance of its latest populated quarter; every yearly label names the as-of quarter; YoY deltas use the nearest-earlier-populated rule.</li>
+<li>Reproduce <code>compute_series_deltas</code> in a shared, unit-tested <code>lib/tracking-analysis.ts</code> <strong>only for derived series</strong>; use server deltas verbatim where a row exists; lock parity with golden-fixture tests.</li>
+<li><strong>Export = client-side CSV only</strong>, with <code>#</code> header comment lines; the body carries the visible derived rows plus the Scoped Dashboard grid rows when that section is expanded. No server export, no PDF.</li>
+<li>Charts use the existing hand-rolled inline-SVG pattern via a small extracted <code>svg-primitives</code> module. No charting library.</li>
+<li>New route <code>/tracking/analysis</code>; a 4th <code>SubLink</code> under the Tracking accordion; <code>ViewState</code> is URL-serialised.</li>
+<li><strong>Dark-only</strong>; a future app-wide light theme must revisit these tokens.</li>
+<li><strong>Read-only exploration only</strong> — no saved / named views, annotations, or auto-refresh; the only client-persisted state is disposable UI preference.</li>
+<li><strong>Scoped Dashboard section</strong> (rev 2): a collapsible card reproducing the main dashboard's tabular readout constrained to the drill scope, 100% client-side off the same single response; verbatim <code>subtotal[]</code> under Grand Total, derived sums under Property / No-Property.</li>
+</ol>
+<h4>Alternatives considered</h4>
+<ul>
+<li><em>A <code>?granularity=yearly</code> variant or a dedicated yearly endpoint</em> — rejected: forks the delta engine into two implementations for no benefit at this scale.</li>
+<li><em>Pre-computed aggregation tables / materialised views</em> — rejected: contradicts the recompute-from-source design; adds migration + drift risk for a solo dataset.</li>
+<li><em>Recharts / visx / Chart.js</em> — rejected: inconsistent with the codebase, bundle cost; the required charts fit the existing pattern.</li>
+<li><em>Yearly = Q4-only</em> — rejected: blanks any year whose Q4 is unreported even when earlier quarters have data.</li>
+<li><em>Yearly = sum / average of the four quarters</em> — rejected: balances are stock quantities, not flows.</li>
+<li><em>Server-rendered / PDF export</em> — declined by the user; adds a backend surface and a templating dependency for a single-user tool.</li>
+<li><em>Reuse the dashboard's <code>YearTable</code> for the Scoped grid</em> — rejected: it is coupled to the full tree and the whole-set summary rows.</li>
+</ul>
+<h4>Consequences</h4>
+<p><strong>Positive:</strong> zero backend change, no migration; the heavy delta math stays single-sourced on the server; charts and the Scoped grid stay visually consistent; derivations are pure and independently testable; a shareable URL doubles as an ad-hoc saved view.</p>
+<p><strong>Negative:</strong> the delta algorithm now exists in Python <em>and</em> TypeScript (used for derived series) — parity must be kept by tests and re-verified on any server-engine change; yearly granularity adds an as-of-quarter annotation everywhere a year is labelled (charts, CSV, Scoped grid); all recomputation runs in the browser inside <code>useMemo</code>; dark-only means no theme handling here; the read-only lock means no persistence layer.</p>
+<h4>Risks</h4>
+<p>Parity drift (Python vs TS delta engine); yearly-rule surprise; readability of 100%-stacked / snapshot with many categories; sparse-quarter Δ% distortion; Scoped Dashboard vs KPI-row figure redundancy (mitigated by making the StatRow scope-aware so both are computed from one series). Full risk table: design spec §6.</p>
+
+<hr>
+
+<h2>Related documentation</h2>
+<ul>
+<li><a href="ANALYSIS-DESIGN.html">ANALYSIS-DESIGN.html</a> — the approved design spec (Phases 1–2), full ADR-019, acceptance criteria AC-1…25 / AC-SD-1…43, the consolidated risk table, and the resolved open questions.</li>
+<li><a href="FUNCTIONAL.html">FUNCTIONAL.html</a> §14 — the user-facing Analysis summary.</li>
+<li><a href="TECHNICAL.html">TECHNICAL.html</a> §14 — the Analysis technical section (route, inventory, delta replica, reused data source).</li>
+<li><a href="TECHNICAL.html">TECHNICAL.html</a> §8 — the <code>balance-grid</code> service and <code>compute_series_deltas</code>, the server engine this view derives from.</li>
+<li><a href="../02-infrastructure/API-FINANCIAL-TRACKER.html">API-FINANCIAL-TRACKER.html</a> — the <code>balance-grid</code> endpoint contract (<strong>unchanged</strong> by this feature).</li>
+</ul>
+
+<hr>
+<p style="color:#8b949e;font-size:12px">Financial Tracker — Analysis View. Built under ADR-019 (Accepted). Frontend-only; no API, schema, or migration change. Phase 6 documentation produced by the technical-writer agent, 2026-08-30.</p>
+</body>
+</html>
