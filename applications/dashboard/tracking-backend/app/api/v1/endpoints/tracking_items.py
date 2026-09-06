@@ -117,6 +117,8 @@ async def create_entry(
         amount=body.amount,
         entry_date=body.entry_date,
         note=body.note,
+        code=body.code,
+        name=body.name,
     )
     db.add(entry)
     await db.commit()
@@ -167,6 +169,8 @@ async def running_total(item_id: uuid.UUID, user_id: UserId, db: DB) -> RunningT
                 amount=e.amount,
                 running_total=running,
                 note=e.note,
+                code=e.code,
+                name=e.name,
             )
         )
 

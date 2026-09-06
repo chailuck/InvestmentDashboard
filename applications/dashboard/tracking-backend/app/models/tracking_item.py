@@ -30,6 +30,7 @@ TRACKING_ITEM_TYPES = (
     "TaxSaving",
     "Materials",
     "Insurance",
+    "BOND",
 )
 
 
@@ -39,7 +40,7 @@ class TrackingItem(Base):
     __tablename__ = "ft_tracking_item"
     __table_args__ = (
         CheckConstraint(
-            "type IN ('Bank account','Property','Investment Account','TaxSaving','Materials','Insurance')",
+            "type IN ('Bank account','Property','Investment Account','TaxSaving','Materials','Insurance','BOND')",
             name="ck_ft_tracking_item_type",
         ),
         Index("ix_ft_tracking_item_subcat_order", "sub_category_id", "order_index"),

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { render } from '@/test/test-utils'
 import TrackingItemDetailPage from '../page'
 import { trackingService } from '@/services/tracking'
-import type { TrackingItem, RunningTotal, ProfitVsOriginal } from '@/services/tracking'
+import type { TrackingItem, RunningTotal, ProfitVsOriginal, Bond } from '@/services/tracking'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -26,9 +26,14 @@ vi.mock('@/services/tracking', () => ({
     updateEntry: vi.fn(),
     deleteEntry: vi.fn(),
     getRunningTotal: vi.fn(),
+    listBonds: vi.fn(),
+    getBond: vi.fn(),
+    createBond: vi.fn(),
+    updateBond: vi.fn(),
+    deleteBond: vi.fn(),
   },
   TRACKING_ITEM_TYPES: [
-    'Bank account', 'Property', 'Investment Account', 'TaxSaving', 'Materials', 'Insurance',
+    'Bank account', 'Property', 'Investment Account', 'TaxSaving', 'Materials', 'Insurance', 'BOND',
   ],
 }))
 
@@ -54,6 +59,40 @@ const ITEM_WITH_TRACKING: TrackingItem = {
   initialInvestmentTracking: true,
 }
 
+const ITEM_BOND: TrackingItem = {
+  ...ITEM_NO_TRACKING,
+  name: 'Government Bonds',
+  type: 'BOND',
+  initialInvestmentTracking: false,
+}
+
+const BONDS: Bond[] = [
+  {
+    id: 'b1', trackingItemId: 'item-1', code: 'TH-GOV-2030', issuer: 'Kingdom of Thailand',
+    startDate: '2025-01-01', expiredDate: '2030-01-01', amount: 100000, status: 'Active',
+    interestRate: null, years: null,
+    createdAt: '', updatedAt: '',
+  },
+  {
+    id: 'b2', trackingItemId: 'item-1', code: 'TH-GOV-2040', issuer: null,
+    startDate: '2030-01-01', expiredDate: '2040-01-01', amount: 50000, status: 'Pre-order',
+    interestRate: null, years: null,
+    createdAt: '', updatedAt: '',
+  },
+  {
+    id: 'b3', trackingItemId: 'item-1', code: 'TH-GOV-2020', issuer: 'MOF',
+    startDate: '2010-01-01', expiredDate: '2020-01-01', amount: 25000, status: 'Expire',
+    interestRate: null, years: null,
+    createdAt: '', updatedAt: '',
+  },
+  {
+    id: 'b4', trackingItemId: 'item-1', code: 'TH-GOV-UNK', issuer: null,
+    startDate: null, expiredDate: null, amount: 0, status: 'Unknown',
+    interestRate: null, years: null,
+    createdAt: '', updatedAt: '',
+  },
+]
+
 /** A "covered" profit block: entries present AND a current-value snapshot present. */
 const COVERED_PROFIT: ProfitVsOriginal = {
   netOriginalInvestment: 1500,
@@ -78,8 +117,8 @@ const RUNNING_TOTAL: RunningTotal = {
   itemId: 'item-1',
   currentTotal: 1500,
   entries: [
-    { id: 'e1', trackingItemId: 'item-1', amount: 1000, entryDate: '2026-01-01', note: 'initial buy', createdAt: '', updatedAt: '', runningTotal: 1000 },
-    { id: 'e2', trackingItemId: 'item-1', amount: 500, entryDate: '2026-02-01', note: null, createdAt: '', updatedAt: '', runningTotal: 1500 },
+    { id: 'e1', trackingItemId: 'item-1', amount: 1000, entryDate: '2026-01-01', note: 'initial buy', code: null, name: null, createdAt: '', updatedAt: '', runningTotal: 1000 },
+    { id: 'e2', trackingItemId: 'item-1', amount: 500, entryDate: '2026-02-01', note: null, code: null, name: null, createdAt: '', updatedAt: '', runningTotal: 1500 },
   ],
   profitVsOriginal: COVERED_PROFIT,
 }
@@ -212,7 +251,7 @@ describe('TrackingItemDetailPage — conditional ledger section', () => {
     const user = userEvent.setup()
     mocked.getItem.mockResolvedValue(ITEM_WITH_TRACKING)
     mocked.getRunningTotal.mockResolvedValue(emptyRunningTotal())
-    mocked.createEntry.mockResolvedValueOnce({ id: 'e-new', trackingItemId: 'item-1', amount: 2000, entryDate: '2026-03-01', note: null, createdAt: '', updatedAt: '' })
+    mocked.createEntry.mockResolvedValueOnce({ id: 'e-new', trackingItemId: 'item-1', amount: 2000, entryDate: '2026-03-01', note: null, code: null, name: null, createdAt: '', updatedAt: '' })
 
     render(<TrackingItemDetailPage />)
     await screen.findByText('Initial Investment Ledger')
@@ -290,7 +329,7 @@ describe('TrackingItemDetailPage — ledger entry note', () => {
     mocked.getItem.mockResolvedValue(ITEM_WITH_TRACKING)
     mocked.getRunningTotal.mockResolvedValue(emptyRunningTotal())
     mocked.createEntry.mockResolvedValueOnce({
-      id: 'e-new', trackingItemId: 'item-1', amount: 2000, entryDate: '2026-03-01', note: 'bonus', createdAt: '', updatedAt: '',
+      id: 'e-new', trackingItemId: 'item-1', amount: 2000, entryDate: '2026-03-01', note: 'bonus', code: null, name: null, createdAt: '', updatedAt: '',
     })
 
     render(<TrackingItemDetailPage />)
@@ -314,7 +353,7 @@ describe('TrackingItemDetailPage — ledger entry note', () => {
     mocked.getItem.mockResolvedValue(ITEM_WITH_TRACKING)
     mocked.getRunningTotal.mockResolvedValue(emptyRunningTotal())
     mocked.createEntry.mockResolvedValueOnce({
-      id: 'e-new', trackingItemId: 'item-1', amount: 2000, entryDate: '2026-03-01', note: null, createdAt: '', updatedAt: '',
+      id: 'e-new', trackingItemId: 'item-1', amount: 2000, entryDate: '2026-03-01', note: null, code: null, name: null, createdAt: '', updatedAt: '',
     })
 
     render(<TrackingItemDetailPage />)
@@ -334,7 +373,7 @@ describe('TrackingItemDetailPage — ledger entry note', () => {
     mocked.getItem.mockResolvedValue(ITEM_WITH_TRACKING)
     mocked.getRunningTotal.mockResolvedValue(RUNNING_TOTAL)
     mocked.updateEntry.mockResolvedValueOnce({
-      id: 'e1', trackingItemId: 'item-1', amount: 1000, entryDate: '2026-01-01', note: 'initial buy', createdAt: '', updatedAt: '',
+      id: 'e1', trackingItemId: 'item-1', amount: 1000, entryDate: '2026-01-01', note: 'initial buy', code: null, name: null, createdAt: '', updatedAt: '',
     })
 
     render(<TrackingItemDetailPage />)
@@ -349,7 +388,7 @@ describe('TrackingItemDetailPage — ledger entry note', () => {
     })
   })
 
-  it('renders a Note column in the ledger table: the note text for a set note, an em dash for a null note', async () => {
+  it('renders Note, Code and Name columns in the ledger table: values when set, an em dash when null', async () => {
     mocked.getItem.mockResolvedValue(ITEM_WITH_TRACKING)
     mocked.getRunningTotal.mockResolvedValue(RUNNING_TOTAL)
 
@@ -357,14 +396,152 @@ describe('TrackingItemDetailPage — ledger entry note', () => {
     await screen.findByRole('columnheader', { name: 'Note' })
 
     const headers = screen.getAllByRole('columnheader').map(h => h.textContent)
-    expect(headers).toEqual(['Date', 'Amount', 'Running Total', 'Note', 'Actions'])
+    expect(headers).toEqual(['Date', 'Amount', 'Running Total', 'Note', 'Code', 'Name', 'Actions'])
 
-    // e1 has note 'initial buy'; e2 has note null -> "—".
+    // e1 has note 'initial buy', null code/name; e2 has all-null note/code/name -> "—".
     const e1Row = screen.getByText('initial buy').closest('tr')!
     expect(within(e1Row).getByText('01 Jan 2026')).toBeInTheDocument()
     const e2Row = screen.getByText('01 Feb 2026').closest('tr')!
-    const e2NoteCell = within(e2Row).getAllByRole('cell')[3]
-    expect(e2NoteCell).toHaveTextContent('—')
+    const e2Cells = within(e2Row).getAllByRole('cell')
+    expect(e2Cells[3]).toHaveTextContent('—') // Note
+    expect(e2Cells[4]).toHaveTextContent('—') // Code
+    expect(e2Cells[5]).toHaveTextContent('—') // Name
+  })
+
+  it('threads Code and Name through createEntry (trimmed) and submits null when left blank', async () => {
+    const user = userEvent.setup()
+    mocked.getItem.mockResolvedValue(ITEM_WITH_TRACKING)
+    mocked.getRunningTotal.mockResolvedValue(emptyRunningTotal())
+    mocked.createEntry.mockResolvedValueOnce({
+      id: 'e-new', trackingItemId: 'item-1', amount: 2000, entryDate: '2026-03-01', note: null, code: 'ISIN-1', name: 'Series A', createdAt: '', updatedAt: '',
+    })
+
+    render(<TrackingItemDetailPage />)
+    await screen.findByText('Initial Investment Ledger')
+
+    await user.click(screen.getByRole('button', { name: /Add Entry/i }))
+    await user.type(screen.getByLabelText(/Amount/i), '2000')
+
+    const codeField = screen.getByLabelText(/Code \(optional\)/i)
+    const nameField = screen.getByLabelText(/Name \(optional\)/i)
+    expect(codeField).toHaveAttribute('maxlength', '100')
+    expect(nameField).toHaveAttribute('maxlength', '100')
+    await user.type(codeField, '  ISIN-1  ')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => {
+      expect(mocked.createEntry).toHaveBeenCalledWith('item-1', expect.objectContaining({
+        amount: 2000, code: 'ISIN-1', name: null,
+      }))
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Bond register section (BOND-typed items)
+// ---------------------------------------------------------------------------
+
+describe('TrackingItemDetailPage — bond register section', () => {
+  it('does NOT render the Bonds section for a non-BOND item, and never queries bonds', async () => {
+    mocked.getItem.mockResolvedValue(ITEM_WITH_TRACKING)
+    mocked.getRunningTotal.mockResolvedValue(emptyRunningTotal())
+
+    render(<TrackingItemDetailPage />)
+    await screen.findByDisplayValue('Cash Account')
+
+    expect(screen.queryByRole('heading', { name: 'Bonds' })).not.toBeInTheDocument()
+    expect(mocked.listBonds).not.toHaveBeenCalled()
+  })
+
+  it('does NOT reveal the Bonds section when the type <select> is switched to BOND but not yet saved', async () => {
+    // Companion to the ledger "toggle flipped but not saved" test: the bond
+    // endpoints 400 on a non-BOND item, so the register is gated on the
+    // PERSISTED item.type from the query cache, never the pending <select>
+    // value. Switching the select must not mount BondsSection or fire listBonds.
+    const user = userEvent.setup()
+    mocked.getItem.mockResolvedValue(ITEM_NO_TRACKING) // type: 'Bank account'
+
+    render(<TrackingItemDetailPage />)
+    await screen.findByDisplayValue('Cash Account')
+
+    await user.selectOptions(screen.getByLabelText('Type'), 'BOND')
+    expect(screen.getByLabelText('Type')).toHaveValue('BOND') // pending edit is reflected
+
+    expect(screen.queryByRole('heading', { name: 'Bonds' })).not.toBeInTheDocument()
+    expect(mocked.listBonds).not.toHaveBeenCalled()
+  })
+
+  it('renders the Bonds section, one row per bond, with the correct status badge text', async () => {
+    mocked.getItem.mockResolvedValue(ITEM_BOND)
+    mocked.listBonds.mockResolvedValue(BONDS)
+
+    render(<TrackingItemDetailPage />)
+    expect(await screen.findByRole('heading', { name: 'Bonds' })).toBeInTheDocument()
+
+    // One row per bond code (wait for the bonds query to resolve).
+    const b1Row = (await screen.findByText('TH-GOV-2030')).closest('tr')!
+    expect(within(b1Row).getByText('Active')).toBeInTheDocument()
+    expect(within(b1Row).getByText('100000.00')).toBeInTheDocument()
+
+    const b2Row = screen.getByText('TH-GOV-2040').closest('tr')!
+    expect(within(b2Row).getByText('Pre-order')).toBeInTheDocument()
+    expect(within(b2Row).getAllByRole('cell')[1]).toHaveTextContent('—') // null issuer
+
+    const b3Row = screen.getByText('TH-GOV-2020').closest('tr')!
+    expect(within(b3Row).getByText('Expire')).toBeInTheDocument()
+
+    // Unknown renders as an em dash but keeps an accessible label.
+    const b4Row = screen.getByText('TH-GOV-UNK').closest('tr')!
+    expect(within(b4Row).getByLabelText('Status unknown')).toHaveTextContent('—')
+  })
+
+  it('shows the empty state when the item has no bonds', async () => {
+    mocked.getItem.mockResolvedValue(ITEM_BOND)
+    mocked.listBonds.mockResolvedValue([])
+
+    render(<TrackingItemDetailPage />)
+    await screen.findByRole('heading', { name: 'Bonds' })
+
+    expect(await screen.findByText('No bonds yet.')).toBeInTheDocument()
+  })
+
+  it('adds a bond via createBond (required Code + Amount, cleared optional fields sent as null)', async () => {
+    const user = userEvent.setup()
+    mocked.getItem.mockResolvedValue(ITEM_BOND)
+    mocked.listBonds.mockResolvedValue([])
+    mocked.createBond.mockResolvedValueOnce(BONDS[0])
+
+    render(<TrackingItemDetailPage />)
+    await screen.findByRole('heading', { name: 'Bonds' })
+
+    await user.click(screen.getByRole('button', { name: /Add Bond/i }))
+    await user.type(screen.getByLabelText(/^Code$/i), 'TH-GOV-2030')
+    await user.type(screen.getByLabelText(/Amount/i), '100000')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => {
+      expect(mocked.createBond).toHaveBeenCalledWith('item-1', expect.objectContaining({
+        code: 'TH-GOV-2030', amount: 100000, issuer: null, startDate: null, expiredDate: null,
+      }))
+    })
+  })
+
+  it('rejects a whitespace-only code client-side (no createBond call)', async () => {
+    const user = userEvent.setup()
+    mocked.getItem.mockResolvedValue(ITEM_BOND)
+    mocked.listBonds.mockResolvedValue([])
+
+    render(<TrackingItemDetailPage />)
+    await screen.findByRole('heading', { name: 'Bonds' })
+
+    await user.click(screen.getByRole('button', { name: /Add Bond/i }))
+    // Whitespace passes the native `required` check but fails the trim() guard.
+    await user.type(screen.getByLabelText(/^Code$/i), '   ')
+    await user.type(screen.getByLabelText(/Amount/i), '100')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(await screen.findByText(/Code is required/i)).toBeInTheDocument()
+    expect(mocked.createBond).not.toHaveBeenCalled()
   })
 })
 
@@ -397,7 +574,7 @@ describe('TrackingItemDetailPage — Profit vs Original panel', () => {
       itemId: 'item-1',
       currentTotal: 1500,
       entries: [
-        { id: 'e1', trackingItemId: 'item-1', amount: 1500, entryDate: '2026-01-01', note: null, createdAt: '', updatedAt: '', runningTotal: 1500 },
+        { id: 'e1', trackingItemId: 'item-1', amount: 1500, entryDate: '2026-01-01', note: null, code: null, name: null, createdAt: '', updatedAt: '', runningTotal: 1500 },
       ],
       profitVsOriginal: {
         netOriginalInvestment: 1500, currentValue: null, currentValueSlot: null,

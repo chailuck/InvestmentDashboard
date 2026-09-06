@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backup &amp; Restore — Technical Design — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Backup &amp; Restore — Technical Design</h1>
+
+<p><strong>Version:</strong> 2.0 &nbsp;·&nbsp; <strong>Last updated:</strong> 2026-09-01 &nbsp;·&nbsp;
+<strong>Owner:</strong> Dashboard backend team &nbsp;·&nbsp; <strong>Audience:</strong> backend / platform engineers.</p>
+
+<p>This document describes the in-app database backup and restore feature: the dynamic
+table-discovery model, the backup file format (v2.0), the restore transaction and
+rollback semantics, the PostgreSQL privilege requirement, and the operational
+configuration. It is written to be sufficient to rebuild the feature from scratch.</p>
+
+<div class="callout">
+<strong>Source files</strong><br>
+Backend endpoints: <code>backend/app/api/v1/endpoints/backup.py</code><br>
+Pure helpers (toposort, checksum, identifier quoting, serialiser): <code>backend/app/services/backup/__init__.py</code><br>
+Pydantic models: <code>backend/app/schemas/backup.py</code><br>
+Frontend page: <code>frontend/src/app/(dashboard)/settings/backup/page.tsx</code><br>
+Restore dialog: <code>frontend/src/app/(dashboard)/settings/backup/RestoreModal.tsx</code><br>
+API reference: <a href="../02-infrastructure/API-BACKUP.html">02-infrastructure/API-BACKUP.html</a><br>
+Operations: <a href="RUNBOOK.html">Backup &amp; Restore Runbook</a>
+</div>
+
+<h2>1. Goals and scope</h2>
+<ul>
+  <li><strong>Total coverage.</strong> A full backup must contain <em>every</em> application
+  table in the <code>investment_db</code> database — including tables owned by the sibling
+  <code>tracking-backend</code> service (<code>ft_*</code>) that share the same physical
+  database — with no hard-coded table list to maintain.</li>
+  <li><strong>Non-destructive by default.</strong> A restore must never silently overwrite a
+  populated database. Destroying data requires an explicit mode plus a typed confirmation
+  phrase.</li>
+  <li><strong>Schema-version isolation.</strong> The Alembic bookkeeping tables
+  (<code>alembic_version</code>, <code>ft_alembic_version</code>) are captured for reference
+  but never written by a restore. A data restore must not roll a schema forward or backward.</li>
+  <li><strong>Integrity signalling.</strong> Each table carries a SHA-256 checksum so a
+  restore can detect a backup file that was edited after it was written.</li>
+  <li><strong>Injection-safe.</strong> Every dynamically built SQL identifier is validated
+  against the live catalogue and quoted; every value is a bound parameter.</li>
+  <li><strong>Admin-only.</strong> Every endpoint is guarded by the <code>require_admin</code>
+  FastAPI dependency.</li>
+</ul>
+
+<h2>2. Shared-database / two-service ownership</h2>
+<p><code>investment_db</code> is a single PostgreSQL 16 database used by <strong>two</strong>
+services:</p>
+<table>
+  <thead><tr><th>Owning service</th><th>Tables</th><th>Migrated by</th><th>Schema-version table</th></tr></thead>
+  <tbody>
+    <tr><td><code>backend</code></td><td>All non-<code>ft_</code> application tables (<code>users</code>, <code>action_plans</code>, <code>portfolios</code>, <code>weekly_*</code>, <code>daily_performance</code>, …)</td><td><code>backend/alembic</code> + <code>Base.metadata.create_all</code> at startup</td><td><code>alembic_version</code></td></tr>
+    <tr><td><code>tracking-backend</code></td><td><code>ft_*</code> (Financial Tracker bounded context)</td><td><code>tracking-backend/alembic</code> (independent chain)</td><td><code>ft_alembic_version</code></td></tr>
+  </tbody>
+</table>
+<p>The backup code lives in the <code>backend</code> service but reads and writes the
+<code>ft_*</code> tables directly. This is only possible because both services connect as
+the same PostgreSQL role (a superuser) in this deployment — see
+<a href="#privilege">§7, Privilege requirement</a>.</p>
+
+<h2>3. Dynamic table discovery</h2>
+<p>On <em>every</em> call to <code>create</code>, <code>restore</code> and
+<code>GET /backup/tables</code>, the table set and a foreign-key-safe insert order are
+derived from the live PostgreSQL catalogue. No table list is stored in code.</p>
+
+<h3>3.1 Catalogue queries</h3>
+<pre><code>-- base tables in schema public (backup.py :: _discover_tables)
+SELECT c.relname AS name
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind = 'r'
+  AND NOT c.relispartition
+  AND n.nspname = 'public';
+
+-- foreign-key edges  (child, parent)  (backup.py :: _fk_edges)
+SELECT c.relname AS child, p.relname AS parent
+FROM pg_constraint con
+JOIN pg_class c      ON c.oid = con.conrelid
+JOIN pg_class p      ON p.oid = con.confrelid
+JOIN pg_namespace n  ON n.oid = c.relnamespace
+JOIN pg_namespace pn ON pn.oid = p.relnamespace
+WHERE con.contype = 'f' AND n.nspname = 'public' AND pn.nspname = 'public';</code></pre>
+<p>Because discovery is purely catalogue-driven, a table added by a future migration in
+<em>either</em> service — for example <code>ft_bond</code> from the Financial Tracker bond
+register — is included in the next backup with no code change. A table that exists in the
+database but no longer has an ORM model is also captured.</p>
+
+<h3>3.2 Topological sort (<code>services/backup/__init__.py :: toposort</code>)</h3>
+<p>A deterministic Kahn topological sort turns the FK edge list into an insert order where
+every parent precedes its children.</p>
+<table>
+  <thead><tr><th>Rule</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td>Edge direction</td><td><code>(child, parent)</code> read as &ldquo;parent must be inserted before child&rdquo;.</td></tr>
+    <tr><td>Self-referential FK (<code>child == parent</code>)</td><td>Dropped. The row-level ordering inside such a table is handled by <code>session_replication_role = replica</code> during restore.</td></tr>
+    <tr><td>Edge to an unknown node</td><td>Ignored.</td></tr>
+    <tr><td>Duplicate edges</td><td>Collapsed.</td></tr>
+    <tr><td>Tie-break</td><td>The ready set is always drained in <strong>alphabetical order</strong>, so the output is identical regardless of catalogue row order.</td></tr>
+    <tr><td>FK cycle</td><td>Unresolved nodes are appended sorted by name and a warning is logged. Cyclic inserts succeed because FK checks are deferred during the load.</td></tr>
+  </tbody>
+</table>
+<p><strong>TRUNCATE order</strong> for a destructive restore is simply
+<code>reversed(insert_order)</code>.</p>
+
+<h3>3.3 Covered vs excluded tables</h3>
+<p><code>covered = [t for t in discovered if t not in {"alembic_version", "ft_alembic_version"}]</code>.
+The two schema-version tables are <strong>excluded</strong> from the <code>tables</code>
+payload block and from the restore write path; they are captured separately (see §4).</p>
+<div class="callout">
+<strong>Coverage at ship date (2026-09-01):</strong> 28 covered tables reported by
+<code>GET /api/v1/backup/tables</code>, plus the 2 excluded schema-version tables. 27 of the
+covered tables map to current ORM models across the two services (19 <code>backend</code>
++ 8 <code>ft_*</code>); dynamic discovery also captures any additional table present in the
+live database. The authoritative, always-current list is the response of
+<code>GET /api/v1/backup/tables</code>.
+<br>&#9888; <strong>Assumption:</strong> the &ldquo;28&rdquo; figure is taken from the delivery
+hand-off notes and reflects the live catalogue on the ship date; it is expected to grow as
+migrations land.
+</div>
+
+<h2>4. Backup file format v2.0</h2>
+<p>A backup is a <strong>gzip-compressed JSON object</strong>. Stored files are named
+<code>backup_&lt;YYYYMMDD_HHMMSS&gt;.json.gz</code> (UTC timestamp) under
+<code>BACKUP_DIR</code> with permissions <code>0o600</code>.</p>
+
+<h3>4.1 Top-level keys</h3>
+<table>
+  <thead><tr><th>Key</th><th>Type</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>version</code></td><td>string</td><td>Always <code>"2.0"</code> for files written by this build.</td></tr>
+    <tr><td><code>created_at</code></td><td>string</td><td>ISO-8601 UTC timestamp of the backup.</td></tr>
+    <tr><td><code>created_by</code></td><td>string</td><td>UUID of the admin user who ran the backup.</td></tr>
+    <tr><td><code>source_db</code></td><td>string</td><td><code>"investment_db"</code>.</td></tr>
+    <tr><td><code>generator</code></td><td>string</td><td><code>"backend/backup@2.0"</code>.</td></tr>
+    <tr><td><code>covered_tables</code></td><td>string[]</td><td>Every table in the backup, in FK-safe insert order.</td></tr>
+    <tr><td><code>insert_order</code></td><td>string[]</td><td>Identical to <code>covered_tables</code>. TRUNCATE order is the reverse.</td></tr>
+    <tr><td><code>excluded_tables</code></td><td>object</td><td><code>{table: reason}</code> for the schema-version tables.</td></tr>
+    <tr><td><code>row_counts</code></td><td>object</td><td><code>{table: int}</code>.</td></tr>
+    <tr><td><code>checksums</code></td><td>object</td><td><code>{table: "sha256:&lt;hex&gt;"}</code> — see §4.3.</td></tr>
+    <tr><td><code>schema_versions</code></td><td>object</td><td><code>{alembic_version: [{version_num: "..."}], ft_alembic_version: [...]}</code>. Empty list if the table is absent.</td></tr>
+    <tr><td><code>tables</code></td><td>object</td><td><code>{table: [row objects]}</code>. Does <strong>not</strong> contain the schema-version tables.</td></tr>
+  </tbody>
+</table>
+
+<h3>4.2 Value normalisation</h3>
+<p>One serialiser, <code>services/backup/__init__.py :: json_default_payload</code>, is used
+for both the <code>tables</code> block and the checksum input:</p>
+<table>
+  <thead><tr><th>Python type</th><th>On disk</th></tr></thead>
+  <tbody>
+    <tr><td><code>UUID</code></td><td>string</td></tr>
+    <tr><td><code>datetime</code> / <code>date</code></td><td>ISO-8601 string</td></tr>
+    <tr><td><code>Decimal</code></td><td><code>float</code></td></tr>
+    <tr><td><code>bytes</code> / <code>bytearray</code> / <code>memoryview</code></td><td>base64 ASCII string</td></tr>
+    <tr><td>anything else unexpected</td><td><code>TypeError</code> — the backup fails loudly rather than dropping a column</td></tr>
+  </tbody>
+</table>
+<div class="callout warn">
+<strong>Fidelity caveat.</strong> The <code>Decimal &rarr; float</code> step can round a
+high-precision <code>NUMERIC</code>. Because the checksum is computed over the
+already-normalised shape, that rounding is invisible to the checksum. The checksum detects
+<em>post-backup modification of the file</em>, not divergence from the source database.
+</div>
+
+<h3>4.3 Per-table checksum</h3>
+<pre><code>table_checksum(rows) =
+  "sha256:" + sha256( "\n".join( sorted( json.dumps(row, sort_keys=True, default=json_default_payload)
+                                         for row in rows ) ) ).hexdigest()</code></pre>
+<p>Sorting the per-row JSON strings makes the digest independent of the row order the
+database returned. A restore recomputes the digest from the file contents and compares:
+<code>ok</code> (match), <code>mismatch</code> (file edited), or <code>skipped</code> (no
+checksum present, e.g. a legacy file).</p>
+
+<h3>4.4 Legacy (pre-2.0) files</h3>
+<p>A file is handled by the legacy path when its <code>version</code> is <code>"1.0"</code>,
+<code>"1.1"</code> or absent, <em>or</em> it is missing the <code>covered_tables</code> or
+<code>checksums</code> key. Legacy restores:</p>
+<ul>
+  <li>Report <code>legacy_backup: true</code> and <code>mode: "legacy"</code>.</li>
+  <li>List <code>uncovered_tables</code> (live tables absent from the file) and
+  <code>file_tables_not_in_db</code>.</li>
+  <li>Return <code>checksum_verification</code> as <code>"skipped"</code> for every table and
+  an empty <code>schema_version_drift</code>.</li>
+  <li>Apply the <strong>same</strong> conflict / confirm policy as the v2.0 path — a legacy
+  file cannot implicitly TRUNCATE a populated database.</li>
+</ul>
+<p>A <code>version</code> that is a non-empty string but is neither <code>"2.0"</code> nor a
+known legacy value is rejected with <span class="badge red">400</span>
+<code>urn:backup:error:unsupported-version</code> before any work is done.</p>
+
+<h2>5. Restore semantics</h2>
+<p>Two modes, selected by the <code>mode</code> field (body for the stored-file endpoint,
+query parameter for the upload endpoint). Default: <code>skip_if_conflict</code>.</p>
+
+<h3>5.1 <code>mode=skip_if_conflict</code> (default, safe)</h3>
+<ol>
+  <li>Acquire <code>pg_advisory_xact_lock(917283641)</code> and
+  <code>SET LOCAL statement_timeout = '30s'</code>.</li>
+  <li>Version gate; parse <code>tables</code>; discover live tables and compute the insert
+  order restricted to <code>covered &cap; live</code>.</li>
+  <li><strong>Pre-write conflict check:</strong> <code>SELECT 1 FROM &lt;t&gt; LIMIT 1</code>
+  for each covered table (the two schema-version tables are never checked).</li>
+  <li>If <em>any</em> covered target table is non-empty &rarr; <code>ROLLBACK</code> and
+  return <span class="badge red">409</span> <code>application/problem+json</code>
+  <code>urn:backup:error:target-not-empty</code> with
+  <code>conflicting_tables: [{table, row_count}]</code>. <strong>Nothing is written.</strong></li>
+  <li>Otherwise: load every covered table in insert order, then <code>COMMIT</code>.</li>
+</ol>
+
+<h3>5.2 <code>mode=replace_all</code> (destructive)</h3>
+<ol>
+  <li>The request must carry <code>confirm</code> equal to the verbatim string
+  <code>REPLACE ALL DATA</code>. Otherwise &rarr; <code>ROLLBACK</code>,
+  <span class="badge red">400</span> <code>urn:backup:error:confirm-required</code>.</li>
+  <li>Validate that no column in the file is absent from the live schema
+  (<code>urn:backup:error:unknown-column</code>, 422, with <code>errors</code>).</li>
+  <li><code>SET LOCAL session_replication_role = replica</code> (see §7).</li>
+  <li><code>TRUNCATE TABLE &lt;t&gt; CASCADE</code> for each table in <strong>reverse</strong>
+  insert order — only for tables in <code>covered &cap; live</code>.</li>
+  <li>Bulk-insert every covered table in insert order (chunks of 1000 rows).</li>
+  <li>Any row failure &rarr; the whole transaction <code>ROLLBACK</code>s and the endpoint
+  returns <span class="badge red">422</span> <code>urn:backup:error:restore-failed</code>
+  with a per-table <code>errors</code> list. There is no partial restore.</li>
+  <li>Otherwise <code>COMMIT</code>.</li>
+</ol>
+
+<h3>5.3 Invariants that hold on both modes and both (v2.0 / legacy) paths</h3>
+<ul>
+  <li><strong>One transaction.</strong> The advisory lock opens it; an explicit
+  <code>commit</code> / <code>rollback</code> closes it on every code path.
+  <code>SET LOCAL</code> statements therefore auto-revert and never leak into the pooled
+  connection.</li>
+  <li><strong>Tables in the DB but absent from the backup are left untouched</strong> — they
+  are neither truncated nor inserted into.</li>
+  <li><strong>Schema-version tables are never written.</strong> After the load, drift is
+  reported as
+  <code>schema_version_drift: {name: {file, live, match}}</code> comparing the file's
+  <code>version_num</code> against the live value.</li>
+  <li><strong>Identifiers</strong> are validated against the live catalogue /
+  <code>information_schema.columns</code> and double-quoted via <code>safe_ident</code>.
+  <strong>Values</strong> are positional bind parameters (<code>p0, p1, …</code>) so a column
+  name such as <code>as of</code> cannot corrupt the parameter list.</li>
+  <li><strong>Type coercion on insert</strong> (<code>_coerce</code>): ISO strings &rarr;
+  <code>datetime</code> / <code>date</code>; base64 &rarr; <code>bytes</code> for
+  <code>bytea</code>; nested object &rarr; JSON text for <code>json</code> / <code>jsonb</code>;
+  <code>"true"/"t"/"1"/"yes"</code> &rarr; <code>bool</code>.</li>
+</ul>
+
+<h3>5.4 Restore result object</h3>
+<pre><code>{
+  "version": "2.0",                // or the file's value / "legacy"
+  "mode": "skip_if_conflict",      // "replace_all" | "legacy"
+  "legacy_backup": false,
+  "restored": { "users": 4, "action_plans": 12, ... },
+  "total_rows": 512,
+  "errors": [],
+  "covered_tables": [ ... ],       // tables actually processed, insert order
+  "uncovered_tables": [ ... ],     // live tables not in this backup (left untouched)
+  "file_tables_not_in_db": [ ... ],// tables in the file with no live target
+  "checksum_verification": { "users": "ok", "holdings": "mismatch", ... },
+  "schema_version_drift": {
+     "alembic_version":    { "file": "d4e5f6a7b8c9", "live": "d4e5f6a7b8c9", "match": true },
+     "ft_alembic_version": { "file": "00f7a890545d", "live": "ea8407e31992", "match": false }
+  },
+  "source_created_at": "2026-09-01T02:14:07+00:00"
+}</code></pre>
+
+<h2>6. Concurrency</h2>
+<ul>
+  <li><code>create_backup</code> and <code>_do_restore</code> each take
+  <code>pg_advisory_xact_lock(917283641)</code> as their first statement. The same key means
+  a backup and a restore (or two of either) <strong>serialise</strong> instead of racing;
+  the lock is released automatically when the transaction ends.</li>
+  <li><code>SET LOCAL statement_timeout = '30s'</code> bounds every statement in
+  <code>create</code>, <code>_do_restore</code> and <code>GET /backup/tables</code>.</li>
+  <li>There is <em>no</em> HTTP-level rate limit or semaphore on
+  <code>POST /backup/create</code> — see §10.</li>
+</ul>
+
+<h2 id="privilege">7. PostgreSQL privilege requirement</h2>
+<div class="callout warn">
+The restore path issues <code>SET LOCAL session_replication_role = replica</code> to defer
+foreign-key and trigger enforcement during the bulk load. This command requires a
+<strong>superuser</strong> role (or a role with the replication attribute). If the role
+cannot set it, the restore fails fast with <span class="badge red">500</span>
+<code>urn:backup:error:insufficient-privilege</code> and the message
+&ldquo;backup restore requires a superuser-capable DB role&rdquo;. The transaction is rolled
+back; nothing is written.
+</div>
+<ul>
+  <li><code>POST /backup/create</code> and <code>GET /backup/tables</code> do <strong>not</strong>
+  need this privilege — they only read.</li>
+  <li>Because <code>backup.py</code> runs in the <code>backend</code> service but also
+  reads / writes the <code>ft_*</code> tables, the <code>backend</code> DB role must hold
+  <code>SELECT</code>, <code>INSERT</code>, <code>TRUNCATE</code> and <code>TRIGGER</code>
+  on the <code>ft_*</code> tables.</li>
+  <li>In this deployment both services connect as the same <code>postgres</code> superuser,
+  so both conditions already hold. <strong>If the roles are ever split, these grants and the
+  superuser/replication attribute on the <code>backend</code> role must be preserved</strong>
+  or restore breaks.</li>
+</ul>
+
+<h2>8. Backup-file path containment</h2>
+<p>Every endpoint that takes a <code>{filename}</code> path parameter
+(<code>download</code>, <code>DELETE</code>, <code>restore/{filename}</code>) routes it
+through <code>_resolve_backup_path</code>, which rejects with
+<span class="badge red">400</span> <code>urn:backup:error:invalid-filename</code> when the
+name:</p>
+<ul>
+  <li>contains <code>/</code>, <code>\</code> or a NUL byte;</li>
+  <li>is <code>.</code> or <code>..</code>;</li>
+  <li>does not match <code>backup_*.json.gz</code>;</li>
+  <li>after resolution does not sit <em>directly</em> in <code>BACKUP_DIR</code> (this also
+  catches a symlink pointing outside the directory).</li>
+</ul>
+
+<h2>9. Upload restore — bounded decompression</h2>
+<p><code>POST /backup/restore/upload</code> streams the uploaded gzip through
+<code>_bounded_gunzip</code>, which aborts as soon as the decompressed output would exceed
+<code>BACKUP_MAX_UNCOMPRESSED_BYTES</code> (default 200&nbsp;MiB), returning
+<span class="badge red">413</span> <code>urn:backup:error:too-large</code> with
+<code>limit_bytes</code>. This defends against a decompression bomb. <code>mode</code> and
+<code>confirm</code> are <strong>query</strong> parameters so the multipart body stays a
+single <code>file</code> part.</p>
+
+<h2>10. Configuration</h2>
+<table>
+  <thead><tr><th>Env var</th><th>Default</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>BACKUP_DIR</code></td><td><code>/app/uploads/backups</code></td><td>Directory for stored backup files. Created on import if missing. Sits in the <code>uploads_data</code> Docker volume.</td></tr>
+    <tr><td><code>BACKUP_RETENTION</code></td><td><code>7</code></td><td>After each successful <code>create</code>, only the newest N <code>backup_*.json.gz</code> files are kept; the rest are deleted.</td></tr>
+    <tr><td><code>BACKUP_MAX_UNCOMPRESSED_BYTES</code></td><td><code>209715200</code> (200&nbsp;MiB)</td><td>Hard cap on the decompressed size of an uploaded backup.</td></tr>
+    <tr><td><code>BACKUP_FORMAT_VERSION</code></td><td><code>"2.0"</code></td><td>Version string stamped into new backup files.</td></tr>
+  </tbody>
+</table>
+<p>Module constants (not env-configurable): advisory-lock key <code>917283641</code>,
+insert chunk size <code>1000</code>, statement timeout <code>30s</code>.</p>
+
+<h2>11. Error model</h2>
+<p>All backup endpoints emit <code>application/problem+json</code> (RFC 7807 / RFC 9457) on
+error:</p>
+<pre><code>{
+  "type":   "urn:backup:error:target-not-empty",
+  "title":  "Conflict",
+  "status": 409,
+  "detail": "target database already contains data for one or more covered tables; retry with mode=replace_all to overwrite",
+  "instance": "/api/v1/backup/restore/backup_20260901_021407.json.gz",
+  "mode": "skip_if_conflict",
+  "conflicting_tables": [ { "table": "users", "row_count": 4 } ]
+}</code></pre>
+<p>A top-level <code>detail</code> string is always retained for older frontend clients that
+read <code>error.detail</code>. DB error messages are scrubbed to the exception class name
+only — never SQL text, DSNs or filesystem paths. The full catalogue of
+<code>urn:backup:error:*</code> types and status codes is in
+<a href="../02-infrastructure/API-BACKUP.html#errors">API-BACKUP.html §Error catalogue</a>.
+<code>401</code> (no token) and <code>403</code> (non-admin) come from
+<code>require_admin</code> as ordinary FastAPI <code>{"detail": …}</code> bodies.</p>
+
+<h2>12. PSV per-table export / import</h2>
+<p>A lighter-weight path for moving a single table, used by the &ldquo;Per-Table Export /
+Import&rdquo; panel in the UI.</p>
+<ul>
+  <li><strong>Format:</strong> pipe-separated. Line 1 is the header (column names); each
+  following line is one row. <code>NULL</code> is the empty field; a literal <code>|</code>
+  is escaped <code>\|</code>, a newline <code>\n</code>; <code>json</code>/<code>jsonb</code>
+  values are embedded as JSON.</li>
+  <li><code>GET /backup/export-table/{table}</code> &rarr; <code>text/plain</code> attachment
+  <code>&lt;table&gt;_&lt;YYYYMMDD_HHMMSS&gt;.psv</code>.</li>
+  <li><code>POST /backup/import-table/{table}?mode=append|replace&amp;confirm=…</code>.
+  <code>append</code> &rarr; <code>INSERT … ON CONFLICT DO NOTHING</code>.
+  <code>replace</code> &rarr; <code>TRUNCATE … CASCADE</code> first and requires
+  <code>confirm</code> == <code>REPLACE &lt;table&gt;</code>.</li>
+  <li>Both directions reject the schema-version tables with
+  <span class="badge red">400</span> <code>urn:backup:error:schema-version-table</code>.</li>
+  <li>The uploaded header is validated against <code>information_schema.columns</code> for the
+  real target; unknown columns &rarr; <span class="badge red">422</span>
+  <code>urn:backup:error:unknown-column</code>. Import runs under
+  <code>session_replication_role = replica</code> in one transaction; failure &rarr;
+  <code>ROLLBACK</code> + <span class="badge red">422</span>
+  <code>urn:backup:error:import-failed</code>.</li>
+</ul>
+
+<h2>13. Frontend integration</h2>
+<p>See <a href="FUNCTIONAL.html">FUNCTIONAL.html</a> for the full UX. Key wiring:</p>
+<ul>
+  <li><code>GET /backup/tables</code> feeds the collapsible <em>coverage card</em> and the PSV
+  table selector. The selector filters out rows with <code>restorable === false</code> or
+  <code>in_conflict_check === false</code> (the schema-version tables); the coverage card
+  still lists them with their <code>note</code>.</li>
+  <li>The <em>wipe preview</em> shown for a replace-all restore is
+  <code>tables.filter(t =&gt; t.in_conflict_check &amp;&amp; t.row_count &gt; 0)</code>.</li>
+  <li><code>RestoreModal.tsx</code> owns the mode choice. The submit button is disabled until
+  <code>mode === 'skip_if_conflict'</code> or the typed text equals
+  <code>REPLACE ALL DATA</code>. A <code>409</code> response is caught and its
+  <code>conflicting_tables</code> rendered inline so the admin can switch to replace-all
+  without losing context.</li>
+</ul>
+
+<h2>14. Testing notes</h2>
+<div class="callout warn">
+<strong>Fast-follow C-2 — test fixture drift (internal).</strong> The backend test fixture
+<code>backend/tests/fixtures/ft_schema.sql</code> is hand-authored and is currently
+<em>ahead</em> of the committed <code>tracking-backend</code> migrations. Recommended
+follow-up: add a CI drift check that regenerates the fixture from
+<code>pg_dump --schema-only</code> of a fully-migrated database and fails the build on any
+diff. Until then, a schema change in <code>tracking-backend</code> must be mirrored into
+this fixture by hand or the backup/restore tests will not exercise the real shape.
+</div>
+<ul>
+  <li>The pure helpers in <code>services/backup/__init__.py</code> (<code>toposort</code>,
+  <code>table_checksum</code>, <code>safe_ident</code>, <code>json_default_payload</code>)
+  hold no DB or HTTP state and are unit-tested in isolation.</li>
+  <li>Endpoint tests cover: full round-trip; the 409 conflict path; the typed-confirmation
+  gate; checksum <code>mismatch</code> detection; legacy-file restore; the unsupported-version
+  rejection; and path-traversal rejection.</li>
+</ul>
+
+<h2>15. Accepted risks / backlog</h2>
+<p>Deliberately deferred for this single-host, admin-only, self-hosted Docker deployment:</p>
+<table>
+  <thead><tr><th>Item</th><th>Rationale / mitigation</th><th>Future work</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Backup files are not encrypted at rest.</strong> They contain <em>all</em>
+      platform data, including <code>users.hashed_password</code> and personal data.</td>
+      <td>Files live under <code>BACKUP_DIR</code> (a Docker volume), are <code>0o600</code>,
+      and are only retrievable through the admin-authenticated download endpoint.</td>
+      <td>Envelope / AES-GCM encryption with a KMS-held key.</td>
+    </tr>
+    <tr>
+      <td>No rate limit / concurrency semaphore on <code>POST /backup/create</code>.</td>
+      <td>The advisory lock already serialises DB-level contention; a flood of calls queues
+      rather than corrupts.</td>
+      <td>Add an HTTP throttle if abuse is observed.</td>
+    </tr>
+    <tr>
+      <td>Fast-follow C-2 fixture drift (above).</td>
+      <td>Manual mirroring for now.</td>
+      <td>CI <code>pg_dump</code> drift check.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>16. Feature rollback</h2>
+<p>The feature adds <strong>no database migration</strong> — it only reads and writes
+existing tables. To remove it:</p>
+<ol>
+  <li>Revert <code>backend/app/api/v1/endpoints/backup.py</code>,
+  <code>backend/app/services/backup/</code>, <code>backend/app/schemas/backup.py</code>, and
+  the router registration.</li>
+  <li>Revert the frontend files
+  <code>frontend/src/app/(dashboard)/settings/backup/page.tsx</code> and
+  <code>RestoreModal.tsx</code> (and the route entry).</li>
+  <li>Backend hot-reloads; rebuild and redeploy the frontend
+  (<code>docker compose build frontend &amp;&amp; docker compose up -d --no-deps frontend</code>).</li>
+  <li>Existing <code>backup_*.json.gz</code> files under <code>BACKUP_DIR</code> are inert and
+  can be deleted at leisure.</li>
+</ol>
+
+</body>
+</html>

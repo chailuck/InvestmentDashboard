@@ -837,6 +837,7 @@ Response:
     <tr><td><code>/settings</code></td><td><code>(dashboard)/settings/page.tsx</code></td><td>Profile settings, password change</td></tr>
     <tr><td><code>/settings/documents</code></td><td><code>(dashboard)/settings/documents/page.tsx</code></td><td>Built-in documentation viewer (this guide)</td></tr>
     <tr><td><code>/settings/portfolio-db</code></td><td><code>(dashboard)/settings/portfolio-db/page.tsx</code></td><td>Database-backed position management (CRUD)</td></tr>
+    <tr><td><code>/settings/backup</code></td><td><code>(dashboard)/settings/backup/page.tsx</code></td><td>Admin-only full-database backup / restore + per-table PSV export/import. See docs: Backup &amp; Restore.</td></tr>
     <tr><td><code>/tracking/analysis</code></td><td><code>(dashboard)/tracking/analysis/page.tsx</code></td><td>Financial Tracker — Analysis: a read-only exploration of the tracked net-worth data (trend, composition, delta-trend charts, a drill-scoped tabular readout, and a client-side CSV export). Built entirely in the browser from the existing Tracking balance-grid response; adds no endpoint or schema. 4th sub-link in the Tracking sidebar accordion. See docs: Financial Tracker → Analysis View.</td></tr>
   </table>
 
@@ -1388,6 +1389,17 @@ Response:
 
   <h2>Portfolio DB (<code>/settings/portfolio-db</code>)</h2>
   <p>An alternative database-backed position tracker independent of the Excel file. Full CRUD for positions stored in <code>portfolio_db_positions</code>. Useful for tracking positions that are not yet in the Excel, or for future migration away from Excel dependency.</p>
+
+  <h2>Backup &amp; Restore (<code>/settings/backup</code>, admin only)</h2>
+  <ul>
+    <li>Full-database backup / restore covering <strong>every</strong> table in the shared <code>investment_db</code> — both <code>backend</code> tables and the <code>tracking-backend</code>-owned <code>ft_*</code> tables. The covered set is discovered dynamically from the PostgreSQL catalogue, so new tables are picked up with no code change.</li>
+    <li>Backup file format v2.0 (gzip JSON) with per-table SHA-256 checksums; pre-2.0 files still restore in a legacy mode.</li>
+    <li>Restore defaults to a safe mode that refuses to write if any covered table already holds data (HTTP 409); a destructive <code>replace_all</code> requires typing <code>REPLACE ALL DATA</code>.</li>
+    <li>The Alembic version tables (<code>alembic_version</code>, <code>ft_alembic_version</code>) are captured for reference but never written by a restore.</li>
+    <li>Per-table pipe-separated (PSV) export/import for single-table moves.</li>
+    <li>Endpoints under <code>/api/v1/backup/*</code>; see docs: <strong>Backup &amp; Restore</strong> (Functional / Technical / Runbook) and <strong>API Reference → Backup &amp; Restore</strong>.</li>
+  </ul>
+  <div class="callout warn">Backup files are <strong>not encrypted</strong> and contain all data including password hashes. Treat a downloaded backup as a secret.</div>
 
   <h2>Documents viewer (<code>/settings/documents</code>)</h2>
   <p>Built-in documentation viewer. Fetches the doc tree manifest from <code>GET /api/v1/docs-content/manifest</code> and renders individual Markdown or HTML files served by <code>GET /api/v1/docs-content/file?path=</code>. HTML files (like this guide) are rendered inside a sandboxed <code>&lt;iframe&gt;</code>.</p>

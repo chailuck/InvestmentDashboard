@@ -18,6 +18,7 @@ import {
 } from '@/services/tracking'
 import { extractApiError } from '@/services/api'
 import { ConfirmDeleteModal } from '@/components/tracking/ConfirmDeleteModal'
+import { BondsSection } from '@/components/tracking/BondsSection'
 
 const todayIso = () => format(new Date(), 'yyyy-MM-dd')
 
@@ -67,11 +68,19 @@ function EntryForm({
 }: {
   initial?: Entry | null
   onClose: () => void
-  onSave: (entryDate: string, amount: number, note: string | null) => Promise<void>
+  onSave: (
+    entryDate: string,
+    amount: number,
+    note: string | null,
+    code: string | null,
+    name: string | null,
+  ) => Promise<void>
 }) {
   const [entryDate, setEntryDate] = useState(initial?.entryDate ?? todayIso())
   const [amount, setAmount] = useState(initial ? String(initial.amount) : '')
   const [note, setNote] = useState(initial?.note ?? '')
+  const [code, setCode] = useState(initial?.code ?? '')
+  const [name, setName] = useState(initial?.name ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -85,7 +94,7 @@ function EntryForm({
     setSaving(true)
     setError(null)
     try {
-      await onSave(entryDate, amt, note.trim() || null)
+      await onSave(entryDate, amt, note.trim() || null, code.trim() || null, name.trim() || null)
     } catch (err) {
       setError(extractApiError(err))
     } finally {
@@ -139,6 +148,30 @@ function EntryForm({
             value={note}
             onChange={e => setNote(e.target.value)}
             placeholder="Optional — up to 500 characters"
+          />
+        </div>
+        <div className="space-y-1">
+          <label htmlFor="entry-code" className="text-xs font-medium text-ink-secondary">Code (optional)</label>
+          <input
+            id="entry-code"
+            type="text"
+            maxLength={100}
+            className="input text-sm w-40"
+            value={code}
+            onChange={e => setCode(e.target.value)}
+            placeholder="Optional"
+          />
+        </div>
+        <div className="space-y-1">
+          <label htmlFor="entry-name" className="text-xs font-medium text-ink-secondary">Name (optional)</label>
+          <input
+            id="entry-name"
+            type="text"
+            maxLength={100}
+            className="input text-sm w-48"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Optional"
           />
         </div>
         <button type="submit" disabled={saving} className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
@@ -240,16 +273,20 @@ function LedgerSection({ itemId }: { itemId: string }) {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['tracking-running-total', itemId] })
 
-  const handleAdd = async (entryDate: string, amount: number, note: string | null) => {
-    await trackingService.createEntry(itemId, { entryDate, amount, note })
+  const handleAdd = async (
+    entryDate: string, amount: number, note: string | null, code: string | null, name: string | null,
+  ) => {
+    await trackingService.createEntry(itemId, { entryDate, amount, note, code, name })
     setShowAdd(false)
     await invalidate()
     toast.success('Entry added')
   }
 
-  const handleEdit = async (entryDate: string, amount: number, note: string | null) => {
+  const handleEdit = async (
+    entryDate: string, amount: number, note: string | null, code: string | null, name: string | null,
+  ) => {
     if (!editEntry) return
-    await trackingService.updateEntry(editEntry.id, { entryDate, amount, note })
+    await trackingService.updateEntry(editEntry.id, { entryDate, amount, note, code, name })
     setEditEntry(null)
     await invalidate()
     toast.success('Entry updated')
@@ -321,6 +358,8 @@ function LedgerSection({ itemId }: { itemId: string }) {
                 <th className="px-3 py-2 text-right font-medium">Amount</th>
                 <th className="px-3 py-2 text-right font-medium">Running Total</th>
                 <th className="px-3 py-2 text-left font-medium">Note</th>
+                <th className="px-3 py-2 text-left font-medium">Code</th>
+                <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="px-3 py-2 text-left font-medium">Actions</th>
               </tr>
             </thead>
@@ -334,6 +373,10 @@ function LedgerSection({ itemId }: { itemId: string }) {
                   <td className="px-3 py-2 text-right font-mono text-ink-primary">{fmtAmount(entry.runningTotal)}</td>
                   <td className="px-3 py-2 text-ink-secondary">
                     <div className="max-w-[16rem] truncate" title={entry.note ?? ''}>{entry.note ?? '—'}</div>
+                  </td>
+                  <td className="px-3 py-2 text-ink-secondary whitespace-nowrap">{entry.code ?? '—'}</td>
+                  <td className="px-3 py-2 text-ink-secondary">
+                    <div className="max-w-[12rem] truncate" title={entry.name ?? ''}>{entry.name ?? '—'}</div>
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1">
@@ -566,6 +609,19 @@ export default function TrackingItemDetailPage() {
             only the ledger's visibility waits for a successful save + refetch.
           */}
           {item.initialInvestmentTracking && <LedgerSection itemId={itemId} />}
+
+          {/*
+            Gated on `item.type` — the persisted, server-confirmed value from the
+            query cache — NOT `form.type` (the local, possibly-unsaved pending
+            edit), for the same reason the ledger section above is gated on the
+            persisted `initialInvestmentTracking`: the bond endpoints 400 on a
+            non-BOND item, so mounting this off the pending <select> value would
+            fire a doomed query the instant the user picks "BOND" but before they
+            click Save. The <select> still reflects `form.type` so the user sees
+            their in-progress change — only the register's visibility waits for a
+            successful save + refetch.
+          */}
+          {item.type === 'BOND' && <BondsSection itemId={itemId} />}
         </>
       )}
     </div>

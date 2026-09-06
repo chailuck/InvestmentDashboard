@@ -357,8 +357,16 @@ async with engine.begin() as conn:
 <div class="callout tip">The <code># noqa: F401</code> comment suppresses the "imported but unused" linter warning. These imports are intentional side effects and should not be removed.</div>
 
 <h2>6. Financial Tracker tables (separate bounded context)</h2>
-<p>The <code>ft_tracking_set</code>, <code>ft_category</code>, <code>ft_sub_category</code>, <code>ft_tracking_item</code>, and <code>ft_initial_investment_entry</code> tables (Phase 1), plus <code>ft_update_tracking_list</code> and <code>ft_update_tracking_list_balance</code> (Phase 2 — periodic balance snapshots against a tracking set's hierarchy, added by migration <code>c001eb66b381</code>, 2026-08-25), live in this <strong>same physical Postgres database</strong> but are owned and migrated by the independent <code>tracking-backend</code> microservice, not by this <code>backend</code> service. They are intentionally excluded from the table inventory above (as, for the same reason, are the standalone-module tables from other backend features covered by their own Technical Design docs, e.g. <code>daily_performance</code>): they carry <strong>no foreign keys</strong> to <code>users</code> or any table in this section, and are managed by a separate Alembic chain with its own <code>ft_alembic_version</code> bookkeeping table — running this service's migrations does not create, alter, or affect them in any way. A later <code>tracking-backend</code> migration (<code>e7c4d9b21a83</code>, Phase 5 / ADR-018) adds one additive nullable column, <code>ft_initial_investment_entry.note VARCHAR(500) NULL</code>, and no other schema change.</p>
-<p>Full schema, indexes, constraints, and entity relationships for all 7 tables: <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §3–4.</p>
+<p>The <code>ft_tracking_set</code>, <code>ft_category</code>, <code>ft_sub_category</code>, <code>ft_tracking_item</code>, and <code>ft_initial_investment_entry</code> tables (Phase 1), plus <code>ft_update_tracking_list</code> and <code>ft_update_tracking_list_balance</code> (Phase 2 — periodic balance snapshots against a tracking set's hierarchy, added by migration <code>c001eb66b381</code>, 2026-08-25), and <code>ft_bond</code> (Phase 7 — a standalone register of individual bond holdings, added by migration <code>ea8407e31992</code>, 2026-08-31), live in this <strong>same physical Postgres database</strong> but are owned and migrated by the independent <code>tracking-backend</code> microservice, not by this <code>backend</code> service. They are intentionally excluded from the table inventory above (as, for the same reason, are the standalone-module tables from other backend features covered by their own Technical Design docs, e.g. <code>daily_performance</code>): they carry <strong>no foreign keys</strong> to <code>users</code> or any table in this section, and are managed by a separate Alembic chain with its own <code>ft_alembic_version</code> bookkeeping table — running this service's migrations does not create, alter, or affect them in any way.</p>
+<p><strong>Later <code>tracking-backend</code> migrations:</strong></p>
+<ul>
+  <li><code>e7c4d9b21a83</code> (Phase 5 / ADR-018, 2026-08-30) — adds one additive nullable column, <code>ft_initial_investment_entry.note VARCHAR(500) NULL</code>.</li>
+  <li><code>ea8407e31992</code> (Phase 7 / ADR-024, ADR-025, 2026-08-31) — widens the <code>ft_tracking_item.type</code> CHECK (<code>ck_ft_tracking_item_type</code>) from 6 to <strong>7</strong> allowed values, adding <code>'BOND'</code> (the full list is now <code>'Bank account'</code>, <code>'Property'</code>, <code>'Investment Account'</code>, <code>'TaxSaving'</code>, <code>'Materials'</code>, <code>'Insurance'</code>, <code>'BOND'</code>) by drop + recreate; and creates <code>ft_bond</code> — <code>id</code> uuid PK (<code>uuid_generate_v4()</code>); <code>tracking_item_id</code> uuid NOT NULL FK → <code>ft_tracking_item.id</code> <strong>ON DELETE CASCADE</strong>; <code>code</code> varchar(100) NOT NULL; <code>issuer</code> varchar(200) NULL; <code>start_date</code> date NULL; <code>expired_date</code> date NULL; <code>amount</code> numeric(19,4) NOT NULL with <code>CHECK ck_ft_bond_amount_nonneg (amount &gt;= 0)</code>; <code>created_at</code> / <code>updated_at</code> timestamptz NOT NULL DEFAULT now(); index <code>ix_ft_bond_tracking_item_id</code> on <code>(tracking_item_id)</code>. <code>ft_bond</code> has <strong>no <code>user_id</code> column</strong> — ownership is resolved by joining to <code>ft_tracking_item.user_id</code>. Its <code>status</code> is computed on read and never stored.</li>
+  <li><code>00f7a890545d</code> (Phase 7 / ADR-023, 2026-08-31) — adds two additive nullable columns to <code>ft_initial_investment_entry</code>: <code>code</code> varchar(100) NULL and <code>name</code> varchar(100) NULL. No index / CHECK / constraint.</li>
+  <li><code>b1c2d3e4f5a6</code> (Phase 7 enhancement / ADR-026, 2026-09-02) — adds one additive nullable column to <code>ft_bond</code>: <code>interest_rate</code> numeric(19,4) NULL (optional annual rate stored as a percent), plus a CHECK <code>ck_ft_bond_interest_rate_range</code> — <code>interest_rate IS NULL OR (interest_rate &gt;= 0 AND interest_rate &lt;= 100)</code>. No backfill, no index. <code>downgrade()</code> drops the CHECK and the column and is LOSSY.</li>
+</ul>
+<p>In addition to the never-stored <code>status</code>, <code>ft_bond</code> exposes a computed-at-read <code>years</code> field <em>(Phase 7 enhancement / ADR-026)</em> — <code>round_half_up((expired_date - start_date).days / 365.25)</code> as an integer, <code>NULL</code> when either date is missing — derived on every read and never persisted, the same treatment as <code>status</code>.</p>
+<p>Full schema, indexes, constraints, and entity relationships for all 8 tables: <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §3–4 (and §15–16 for the Phase 7 bond register and its ADR-026 enhancement).</p>
 
 <h2>7. Migration history</h2>
 <p>All Alembic migrations in chronological order. Run <code>alembic upgrade head</code> to apply all pending migrations. Migration files live in <code>backend/alembic/versions/</code>.</p>
@@ -371,5 +379,72 @@ async with engine.begin() as conn:
     <tr><td><code>d4f8c2e73b1a</code></td><td>2026-06-14</td><td>Split single <code>feeling</code> column into <code>buy_feeling</code> + <code>sell_feeling</code></td></tr>
   </tbody>
 </table>
+
+<h2>8. In-app backup / restore coverage</h2>
+<p>The admin <strong>Settings &rarr; Backup</strong> feature
+(<code>backend/app/api/v1/endpoints/backup.py</code>) now backs up and restores
+<strong>every table in <code>investment_db</code></strong> — both the <code>backend</code>
+tables in section 2 and the <code>tracking-backend</code>-owned <code>ft_*</code> tables in
+section 6, which share this one physical database. There is <strong>no hard-coded table
+list</strong>: the table set and a foreign-key-safe insert order are discovered from the
+live PostgreSQL catalogue (<code>pg_class</code>, <code>pg_constraint</code>) on every call
+via a deterministic Kahn topological sort. A table added by any future migration in either
+service is therefore covered automatically, with no change to the backup code.</p>
+
+<div class="callout">Full design — file format v2.0, restore transaction / rollback model,
+the <code>session_replication_role</code> superuser requirement, advisory locking, and
+configuration — is in
+<a href="../19-backup-restore/TECHNICAL.html">19-backup-restore/TECHNICAL.html</a>.
+Endpoint contract and error catalogue:
+<a href="API-BACKUP.html">API-BACKUP.html</a>. Operations:
+<a href="../19-backup-restore/RUNBOOK.html">19-backup-restore/RUNBOOK.html</a>.</div>
+
+<h3>8.1 Covered tables</h3>
+<p>At the ship date (2026-09-01) <code>GET /api/v1/backup/tables</code> reported
+<strong>28 covered tables</strong> plus the 2 excluded schema-version tables. 27 of the
+covered tables map to current ORM models across the two services; discovery also captures
+any additional live table. The always-current list is the response of
+<code>GET /api/v1/backup/tables</code>.</p>
+<table>
+  <thead><tr><th>Owner service</th><th>Tables (covered — backed up and restorable)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>backend</code> (19 model tables)</td>
+      <td><code>users</code>, <code>action_plans</code>, <code>purchase_plan_items</code>,
+      <code>portfolio_plan_items</code>, <code>portfolios</code>, <code>holdings</code>,
+      <code>investment_transactions</code>, <code>portfolio_cash_transactions</code>,
+      <code>portfolio_positions_db</code>, <code>symbol_notes</code>, <code>dr_mappings</code>,
+      <code>daily_performance</code>, <code>user_scan_configs</code>,
+      <code>user_symbol_lists</code>, <code>weekly_scans</code>, <code>weekly_scan_items</code>,
+      <code>pe_scan_results</code>, <code>weekly_reviews</code>, <code>weekly_review_items</code></td>
+    </tr>
+    <tr>
+      <td><code>tracking-backend</code> (8 <code>ft_*</code> tables)</td>
+      <td><code>ft_tracking_set</code>, <code>ft_category</code>, <code>ft_sub_category</code>,
+      <code>ft_tracking_item</code>, <code>ft_initial_investment_entry</code>,
+      <code>ft_update_tracking_list</code>, <code>ft_update_tracking_list_balance</code>,
+      <code>ft_bond</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>8.2 Excluded tables</h3>
+<table>
+  <thead><tr><th>Table</th><th>Owner</th><th>Why excluded</th></tr></thead>
+  <tbody>
+    <tr><td><code>alembic_version</code></td><td><code>backend</code></td><td rowspan="2">Schema-version bookkeeping owned by the respective Alembic migration chain. Captured in the backup file under <code>schema_versions</code> for reference, but <strong>never written by a restore</strong> — a data restore must not roll a schema forward or backward. Drift between the file and the live value is reported as <code>schema_version_drift</code>. These tables are also rejected by the PSV per-table export/import endpoints (<code>400 urn:backup:error:schema-version-table</code>).</td></tr>
+    <tr><td><code>ft_alembic_version</code></td><td><code>tracking-backend</code></td></tr>
+  </tbody>
+</table>
+
+<h3>8.3 Cross-service access requirement</h3>
+<p>The backup code runs inside the <code>backend</code> service but reads and writes the
+<code>ft_*</code> tables directly. This works only because both services connect as the same
+PostgreSQL superuser in this deployment. If the roles are ever split, the <code>backend</code>
+role must keep <code>SELECT</code>/<code>INSERT</code>/<code>TRUNCATE</code>/<code>TRIGGER</code>
+on the <code>ft_*</code> tables <em>and</em> be superuser-capable (restore issues
+<code>SET session_replication_role = replica</code>), or restore fails with
+<code>500 urn:backup:error:insufficient-privilege</code>.</p>
+
 </body>
 </html>

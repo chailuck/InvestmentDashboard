@@ -394,7 +394,43 @@ Importing a model that is never otherwise used is intentional — it registers t
 
 ---
 
-## 6. Migration History
+## 6. Financial Tracker tables (separate bounded context)
+
+The `ft_tracking_set`, `ft_category`, `ft_sub_category`, `ft_tracking_item`, and `ft_initial_investment_entry` tables (Phase 1), plus `ft_update_tracking_list` and `ft_update_tracking_list_balance` (Phase 2), and `ft_bond` (Phase 7), live in this **same physical Postgres database** but are owned and migrated by the independent `tracking-backend` microservice, not by this `backend` service. They are intentionally excluded from the table inventory above: they carry **no foreign keys** to `users` or any table in this section, and are managed by a separate Alembic chain with its own `ft_alembic_version` bookkeeping table.
+
+Later `tracking-backend` migrations:
+
+| Revision | Phase / ADR | Date | Change |
+|---|---|---|---|
+| `e7c4d9b21a83` | Phase 5 / ADR-018 | 2026-08-30 | Add additive nullable `ft_initial_investment_entry.note VARCHAR(500) NULL`. |
+| `ea8407e31992` | Phase 7 / ADR-024, ADR-025 | 2026-08-31 | Widen `ck_ft_tracking_item_type` from 6 → **7** values (add `'BOND'`) by drop + recreate; create `ft_bond`. |
+| `00f7a890545d` | Phase 7 / ADR-023 | 2026-08-31 | Add additive nullable `ft_initial_investment_entry.code VARCHAR(100) NULL` and `name VARCHAR(100) NULL`. |
+| `b1c2d3e4f5a6` | Phase 7 enhancement / ADR-026 | 2026-09-02 | Add additive nullable `ft_bond.interest_rate NUMERIC(19,4) NULL` (annual rate stored as a percent) + CHECK `ck_ft_bond_interest_rate_range` (`interest_rate IS NULL OR (interest_rate >= 0 AND interest_rate <= 100)`). No backfill, no index. Lossy `downgrade()`. **New chain head.** |
+
+`ft_tracking_item.type` allowed values (CHECK `ck_ft_tracking_item_type`), 7 total after `ea8407e31992`:
+`'Bank account'`, `'Property'`, `'Investment Account'`, `'TaxSaving'`, `'Materials'`, `'Insurance'`, `'BOND'`.
+
+`ft_bond` (Phase 7) — one row per registered bond holding, attached to a `ft_tracking_item` of type `BOND`:
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | No | PK, `uuid_generate_v4()` |
+| `tracking_item_id` | uuid | No | FK → `ft_tracking_item.id` **ON DELETE CASCADE**. Indexed (`ix_ft_bond_tracking_item_id`). |
+| `code` | varchar(100) | No | Required identifier. No uniqueness constraint. |
+| `issuer` | varchar(200) | Yes | Blank / whitespace-only coerced to `NULL`. |
+| `start_date` | date | Yes | Optional start / issue date. |
+| `expired_date` | date | Yes | Optional maturity / expiry date. Not validated against `start_date`. |
+| `amount` | numeric(19,4) | No | `CHECK ck_ft_bond_amount_nonneg (amount >= 0)` — zero allowed. |
+| `interest_rate` | numeric(19,4) | Yes | *(Phase 7 enhancement / ADR-026 — migration `b1c2d3e4f5a6`)* Optional annual interest rate stored as a **percent** (`3.25` = 3.25% p.a.). `CHECK ck_ft_bond_interest_rate_range (interest_rate IS NULL OR (interest_rate >= 0 AND interest_rate <= 100))`. 4 dp, excess precision rounded on write. No backfill — pre-existing rows are `NULL`. Nullable-clearable on update. |
+| `created_at` / `updated_at` | timestamptz | No | DEFAULT `now()`; `updated_at` also `onupdate now()`. |
+
+`ft_bond` has **no `user_id` column** — ownership is resolved by joining to `ft_tracking_item.user_id`. It has **no `status` column** — status is computed on every read from the dates versus the current Asia/Bangkok date, never stored. It likewise has **no `years` column** *(Phase 7 enhancement / ADR-026)* — `years` = `round_half_up((expired_date - start_date).days / 365.25)` as an integer (`NULL` if either date is missing; not clamped for inverted dates) is derived on every read and never persisted, the same treatment as `status`.
+
+Full schema, indexes, constraints, and entity relationships for all 8 tables: `18-financial-tracker/TECHNICAL.html` §3–4 (and §15–16 for the Phase 7 bond register and its ADR-026 enhancement).
+
+---
+
+## 7. Migration History
 
 All Alembic migrations in chronological order. Run `alembic upgrade head` to apply all pending migrations.
 
@@ -404,3 +440,48 @@ All Alembic migrations in chronological order. Run `alembic upgrade head` to app
 | `b7d4e2f19a3c` | 2026-06-13 | Add `weekly_reviews` and `weekly_review_items` tables (initial schema) |
 | `c9e3a1f82b5d` | 2026-06-13 | Refactor `weekly_review_items`: replace single-leg columns with separate buy/sell leg columns; add `week_open_price`/`week_close_price`; rename `item_type` values from `BUY`\|`SELL` to `TRADE` |
 | `d4f8c2e73b1a` | 2026-06-14 | Split single `feeling` column into `buy_feeling` + `sell_feeling` |
+
+---
+
+## 8. In-App Backup / Restore Coverage
+
+The admin **Settings → Backup** feature (`backend/app/api/v1/endpoints/backup.py`) backs up
+and restores **every table in `investment_db`** — both the `backend` tables in section 2 and
+the `tracking-backend`-owned `ft_*` tables in section 6, which share this one physical
+database. There is **no hard-coded table list**: the table set and a foreign-key-safe insert
+order are discovered from the live PostgreSQL catalogue (`pg_class`, `pg_constraint`) on
+every call via a deterministic Kahn topological sort, so a table added by any future
+migration in either service is covered automatically.
+
+Full design (file format v2.0, restore transaction/rollback model, the
+`session_replication_role` superuser requirement, advisory locking, configuration) is in
+`19-backup-restore/TECHNICAL.html`. Endpoint contract and error catalogue:
+`02-infrastructure/API-BACKUP.html`. Operations: `19-backup-restore/RUNBOOK.html`.
+
+### 8.1 Covered tables
+
+At the ship date (2026-09-01), `GET /api/v1/backup/tables` reported **28 covered tables**
+plus the 2 excluded schema-version tables. 27 of the covered tables map to current ORM
+models across the two services; discovery also captures any additional live table. The
+always-current list is the response of `GET /api/v1/backup/tables`.
+
+| Owner service | Covered tables (backed up and restorable) |
+|---|---|
+| `backend` (19 model tables) | `users`, `action_plans`, `purchase_plan_items`, `portfolio_plan_items`, `portfolios`, `holdings`, `investment_transactions`, `portfolio_cash_transactions`, `portfolio_positions_db`, `symbol_notes`, `dr_mappings`, `daily_performance`, `user_scan_configs`, `user_symbol_lists`, `weekly_scans`, `weekly_scan_items`, `pe_scan_results`, `weekly_reviews`, `weekly_review_items` |
+| `tracking-backend` (8 `ft_*` tables) | `ft_tracking_set`, `ft_category`, `ft_sub_category`, `ft_tracking_item`, `ft_initial_investment_entry`, `ft_update_tracking_list`, `ft_update_tracking_list_balance`, `ft_bond` |
+
+### 8.2 Excluded tables
+
+| Table | Owner | Why excluded |
+|---|---|---|
+| `alembic_version` | `backend` | Schema-version bookkeeping owned by the Alembic migration chain. Captured in the backup file under `schema_versions` for reference, but **never written by a restore** — a data restore must not roll a schema forward or backward. File-vs-live drift is reported as `schema_version_drift`. Also rejected by the PSV per-table endpoints (`400 urn:backup:error:schema-version-table`). |
+| `ft_alembic_version` | `tracking-backend` | Same as above, for the independent `tracking-backend` Alembic chain. |
+
+### 8.3 Cross-service access requirement
+
+The backup code runs inside the `backend` service but reads and writes the `ft_*` tables
+directly. This works only because both services connect as the same PostgreSQL superuser in
+this deployment. If the roles are split, the `backend` role must keep
+`SELECT`/`INSERT`/`TRUNCATE`/`TRIGGER` on the `ft_*` tables **and** be superuser-capable
+(restore issues `SET session_replication_role = replica`), or restore fails with
+`500 urn:backup:error:insufficient-privilege`.

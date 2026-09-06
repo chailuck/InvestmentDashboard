@@ -32,7 +32,9 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Functional Specification</h1>
 
-<p><strong>Version:</strong> 3.7 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 — Phase 5 (ADR-018) adds an optional Note on each Initial Investment Ledger entry, a per-item "Profit vs Original" panel, and an "Original Investment vs Profit" section on the Dashboard; Phase 6 (ADR-019) adds the read-only "Analysis" view — see §14) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-30 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code>, <code>/tracking/dashboard</code>, <code>/tracking/analysis</code></p>
+<p><strong>Version:</strong> 3.9 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + Phase 7 — Phase 5 (ADR-018) adds an optional Note on each Initial Investment Ledger entry, a per-item "Profit vs Original" panel, and an "Original Investment vs Profit" section on the Dashboard; Phase 6 (ADR-019) adds the read-only "Analysis" view — see §14; Phase 7 (ADR-020–ADR-025) adds the <code>BOND</code> tracking-item type and its standalone bond register with a computed 4-state status (§6.2, §15), plus optional <code>CODE</code> &amp; <code>NAME</code> fields on each Initial Investment Ledger entry (§7.1); Phase 7 enhancement (ADR-026) adds an optional per-bond <code>INTEREST RATE</code> field, a computed <code>YEARS</code> term-length field, and client-side column sorting on the bonds table — see §16) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-09-02 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code>, <code>/tracking/dashboard</code>, <code>/tracking/analysis</code></p>
+
+<!-- Changelog: 3.9 (2026-09-02) — ADR-026: optional per-bond INTEREST RATE (stored, display-only), computed YEARS term-length field (never stored, like status), and client-side sortable columns on the bonds table (§16). 3.8 (2026-08-31) — Phase 7 BOND type + bond register + ledger CODE/NAME. -->
 
 <hr>
 
@@ -48,7 +50,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 
 <p>A user can maintain multiple independent Tracking Sets — for example, a personal set and a family set — each with its own category tree. A tracking set belongs to exactly one user; it is never shared or visible to other users.</p>
 
-<div class="callout">This document covers <strong>Phase 1</strong> (creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger — §3–§9), <strong>Phase 2</strong> (the "Updates" sub-menu — periodic balance snapshots against a tracking set's hierarchy — §11), <strong>Phase 3</strong> (the "Dashboard" sub-menu — a read-only quarterly/yearly balance-grid rollup built from the data captured by Updates — §12), and <strong>Phase 4</strong> (the "Email Dashboard" button on the Dashboard page, emailing the user their currently-displayed dashboard plus a full backup export — §13). It also covers <strong>Phase 5</strong> (ADR-018 — the optional per-entry Note on the Initial Investment Ledger (§7.1), the per-item "Profit vs Original" panel (§7.4), and the Dashboard's "Original Investment vs Profit" section (§12.13)).</div>
+<div class="callout">This document covers <strong>Phase 1</strong> (creating and organising Tracking Sets, Categories, Sub-categories, Tracking Items, and the Initial Investment Ledger — §3–§9), <strong>Phase 2</strong> (the "Updates" sub-menu — periodic balance snapshots against a tracking set's hierarchy — §11), <strong>Phase 3</strong> (the "Dashboard" sub-menu — a read-only quarterly/yearly balance-grid rollup built from the data captured by Updates — §12), and <strong>Phase 4</strong> (the "Email Dashboard" button on the Dashboard page, emailing the user their currently-displayed dashboard plus a full backup export — §13). It also covers <strong>Phase 5</strong> (ADR-018 — the optional per-entry Note on the Initial Investment Ledger (§7.1), the per-item "Profit vs Original" panel (§7.4), and the Dashboard's "Original Investment vs Profit" section (§12.13)). It also covers <strong>Phase 7</strong> (ADR-020–ADR-025 — the <code>BOND</code> tracking-item type and its standalone bond register with a computed 4-state status (§15), and the optional per-entry <code>CODE</code> / <code>NAME</code> labels on the Initial Investment Ledger (§7.1)).</div>
 
 <hr>
 
@@ -111,7 +113,7 @@ Liabilities
   <thead><tr><th>Field</th><th>Description</th></tr></thead>
   <tbody>
     <tr><td>Name</td><td>Required, free text</td></tr>
-    <tr><td>Type</td><td>One of: Bank account, Property, Investment Account, TaxSaving, Materials, Insurance. Fixed list — see §6.2.</td></tr>
+    <tr><td>Type</td><td>One of: Bank account, Property, Investment Account, TaxSaving, Materials, Insurance, BOND. Fixed list — see §6.2. <em>(Phase 7)</em> Saving an item as type BOND enables the bond register on its detail page — see §15.</td></tr>
     <tr><td>Initial Investment Tracking</td><td>Yes / No toggle. When Yes, the Initial Investment Ledger becomes available on the item's detail page (§7). Default: No.</td></tr>
     <tr><td>Exclusive</td><td>Yes / No toggle. Default: No. See §8 — has no visible effect in this phase.</td></tr>
     <tr><td>Order</td><td>Numeric display order among sibling items; changed via the up/down arrow buttons on the Category page, not on the item detail page.</td></tr>
@@ -122,7 +124,7 @@ Liabilities
 </table>
 
 <h3>6.2 Fixed type list</h3>
-<p>The six item types are a closed list — an item cannot be given a type outside this set, and the constraint is enforced consistently whether the request comes from the UI, a script, or a direct API call:</p>
+<p>The seven item types are a closed list — an item cannot be given a type outside this set, and the constraint is enforced consistently whether the request comes from the UI, a script, or a direct API call:</p>
 <ul>
   <li>Bank account</li>
   <li>Property</li>
@@ -130,6 +132,7 @@ Liabilities
   <li>TaxSaving</li>
   <li>Materials</li>
   <li>Insurance</li>
+  <li>BOND <em>(Phase 7 — ADR-020–ADR-025)</em> — an item of this type gains a "Bonds" register on its detail page (§15). In every other respect it behaves like any other tracking item.</li>
 </ul>
 
 <h3>6.3 Item detail page</h3>
@@ -150,14 +153,15 @@ Liabilities
   <li>A negative amount records a decrease (e.g. a partial withdrawal).</li>
   <li>An amount of exactly zero is rejected — a zero-value entry carries no meaning in a ledger.</li>
   <li>The <strong>Note</strong> <em>(Phase 5)</em> is optional free text, up to 500 characters, for recording why the entry was made (e.g. "annual top-up", "sold half position"). Thai text is accepted and stored exactly as typed. A note left blank — or one containing only spaces — is stored as "no note" rather than an empty string. A note longer than 500 characters is rejected.</li>
+  <li>The <strong>CODE</strong> and <strong>NAME</strong> <em>(Phase 7)</em> are two independent optional free-text fields, each up to 100 characters, for tagging the entry with a short code and a descriptive name (for example a bond's CODE and its name, when the ledger is kept alongside the bond register — §15). Each is stored exactly as typed, Thai text included; a value left blank — or containing only spaces — is stored as "not set" rather than an empty string. A value longer than 100 characters is rejected. The two fields are independent of each other and of the Note.</li>
 </ul>
-<p><em>(Phase 5)</em> The ledger table shows a <strong>Note</strong> column alongside Date, Amount, and Running Total. Entries created before this feature simply have no note. The note is for the user's own reference on this page only — it is never included in the Email Dashboard export's HTML body (§13).</p>
+<p><em>(Phase 5)</em> The ledger table shows a <strong>Note</strong> column alongside Date, Amount, and Running Total. Entries created before this feature simply have no note. The note is for the user's own reference on this page only — it is never included in the Email Dashboard export's HTML body (§13). <em>(Phase 7)</em> Two further optional columns, <strong>CODE</strong> and <strong>NAME</strong>, appear alongside it; a cell with no value shows "—". Like the Note, CODE and NAME are shown on this page only and are never included in the Email Dashboard export.</p>
 
 <h3>7.2 Running total</h3>
 <p>The ledger table lists every entry in date order together with a <strong>Running Total</strong> column — the cumulative sum of all entries up to and including that row — plus a headline "Current total" figure above the table (the sum of all entries).</p>
 
 <h3>7.3 Editing and deleting entries</h3>
-<p>Any entry can be edited (date, amount, and/or note) or deleted from the ledger table. Editing recomputes the running total for every row from that point forward the next time the ledger is loaded. Clearing the note field on an existing entry — or replacing it with blank/whitespace — removes the note.</p>
+<p>Any entry can be edited (date, amount, note, and/or the <em>(Phase 7)</em> CODE / NAME labels) or deleted from the ledger table. Editing recomputes the running total for every row from that point forward the next time the ledger is loaded. Clearing the note, CODE, or NAME field on an existing entry — or replacing it with blank/whitespace — removes that value; leaving a field out of an edit entirely leaves it unchanged.</p>
 <div class="callout warn"><em>(Phase 5)</em> Entry edits are <strong>last-write-wins</strong>. There is no optimistic-locking or conflict check: if the same entry is edited from two places at once, the later save silently overwrites the earlier one. This is an accepted trade-off for a single-user personal tool.</div>
 
 <div class="callout warn">The ledger section — and the ability to add or view entries — is only available once <strong>Initial Investment Tracking</strong> has actually been saved as Yes on the item. Toggling the switch on the item's edit form does not reveal the ledger until "Save Changes" is clicked; this prevents the page from querying a ledger that the backend would still reject.</div>
@@ -232,6 +236,13 @@ Liabilities
     <tr><td>Profit vs Original panel visibility (Phase 5)</td><td>Item-detail panel appears only once the item has at least one ledger entry; collapses to a "no snapshot yet" line when there is no current balance (§7.4)</td></tr>
     <tr><td>Dashboard "Original Investment vs Profit" scope (Phase 5)</td><td>In scope = non-Exclusive items with Initial Investment Tracking = Yes. Covered = in-scope AND at least one entry AND a current balance exists (does not require positive cost basis). Set-level totals aggregate covered items only; untracked and Exclusive items never affect totals (§12.13)</td></tr>
     <tr><td>Profit-vs-original recompute (Phase 5)</td><td>All profit figures recomputed at read time on every page load; nothing cached or stored (§7.4, §12.13)</td></tr>
+    <tr><td>Item type (Phase 7)</td><td>Fixed list is now <strong>7</strong> values — <code>BOND</code> added; enforced identically whether the request comes from the UI, a script, or the API (§6.2, §15.1)</td></tr>
+    <tr><td>Bond register availability (Phase 7)</td><td>The "Bonds" section appears only on an item whose <em>saved</em> type is <code>BOND</code>; creating or listing bonds against an item of any other type is rejected (§15.2, §15.4)</td></tr>
+    <tr><td>Bond status (Phase 7)</td><td>Computed on every read from START/EXPIRED vs "today" in Asia/Bangkok; never stored. <code>Unknown</code> if either date is missing; <code>Pre-order</code> if today&nbsp;&lt;&nbsp;START; <code>Active</code> if START&nbsp;≤&nbsp;today&nbsp;≤&nbsp;EXPIRED (both bounds inclusive); <code>Expire</code> if today&nbsp;&gt;&nbsp;EXPIRED. Spelled exactly <code>Pre-order</code> / <code>Active</code> / <code>Expire</code> / <code>Unknown</code>; <code>Unknown</code> renders in the UI as "—" (§15.3)</td></tr>
+    <tr><td>Bond amount (Phase 7)</td><td>Required; must be ≥ 0 (zero allowed); excess precision beyond 4 decimal places is rounded, not rejected (§15.2)</td></tr>
+    <tr><td>Bond CODE uniqueness (Phase 7)</td><td>None this iteration — two bonds under the same item may share a CODE (§15.2, ADR-022)</td></tr>
+    <tr><td>Bond register integration (Phase 7)</td><td>Standalone — bonds do not affect the Dashboard balance grid, Updates snapshots, the original-investment rollup, the Analysis view, the Email/HTML export, or the Property/Non-Property split (§15.5, ADR-024)</td></tr>
+    <tr><td>Ledger entry CODE / NAME (Phase 7)</td><td>Two optional free-text fields, ≤ 100 chars each; Thai stored verbatim; blank/whitespace stored as not-set; over-length rejected; presence-aware on edit exactly like Note. Shown on the ledger page only — never in the Email export (§7.1)</td></tr>
   </tbody>
 </table>
 
@@ -488,7 +499,7 @@ Liabilities
 </ul>
 
 <h3>14.2 The Scoped Dashboard section</h3>
-<p>Below the KPI tiles and above the charts, a collapsible <strong>Scoped Dashboard</strong> card shows the Dashboard's tabular readout — per-year quarterly grid or a yearly "as-of" grid, with a scope-total row, sub-category subtotals, item rows and per-period deltas — for just the drilled category, sub-category or item.</p>
+<p>At the bottom of the page, below all four charts and the comparison panel, a collapsible <strong>Scoped Dashboard</strong> card shows the Dashboard's tabular readout — per-year quarterly grid or a yearly "as-of" grid, with a scope-total row, sub-category subtotals, item rows and per-period deltas — for just the drilled category, sub-category or item.</p>
 <ul>
   <li>It renders only once the user has drilled in (depth ≥ 1). At the set level it stays collapsed with a hint; if expanded there it shows only a 3-row Grand Total / Property / Non-Property strip.</li>
   <li>Under the <strong>Grand Total</strong> lens the scope-total and subtotal rows use the server's own subtotal figures verbatim. Under <strong>Property</strong> / <strong>No Property</strong> they are re-derived from only the qualifying items, because the server subtotals are not type-filtered.</li>
@@ -507,6 +518,117 @@ Liabilities
 </ul>
 
 <div class="callout tip">Every figure on the Analysis view is derived on the fly from the recorded Update Tracking Lists — nothing is cached or stored. If a number looks wrong, the fix is made on the Updates page (§11.3); the Analysis view reflects it on the next load.</div>
+
+<hr>
+
+<h2>15. Bond register — Phase 7 (ADR-020–ADR-025)</h2>
+<p>Phase 7 adds a <strong>BOND</strong> tracking-item type (§6.2) and, for any item saved with that type, a <strong>Bonds</strong> register on the item's detail page — a simple table of the individual bond holdings recorded under that item, each carrying a computed lifecycle <strong>status</strong>. Phase 7 also adds two optional free-text fields, <strong>CODE</strong> and <strong>NAME</strong>, to every Initial Investment Ledger entry (§7.1). The bond register is deliberately <strong>standalone</strong>: bonds feed no other view in the Financial Tracker (§15.5, ADR-024).</p>
+
+<h3>15.1 The BOND item type</h3>
+<p><code>BOND</code> is the 7th value in the fixed Tracking Item <strong>Type</strong> list (§6.2). It behaves exactly like any other type for creating, editing, ordering, and deleting an item. Its only special effect is that the <strong>Bonds</strong> section described below is shown on the detail page of an item whose <em>persisted</em> type is <code>BOND</code> — switching the Type field to <code>BOND</code> in the edit form does not reveal the section until "Save Changes" is clicked, the same persisted-not-pending rule the Initial Investment Ledger uses (§7.3).</p>
+<p>Where the rest of the Financial Tracker splits items into Property vs Non-Property (§12.4, §12.7, §14.1), the split matches the exact type <code>Property</code> only, so a <code>BOND</code> item always falls on the Non-Property side with no special handling.</p>
+
+<h3>15.2 The Bonds section</h3>
+<p>The Bonds section shows one row per registered bond, with these columns:</p>
+<table>
+  <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>CODE</td><td>Required short identifier for the bond (for example an ISIN or the user's own label). Free text, up to 100 characters, stored exactly as typed. <strong>Not</strong> required to be unique — two bonds under the same item may share a CODE (ADR-022).</td></tr>
+    <tr><td>ISSUER</td><td>Optional free text, up to 200 characters. Blank or whitespace-only is stored as "no issuer".</td></tr>
+    <tr><td>START</td><td>Optional start / issue date (<code>YYYY-MM-DD</code>).</td></tr>
+    <tr><td>EXPIRED</td><td>Optional maturity / expiry date (<code>YYYY-MM-DD</code>).</td></tr>
+    <tr><td>AMOUNT</td><td>Required. The bond's face / invested amount. Must be zero or a positive number; held to 4 decimal places (extra precision is rounded, not rejected).</td></tr>
+    <tr><td>STATUS</td><td>Computed — never entered and never stored (see §15.3). Shown as a coloured badge; the badge text is the accessible label.</td></tr>
+  </tbody>
+</table>
+<p>Each row can be edited or deleted. Adding a bond needs at least a CODE and an AMOUNT; ISSUER, START, and EXPIRED may be left blank. On edit, a field left out of the change is kept as-is; sending a field empty (or blank/whitespace) clears ISSUER, START, or EXPIRED — CODE and AMOUNT can never be cleared, only changed. Rows are listed by START date (earliest first, bonds with no START date last), then by the order they were added.</p>
+<div class="callout warn">The Bonds section is only available once the item's Type has actually been <strong>saved</strong> as <code>BOND</code>. Adding or listing bonds against an item of any other type is rejected (§15.4).</div>
+
+<h3>15.3 Computed status</h3>
+<p>Every bond has a lifecycle <strong>status</strong> derived on the fly from its START and EXPIRED dates versus "today", where <strong>"today" is the current calendar date in the Asia/Bangkok time zone</strong> (not the server's local time or UTC). The status is <strong>never stored</strong> — it is recomputed on every read, so a bond moves from one status to the next automatically at Bangkok midnight with no edit or refresh needed. Every bond in a single list is evaluated against one "today" captured once for that response, so a list never mixes reference dates.</p>
+<table>
+  <thead><tr><th>Condition (today = current Asia/Bangkok date)</th><th>Status</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>START or EXPIRED is missing</td><td><code>Unknown</code></td><td>Not enough information to place the bond in its lifecycle. Rendered in the UI as an em dash "—".</td></tr>
+    <tr><td>today &lt; START</td><td><code>Pre-order</code></td><td>The bond is registered but its term has not started yet.</td></tr>
+    <tr><td>START ≤ today ≤ EXPIRED&nbsp; (both bounds inclusive)</td><td><code>Active</code></td><td>The bond is within its term.</td></tr>
+    <tr><td>today &gt; EXPIRED</td><td><code>Expire</code></td><td>The bond has matured / passed its expiry date.</td></tr>
+  </tbody>
+</table>
+<p>The four status values are spelled exactly <code>Pre-order</code>, <code>Active</code>, <code>Expire</code>, <code>Unknown</code>.</p>
+<div class="callout">Boundary and edge cases:
+<ul>
+  <li><strong>On the START date</strong> — <code>Active</code> (the lower bound is inclusive), never <code>Pre-order</code>.</li>
+  <li><strong>On the EXPIRED date</strong> — <code>Active</code> (the upper bound is inclusive), never <code>Expire</code>.</li>
+  <li><strong>Only one date set</strong> — <code>Unknown</code>. A bond with a START but no EXPIRED, or an EXPIRED but no START, is <code>Unknown</code>, not <code>Pre-order</code> or <code>Active</code>.</li>
+  <li><strong>Inverted dates (START after EXPIRED)</strong> — never rejected. The checks run in order (<code>today &lt; START</code> first, then <code>today &gt; EXPIRED</code>), so such a bond reads <code>Pre-order</code> until today reaches START and <code>Expire</code> thereafter; it is never <code>Active</code>. This is defined, deterministic behaviour, not an error.</li>
+</ul>
+</div>
+<div class="callout tip">While you are still entering a bond's dates, the form shows a live status preview computed in the browser. That preview is only a convenience mirror — the status shown on a saved row is the one the server computes, which is always the canonical value (ADR-020).</div>
+
+<h3>15.4 Ownership and access</h3>
+<p>Bonds are owned through their parent tracking item; a bond has no owner field of its own. A bond can never outlive its item — deleting the tracking item (or any category / sub-category above it) deletes its bonds too. A request for a bond, or for an item's bonds, that belongs to another user is rejected exactly like any other not-found resource (§9), never confirming whether it exists. Registering or listing bonds under an item whose type is not <code>BOND</code> is rejected as a bad request (ADR-021).</p>
+
+<h3>15.5 What the bond register does NOT touch (ADR-024)</h3>
+<p>The bond register is a standalone list. It is explicitly <strong>not</strong> integrated with:</p>
+<ul>
+  <li>the Dashboard balance grid and its quarterly / yearly rollups (§12);</li>
+  <li>the Update Tracking List snapshots (§11);</li>
+  <li>the "Original Investment vs Profit" rollup (§7.4, §12.13);</li>
+  <li>the Analysis view (§14);</li>
+  <li>the Email Dashboard HTML body and the JSON backup attachment (§13);</li>
+  <li>the Property vs Non-Property split — a <code>BOND</code> item simply falls on the Non-Property side, because that split matches the exact type <code>Property</code> only (no code change was needed for this).</li>
+</ul>
+<p>Surfacing a single "total active bond value" figure somewhere in the Financial Tracker is noted as possible <strong>future</strong> work; it is not built in this phase.</p>
+
+<hr>
+
+<h2>16. Bond register enhancements — interest rate, term years, column sorting (ADR-026)</h2>
+<p>This is an additive enhancement to the Phase 7 bond register (§15). It adds two more columns to the Bonds table — an optional stored <strong>INTEREST RATE</strong> and a computed <strong>YEARS</strong> term length — and makes every column of that table sortable by clicking its header. Nothing here changes any figure outside the bond register: like the rest of §15, the register stays a standalone informational list (§15.5, ADR-024). Interest rate does <strong>not</strong> feed any rollup, balance grid, export, or analysis figure.</p>
+
+<h3>16.1 INTEREST RATE — optional stored field</h3>
+<p>A new optional field on the bond add/edit form and a new column in the Bonds table.</p>
+<ul>
+  <li><strong>Entered as a percent.</strong> The user types the annual coupon / interest rate as a percentage number — <code>3.25</code> means 3.25% per annum, <code>3</code> means 3%. It is not entered as a fraction.</li>
+  <li><strong>Optional and nullable.</strong> Leaving it blank stores no value; the column then shows an em dash "—".</li>
+  <li><strong>Allowed range 0–100 inclusive.</strong> A value below 0 or above 100 is rejected (HTTP 422). Exactly <code>0</code> and exactly <code>100</code> are both valid; <code>0</code> displays as <code>0%</code>.</li>
+  <li><strong>Precision.</strong> Stored to 4 decimal places (the same numeric shape as AMOUNT); excess precision is rounded, not rejected.</li>
+  <li><strong>Display.</strong> Rendered with natural precision followed by a percent sign — a whole <code>3</code> shows as <code>3%</code> (not <code>3.00%</code>), <code>3.25</code> shows as <code>3.25%</code>, <code>0</code> shows as <code>0%</code>, and a null value shows as "—".</li>
+  <li><strong>Clearing on edit.</strong> Like ISSUER / START / EXPIRED, sending the field empty (or omitting it and explicitly clearing it in the form) removes the stored value; leaving it out of an edit entirely leaves it unchanged.</li>
+  <li><strong>Display-only.</strong> INTEREST RATE is informational. It is never summed, averaged, or used to project income anywhere; it does not appear in the Dashboard, Updates, the Original-Investment rollup, the Analysis view, or the Email/HTML export (§15.5).</li>
+</ul>
+
+<h3>16.2 YEARS — computed term length</h3>
+<p>A new <strong>computed, never-stored</strong> column, derived the same way the bond <code>status</code> is (§15.3): the server recomputes it on every bond read (list, GET, POST response, PUT response) and it is the canonical value. The add/edit form shows a preview-only mirror computed in the browser so the user sees a live value while typing the dates.</p>
+<ul>
+  <li><strong>Formula.</strong> <code>YEARS = round_half_up( days_between(START, EXPIRED) / 365.25 )</code>, rounded to a whole integer. The rounding is "round half up" — ties go away from zero — deliberately <em>not</em> the banker's-rounding behaviour of a naive round-to-even.</li>
+  <li><strong>Fixed divisor.</strong> The divisor is the nominal year length <code>365.25</code>. The calculation ignores the actual leap-day composition of the specific span — a documented simplification, accepted because YEARS is an at-a-glance term length, not an exact day count.</li>
+  <li><strong>Missing dates → null.</strong> If either START or EXPIRED is absent, YEARS is <code>null</code> and renders as "—" (the same "not enough information" treatment as <code>status = Unknown</code>). A YEARS result of <code>0</code> renders as <code>0</code>, not "—".</li>
+  <li><strong>Inverted dates (EXPIRED before START).</strong> Not rejected and not clamped. The day count goes negative and passes straight through, so YEARS can be <code>0</code> or a negative integer. This is deterministic and consistent with how <code>status</code> tolerates inverted dates (§15.3).</li>
+</ul>
+<table>
+  <thead><tr><th>START</th><th>EXPIRED</th><th>Days</th><th>÷ 365.25</th><th>YEARS (shown)</th></tr></thead>
+  <tbody>
+    <tr><td>2026-01-01</td><td>2031-01-01</td><td>1826</td><td>4.9993…</td><td>5</td></tr>
+    <tr><td>2026-01-01</td><td>2026-07-03</td><td>183</td><td>0.5010…</td><td>1 (0.5 rounds away from zero)</td></tr>
+    <tr><td>2026-01-01</td><td>2026-07-02</td><td>182</td><td>0.4983…</td><td>0</td></tr>
+    <tr><td>2026-01-01</td><td>(none)</td><td>—</td><td>—</td><td>— (null)</td></tr>
+    <tr><td>2031-01-01</td><td>2026-01-01</td><td>-1826</td><td>-4.9993…</td><td>-5 (inverted, no clamp)</td></tr>
+  </tbody>
+</table>
+
+<h3>16.3 Sortable bonds table</h3>
+<p>The Bonds table is now client-side sortable. All <strong>8</strong> data columns sort by clicking the column header: <strong>CODE, ISSUER, START DATE, EXPIRED DATE, AMOUNT, STATUS, INTEREST RATE, YEARS</strong>. The Actions column is not sortable.</p>
+<ul>
+  <li><strong>Click behaviour.</strong> The first click on a header sorts ascending by that column. Clicking the header that is already the active sort toggles it to descending. Clicking a different header switches the sort to that column, ascending.</li>
+  <li><strong>Default sort on load.</strong> EXPIRED DATE ascending.</li>
+  <li><strong>Nulls always sort last.</strong> Empty ISSUER, START DATE, EXPIRED DATE, INTEREST RATE, or YEARS values sort to the bottom in <em>both</em> ascending and descending directions — they never lead a descending sort.</li>
+  <li><strong>STATUS sorts by lifecycle order</strong>, not alphabetically: <code>Pre-order</code> &lt; <code>Active</code> &lt; <code>Expire</code> &lt; <code>Unknown</code>.</li>
+  <li><strong>Client-side only.</strong> Sorting reorders the already-fetched list in the browser. There is no backend sort parameter; the server response order is unchanged (still START DATE ascending with nulls last, then creation time — §15.2) and is simply the initial order before the client applies its own sort.</li>
+  <li><strong>Accessibility.</strong> Each sortable header is a real <code>&lt;button&gt;</code> inside its <code>&lt;th&gt;</code>, and the <code>&lt;th&gt;</code> carries <code>aria-sort="ascending"</code>, <code>"descending"</code>, or <code>"none"</code> to reflect the current state to assistive technology.</li>
+</ul>
+
+<div class="callout tip">Both new columns are consistent with the rest of the bond register: INTEREST RATE is stored (like AMOUNT), YEARS is recomputed on every read from the dates (like STATUS), and neither affects any total anywhere else in the Financial Tracker.</div>
 
 </body>
 </html>

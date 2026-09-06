@@ -37,7 +37,8 @@
             { "id": "api-portfolio-db",      "label": "Portfolio DB",      "file": "02-infrastructure/API-PORTFOLIO-DB.html"      },
             { "id": "api-objective",         "label": "Objective Tab",     "file": "02-infrastructure/API-OBJECTIVE.html"         },
             { "id": "api-dr-mappings",       "label": "DR Mappings",       "file": "02-infrastructure/API-DR-MAPPINGS.html"       },
-            { "id": "api-financial-tracker", "label": "Financial Tracker", "file": "02-infrastructure/API-FINANCIAL-TRACKER.html" }
+            { "id": "api-financial-tracker", "label": "Financial Tracker", "file": "02-infrastructure/API-FINANCIAL-TRACKER.html" },
+            { "id": "api-backup",           "label": "Backup & Restore",  "file": "02-infrastructure/API-BACKUP.html"           }
           ]
         }
       ]
@@ -168,6 +169,16 @@
       "label": "Deployment",
       "children": [
         { "id": "deployment-guide", "label": "Deployment Guide", "file": "15-deployment/DEPLOYMENT.html" }
+      ]
+    },
+    {
+      "id": "backup-restore",
+      "label": "Backup & Restore",
+      "children": [
+        { "id": "backup-functional", "label": "Functional Spec",  "file": "19-backup-restore/FUNCTIONAL.html" },
+        { "id": "backup-technical",  "label": "Technical Design", "file": "19-backup-restore/TECHNICAL.html"  },
+        { "id": "backup-runbook",    "label": "Operations Runbook", "file": "19-backup-restore/RUNBOOK.html"  },
+        { "id": "backup-api",        "label": "API Reference",    "file": "02-infrastructure/API-BACKUP.html" }
       ]
     }
   ]

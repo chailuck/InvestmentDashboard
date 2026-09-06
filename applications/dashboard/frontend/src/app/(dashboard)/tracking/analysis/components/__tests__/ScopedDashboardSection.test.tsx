@@ -12,10 +12,10 @@ function renderAt(vsPatch: Partial<ViewState>) {
   const scoped = buildScopedGrid(makeGrid(), viewState)
   const onChange = vi.fn()
   const onDrillItem = vi.fn()
-  render(
+  const utils = render(
     <ScopedDashboardSection scoped={scoped} viewState={viewState} subCaption="cap" onChange={onChange} onDrillItem={onDrillItem} />,
   )
-  return { onChange, onDrillItem }
+  return { onChange, onDrillItem, ...utils }
 }
 
 describe('ScopedDashboardSection — per drill depth', () => {
@@ -71,6 +71,28 @@ describe('ScopedDashboardSection — per drill depth', () => {
     renderAt({ drill: { lens: 'grandTotal', categoryId: 'c2', subCategoryId: 's3', itemId: 'i5' } })
     expect(screen.getByText(/This item is exclusive/i)).toBeInTheDocument()
     expect(screen.getByText('Net change')).toBeInTheDocument()
+  })
+
+  it('scoped grid applies the dashboard gain/loss colour coding to delta cells', () => {
+    // depth 1 / c1: the "Total: Assets" row moves +฿10 from 2023 Q4 → 2024 Q1,
+    // so at least one delta cell carries the dashboard `text-gain` class.
+    const { container } = renderAt({ drill: { lens: 'grandTotal', categoryId: 'c1' } })
+    const gainCells = [...container.querySelectorAll('.text-gain')]
+    expect(gainCells.length).toBeGreaterThan(0)
+    // colour is never the only signal — every coloured delta also shows an explicit sign
+    expect(gainCells.some(el => (el.textContent ?? '').includes('+'))).toBe(true)
+    // no loss cells in this fixture scope, but the loss class must be wired the same way
+    container.querySelectorAll('.text-loss').forEach(el => {
+      expect((el.textContent ?? '').includes('-')).toBe(true)
+    })
+  })
+
+  it('scoped grid renders blank cells with the dashboard em-dash treatment', () => {
+    const { container } = renderAt({ drill: { lens: 'grandTotal', categoryId: 'c1' } })
+    const blanks = [...container.querySelectorAll('span.text-ink-disabled')]
+    expect(blanks.length).toBeGreaterThan(0)
+    // U+2014 EM DASH, distinct from the charts' en-dash NO_DATA_DASH
+    expect(blanks.every(el => el.textContent === '—')).toBe(true)
   })
 
   it('an item row click drills the whole view to that item (SD-OQ-6)', async () => {

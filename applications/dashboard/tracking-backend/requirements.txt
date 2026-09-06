@@ -40,6 +40,16 @@ python-dotenv==1.0.1
 structlog==24.4.0
 
 # ──────────────────────────────────────────────
+# Time zones
+# app/services/bond_status.py resolves ZoneInfo("Asia/Bangkok") for the BOND
+# register's read-time status. Linux images usually have the system IANA tz
+# database, but this pins it so status derivation is deterministic on every
+# platform (Windows has no system zoneinfo). The service falls back to a
+# fixed UTC+7 offset if this is somehow missing.
+# ──────────────────────────────────────────────
+tzdata==2024.1
+
+# ──────────────────────────────────────────────
 # Testing
 # ──────────────────────────────────────────────
 pytest==8.3.2

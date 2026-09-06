@@ -4,7 +4,7 @@ import {
   TRACKING_ITEM_TYPES,
   type TrackingSet, type Category, type SubCategory, type TrackingItem,
   type Entry, type RunningTotal, type DashboardBalanceGridOut, type TrackingSetExport,
-  type OriginalInvestmentRollup,
+  type OriginalInvestmentRollup, type Bond,
 } from '@/services/tracking'
 import { apiClient, extractApiError } from '@/services/api'
 
@@ -41,9 +41,9 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('TRACKING_ITEM_TYPES', () => {
-  it('contains exactly the 6 required enum values', () => {
+  it('contains exactly the 7 required enum values, with BOND appended last', () => {
     expect(TRACKING_ITEM_TYPES).toEqual([
-      'Bank account', 'Property', 'Investment Account', 'TaxSaving', 'Materials', 'Insurance',
+      'Bank account', 'Property', 'Investment Account', 'TaxSaving', 'Materials', 'Insurance', 'BOND',
     ])
   })
 })
@@ -245,7 +245,7 @@ describe('trackingService — Tracking Items', () => {
 // ---------------------------------------------------------------------------
 
 describe('trackingService — Ledger entries', () => {
-  const ENTRY: Entry = { id: 'e1', trackingItemId: 'i1', amount: 1000, entryDate: '2026-01-01', note: null, createdAt: '', updatedAt: '' }
+  const ENTRY: Entry = { id: 'e1', trackingItemId: 'i1', amount: 1000, entryDate: '2026-01-01', note: null, code: null, name: null, createdAt: '', updatedAt: '' }
 
   it('listEntries calls GET /tracking/items/{itemId}/entries', async () => {
     mockedGet.mockResolvedValueOnce({ data: [ENTRY] })
@@ -293,7 +293,7 @@ describe('trackingService — Ledger entries', () => {
       itemId: 'i1', currentTotal: 500,
       entries: [
         { ...ENTRY, runningTotal: 1000 },
-        { id: 'e2', trackingItemId: 'i1', amount: -500, entryDate: '2026-02-01', note: 'partial sell', createdAt: '', updatedAt: '', runningTotal: 500 },
+        { id: 'e2', trackingItemId: 'i1', amount: -500, entryDate: '2026-02-01', note: 'partial sell', code: null, name: null, createdAt: '', updatedAt: '', runningTotal: 500 },
       ],
       profitVsOriginal: {
         netOriginalInvestment: 500, currentValue: 620,
@@ -357,6 +357,140 @@ describe('trackingService — Ledger entries', () => {
     expect(r.profitVsOriginal.profit).toBeNull()
     expect(r.profitVsOriginal.profitPercent).toBeNull()
     expect(r.currentTotal).toBe(0)
+  })
+
+  it('getRunningTotal surfaces per-entry code/name (verbatim when present, null when absent)', async () => {
+    mockedGet.mockResolvedValueOnce({
+      data: {
+        itemId: 'i1', currentTotal: '1500',
+        entries: [
+          { id: 'e1', trackingItemId: 'i1', amount: '1000', entryDate: '2026-01-01', note: null, code: 'TH123', name: 'Gov Bond', createdAt: '', updatedAt: '', runningTotal: '1000' },
+          { id: 'e2', trackingItemId: 'i1', amount: '500', entryDate: '2026-02-01', note: null, createdAt: '', updatedAt: '', runningTotal: '1500' },
+        ],
+        profitVsOriginal: {
+          netOriginalInvestment: null, currentValue: null, currentValueSlot: null,
+          profit: null, profitPercent: null, isCovered: false,
+        },
+      },
+    })
+
+    const r = await trackingService.getRunningTotal('i1')
+
+    expect(r.entries[0].code).toBe('TH123')
+    expect(r.entries[0].name).toBe('Gov Bond')
+    expect(r.entries[1].code).toBeNull()
+    expect(r.entries[1].name).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Bond register
+// ---------------------------------------------------------------------------
+
+describe('trackingService — Bond register', () => {
+  const BOND_WIRE = {
+    id: 'b1', trackingItemId: 'i1', code: 'TH-GOV-2030', issuer: 'Kingdom of Thailand',
+    startDate: '2025-01-01', expiredDate: '2030-01-01', amount: '1000.0000',
+    status: 'Active', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+  }
+
+  it('listBonds calls GET /tracking/items/{itemId}/bonds and normalizes each row', async () => {
+    mockedGet.mockResolvedValueOnce({ data: [BOND_WIRE] })
+
+    const result = await trackingService.listBonds('i1')
+
+    expect(mockedGet).toHaveBeenCalledWith('/tracking/items/i1/bonds')
+    expect(result).toHaveLength(1)
+    expect(result[0].amount).toBe(1000)
+    expect(typeof result[0].amount).toBe('number')
+    expect(result[0].status).toBe('Active')
+  })
+
+  it('normalizeBond coerces the Decimal-as-string amount to a real number', async () => {
+    mockedGet.mockResolvedValueOnce({ data: { ...BOND_WIRE, amount: '1234.5678' } })
+
+    const result = await trackingService.getBond('b1')
+
+    expect(mockedGet).toHaveBeenCalledWith('/tracking/bonds/b1')
+    expect(result.amount).toBe(1234.5678)
+    expect(typeof result.amount).toBe('number')
+    expect(() => result.amount.toFixed(2)).not.toThrow()
+  })
+
+  it('normalizeBond passes every status value through verbatim', async () => {
+    for (const status of ['Pre-order', 'Active', 'Expire', 'Unknown'] as const) {
+      mockedGet.mockResolvedValueOnce({ data: { ...BOND_WIRE, status } })
+      const result = await trackingService.getBond('b1')
+      expect(result.status).toBe(status)
+    }
+  })
+
+  it('normalizeBond preserves null issuer / startDate / expiredDate', async () => {
+    mockedGet.mockResolvedValueOnce({
+      data: { ...BOND_WIRE, issuer: null, startDate: null, expiredDate: null },
+    })
+
+    const result = await trackingService.getBond('b1')
+
+    expect(result.issuer).toBeNull()
+    expect(result.startDate).toBeNull()
+    expect(result.expiredDate).toBeNull()
+  })
+
+  it('normalizeBond coerces interestRate (Decimal-as-string) and years, keeping 0 and null distinct', async () => {
+    mockedGet.mockResolvedValueOnce({ data: { ...BOND_WIRE, interestRate: '3.2500', years: 5 } })
+    const withValues = await trackingService.getBond('b1')
+    expect(withValues.interestRate).toBe(3.25)
+    expect(withValues.years).toBe(5)
+
+    mockedGet.mockResolvedValueOnce({ data: { ...BOND_WIRE, interestRate: '0.0000', years: 0 } })
+    const withZero = await trackingService.getBond('b1')
+    expect(withZero.interestRate).toBe(0)
+    expect(withZero.years).toBe(0)
+
+    mockedGet.mockResolvedValueOnce({ data: { ...BOND_WIRE } })
+    const absent = await trackingService.getBond('b1')
+    expect(absent.interestRate).toBeNull()
+    expect(absent.years).toBeNull()
+  })
+
+  it('createBond calls POST /tracking/items/{itemId}/bonds with the input body and normalizes the result', async () => {
+    const input = { code: 'TH-GOV-2030', issuer: 'MOF', startDate: '2025-01-01', expiredDate: '2030-01-01', amount: 1000, interestRate: null }
+    mockedPost.mockResolvedValueOnce({ data: BOND_WIRE })
+
+    const result = await trackingService.createBond('i1', input)
+
+    expect(mockedPost).toHaveBeenCalledWith('/tracking/items/i1/bonds', input)
+    expect(result.amount).toBe(1000)
+    expect(typeof result.amount).toBe('number')
+  })
+
+  it('updateBond calls PUT /tracking/bonds/{bondId} with only the changed fields and normalizes the result', async () => {
+    mockedPut.mockResolvedValueOnce({ data: { ...BOND_WIRE, amount: '2000.0000', issuer: null } })
+
+    const result = await trackingService.updateBond('b1', { code: 'TH-GOV-2030', amount: 2000, issuer: null })
+
+    expect(mockedPut).toHaveBeenCalledWith('/tracking/bonds/b1', { code: 'TH-GOV-2030', amount: 2000, issuer: null })
+    expect(result.amount).toBe(2000)
+    expect(result.issuer).toBeNull()
+  })
+
+  it('deleteBond calls DELETE /tracking/bonds/{bondId}', async () => {
+    mockedDelete.mockResolvedValueOnce({ data: undefined })
+    await trackingService.deleteBond('b1')
+    expect(mockedDelete).toHaveBeenCalledWith('/tracking/bonds/b1')
+  })
+
+  it('propagates the backend { detail } error for a non-BOND item (400)', async () => {
+    const err = { isAxiosError: true, response: { status: 400, data: { detail: 'Item is not a BOND item' } } }
+    mockedGet.mockRejectedValueOnce(err)
+    await expect(trackingService.listBonds('i1')).rejects.toEqual(err)
+  })
+
+  it('listBonds returns [] for an empty response', async () => {
+    mockedGet.mockResolvedValueOnce({ data: [] })
+    const result: Bond[] = await trackingService.listBonds('i1')
+    expect(result).toEqual([])
   })
 })
 

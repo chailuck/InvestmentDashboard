@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   HardDriveDownload, HardDriveUpload, Trash2, Download, RefreshCw,
@@ -10,6 +10,7 @@ import {
 import { cn } from '@/lib/utils'
 import { apiClient } from '@/services/api'
 import { format } from 'date-fns'
+import { RestoreModal, type RestoreTarget } from './RestoreModal'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -19,7 +20,26 @@ interface BackupMeta {
   created_at: string
 }
 
-interface BackupResult {
+/** One row of `GET /backup/tables` — describes coverage + restore eligibility. */
+export interface BackupTableInfo {
+  name: string
+  row_count: number
+  owner_service: 'backend' | 'tracking-backend'
+  restorable: boolean
+  in_conflict_check: boolean
+  note?: string
+}
+
+/** Response of `GET /backup/tables` — the authoritative list of what a backup covers. */
+export interface BackupTablesData {
+  database: string
+  generated_at: string
+  total_tables: number
+  insert_order: string[]
+  tables: BackupTableInfo[]
+}
+
+export interface BackupResult {
   filename?: string
   created_at?: string
   size_kb?: number
@@ -28,13 +48,12 @@ interface BackupResult {
   restored?: Record<string, number>
   errors?: string[]
   source_created_at?: string
+  // ── Extended restore/backup diagnostics (Phase 3 backend) ──
+  checksum_verification?: Record<string, 'ok' | 'mismatch' | 'skipped'>
+  schema_version_drift?: Record<string, { file: string; live: string; match: boolean }>
+  legacy_backup?: boolean
+  uncovered_tables?: string[]
 }
-
-const TABLES = [
-  'users', 'action_plans', 'purchase_plan_items', 'portfolio_plan_items',
-  'user_scan_configs', 'user_symbol_lists', 'weekly_scans', 'weekly_scan_items',
-  'symbol_notes', 'portfolio_positions_db',
-]
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -46,10 +65,33 @@ function fmtSize(kb: number) {
   return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`
 }
 
+function fmtNum(n: number) {
+  return n.toLocaleString('en-US')
+}
+
 // ── Sub-components ─────────────────────────────────────────────────────────────
+
+function OwnerBadge({ owner }: { owner: string }) {
+  const isTracking = owner === 'tracking-backend'
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold border shrink-0',
+        isTracking
+          ? 'text-amber-400 border-amber-500/30 bg-amber-500/8'
+          : 'text-ink-muted border-border/50 bg-surface-elevated',
+      )}
+    >
+      {owner}
+    </span>
+  )
+}
 
 function ResultBox({ result }: { result: BackupResult }) {
   const hasErrors = result.errors && result.errors.length > 0
+  const drift = result.schema_version_drift
+  const hasDrift = drift && Object.values(drift).some(d => !d.match)
+
   return (
     <div className={cn('rounded-xl border p-4 text-xs space-y-2 mt-3',
       hasErrors ? 'border-loss/30 bg-loss/5' : 'border-gain/30 bg-gain/5')}>
@@ -59,6 +101,18 @@ function ResultBox({ result }: { result: BackupResult }) {
           {result.filename ? `Backup created: ${result.filename}` : `Restored ${result.total_rows} rows`}
         </span>
       </div>
+
+      {result.legacy_backup && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2 space-y-1">
+          <p className="font-semibold text-amber-400">Legacy backup format (v1.1)</p>
+          {result.uncovered_tables && result.uncovered_tables.length > 0 && (
+            <p className="text-ink-muted">
+              Tables not present in this backup: {result.uncovered_tables.join(', ')}
+            </p>
+          )}
+        </div>
+      )}
+
       {result.row_counts && (
         <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-ink-muted pl-6">
           {Object.entries(result.row_counts).map(([t, n]) => (
@@ -66,6 +120,7 @@ function ResultBox({ result }: { result: BackupResult }) {
           ))}
         </div>
       )}
+
       {result.restored && (
         <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-ink-muted pl-6">
           {Object.entries(result.restored).map(([t, n]) => (
@@ -75,6 +130,41 @@ function ResultBox({ result }: { result: BackupResult }) {
           ))}
         </div>
       )}
+
+      {result.checksum_verification && (
+        <div className="pl-6 space-y-1">
+          <p className="font-semibold text-ink-secondary">Checksum verification</p>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(result.checksum_verification).map(([t, status]) => (
+              <span
+                key={t}
+                className={cn(
+                  'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium border',
+                  status === 'ok' && 'text-gain border-gain/30 bg-gain/5',
+                  status === 'mismatch' && 'text-loss border-loss/30 bg-loss/5',
+                  status === 'skipped' && 'text-ink-muted border-border/50 bg-surface-elevated',
+                )}
+              >
+                {t}: {status}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasDrift && (
+        <p className="pl-6 text-amber-400 flex items-start gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span>
+            Schema version drift detected:{' '}
+            {Object.entries(drift!)
+              .filter(([, d]) => !d.match)
+              .map(([t, d]) => `${t} (file ${d.file} → live ${d.live})`)
+              .join(', ')}
+          </span>
+        </p>
+      )}
+
       {hasErrors && result.errors!.map((e, i) => (
         <p key={i} className="text-loss pl-6 font-mono">{e}</p>
       ))}
@@ -90,20 +180,54 @@ export default function BackupPage() {
   const importRef = useRef<HTMLInputElement>(null)
 
   const [creating, setCreating] = useState(false)
-  const [restoring, setRestoring] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [result, setResult] = useState<BackupResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showPsv, setShowPsv] = useState(false)
-  const [selectedTable, setSelectedTable] = useState(TABLES[0])
+  const [showCoverage, setShowCoverage] = useState(false)
+  const [selectedTable, setSelectedTable] = useState('')
   const [importMode, setImportMode] = useState<'append' | 'replace'>('append')
+  const [psvReplaceConfirm, setPsvReplaceConfirm] = useState('')
   const [importing, setImporting] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(null)
 
   const { data: backups = [], isLoading } = useQuery<BackupMeta[]>({
     queryKey: ['backup-list'],
     queryFn: async () => { const { data } = await apiClient.get('/backup/list'); return data },
     staleTime: 30_000,
   })
+
+  const { data: tablesData } = useQuery<BackupTablesData>({
+    queryKey: ['backup-tables'],
+    queryFn: () => apiClient.get('/backup/tables').then(r => r.data),
+    staleTime: 30_000,
+  })
+
+  // The PSV selector must not offer schema-version tables (alembic_version,
+  // ft_alembic_version) — they are neither restorable nor part of the conflict
+  // check, and the backend rejects PSV import/export against them. The Coverage
+  // card below still shows them (with their note); only this list is filtered.
+  const tableNames = (tablesData?.tables ?? [])
+    .filter(t => t.restorable !== false && t.in_conflict_check !== false)
+    .map(t => t.name)
+
+  // Default the PSV table selector to the first table, but keep the admin's
+  // current selection stable across a refetch as long as it still exists.
+  useEffect(() => {
+    if (tableNames.length === 0) return
+    setSelectedTable(prev => (prev && tableNames.includes(prev) ? prev : tableNames[0]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tablesData])
+
+  // Populated tables the backend would refuse to overwrite in safe mode — the
+  // wipe preview shown for a replace-all restore.
+  const wipeTables = (tablesData?.tables ?? [])
+    .filter(t => t.in_conflict_check && t.row_count > 0)
+    .map(t => ({ name: t.name, row_count: t.row_count }))
+
+  const psvReplaceToken = `REPLACE ${selectedTable}`
+  const canImport =
+    !importing && (importMode === 'append' || psvReplaceConfirm === psvReplaceToken)
 
   const setOk = (r: BackupResult) => { setResult(r); setError(null) }
   const setErr = (msg: string) => { setError(msg); setResult(null) }
@@ -149,42 +273,32 @@ export default function BackupPage() {
     } finally { setDeleting(null) }
   }
 
-  // ── Restore from stored file ─────────────────────────────────────────────────
+  // ── Restore (stored file or upload) — routed through RestoreModal ─────────────
 
-  const restoreFromFile = async (filename: string) => {
-    if (!confirm(`⚠️ This will OVERWRITE all current data with the contents of ${filename}. Are you sure?`)) return
-    setRestoring(filename); setResult(null); setError(null)
-    try {
-      const { data } = await apiClient.post(`/backup/restore/${filename}`)
-      setOk(data)
-    } catch (e: any) {
-      setErr(e?.response?.data?.detail ?? 'Restore failed')
-    } finally { setRestoring(null) }
+  const handleRestoreUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setResult(null); setError(null)
+    setRestoreTarget({ kind: 'upload', file })
   }
 
-  // ── Restore from uploaded file ───────────────────────────────────────────────
+  const openStoredRestore = (filename: string) => {
+    setResult(null); setError(null)
+    setRestoreTarget({ kind: 'file', filename })
+  }
 
-  const handleRestoreUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (!confirm(`⚠️ This will OVERWRITE all current data with the contents of ${file.name}. Are you sure?`)) {
-      e.target.value = ''; return
-    }
-    setRestoring('upload'); setResult(null); setError(null)
-    try {
-      const form = new FormData(); form.append('file', file)
-      const { data } = await apiClient.post('/backup/restore/upload', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-      setOk(data)
-    } catch (err: any) {
-      setErr(err?.response?.data?.detail ?? 'Restore failed')
-    } finally { setRestoring(null); e.target.value = '' }
+  const handleRestoreSuccess = (data: BackupResult) => {
+    setOk(data)
+    setRestoreTarget(null)
+    qc.invalidateQueries({ queryKey: ['backup-list'] })
+    qc.invalidateQueries({ queryKey: ['backup-tables'] })
   }
 
   // ── PSV export ───────────────────────────────────────────────────────────────
 
   const exportPsv = async () => {
+    if (!selectedTable) return
     const token = (apiClient.defaults.headers as any).Authorization ?? ''
     const r = await fetch(`/api/proxy/api/v1/backup/export-table/${selectedTable}`, {
       headers: { Authorization: token },
@@ -192,7 +306,7 @@ export default function BackupPage() {
     const blob = await r.blob()
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `${selectedTable}_${new Date().toISOString().slice(0,10)}.psv`
+    a.download = `${selectedTable}_${new Date().toISOString().slice(0, 10)}.psv`
     a.click()
   }
 
@@ -201,14 +315,24 @@ export default function BackupPage() {
   const handlePsvImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    // Guard: destructive replace requires the exact `REPLACE <table>` phrase.
+    if (importMode === 'replace' && psvReplaceConfirm !== psvReplaceToken) {
+      e.target.value = ''
+      return
+    }
     setImporting(true); setResult(null); setError(null)
     try {
       const form = new FormData(); form.append('file', file)
-      const { data } = await apiClient.post(
-        `/backup/import-table/${selectedTable}?mode=${importMode}`, form,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
-      )
+      let url = `/backup/import-table/${selectedTable}?mode=${importMode}`
+      if (importMode === 'replace') {
+        url += `&confirm=${encodeURIComponent(psvReplaceToken)}`
+      }
+      const { data } = await apiClient.post(url, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
       setOk({ total_rows: data.imported, row_counts: { [selectedTable]: data.imported } })
+      qc.invalidateQueries({ queryKey: ['backup-list'] })
+      qc.invalidateQueries({ queryKey: ['backup-tables'] })
     } catch (err: any) {
       setErr(err?.response?.data?.detail ?? 'Import failed')
     } finally { setImporting(false); e.target.value = '' }
@@ -238,6 +362,45 @@ export default function BackupPage() {
         </div>
       )}
       {result && <ResultBox result={result} />}
+
+      {/* ── Coverage ── */}
+      {tablesData && (
+        <div className="card p-5 space-y-3">
+          <button
+            onClick={() => setShowCoverage(v => !v)}
+            className="w-full flex items-center justify-between"
+            aria-expanded={showCoverage}
+          >
+            <div className="text-left">
+              <h2 className="text-sm font-semibold text-ink-primary flex items-center gap-2">
+                <Table2 className="w-4 h-4 text-brand-400" />
+                Covers {tablesData.total_tables} tables
+              </h2>
+              <p className="text-xs text-ink-muted mt-0.5">
+                Database <span className="font-mono">{tablesData.database}</span> · snapshot {fmtDate(tablesData.generated_at)}
+              </p>
+            </div>
+            {showCoverage
+              ? <ChevronUp className="w-4 h-4 text-ink-muted" />
+              : <ChevronDown className="w-4 h-4 text-ink-muted" />}
+          </button>
+
+          {showCoverage && (
+            <ul className="rounded-xl border border-border/40 divide-y divide-border/30 text-xs">
+              {tablesData.tables.map(t => (
+                <li key={t.name} className="px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="font-mono text-ink-primary flex-1 min-w-0 truncate">{t.name}</span>
+                  <span className="text-ink-muted tabular-nums shrink-0">{fmtNum(t.row_count)} rows</span>
+                  <OwnerBadge owner={t.owner_service} />
+                  {!t.restorable && t.note && (
+                    <span className="basis-full text-ink-disabled italic">{t.note}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* ── Full backup ── */}
       <div className="card p-5 space-y-4">
@@ -293,14 +456,12 @@ export default function BackupPage() {
                       <Download className="w-3.5 h-3.5" />
                     </button>
                     <button
-                      onClick={() => restoreFromFile(b.filename)}
-                      disabled={restoring === b.filename}
+                      onClick={() => openStoredRestore(b.filename)}
+                      disabled={!!restoreTarget}
                       title="Restore from this backup"
-                      className="btn-icon text-ink-muted hover:text-amber-400"
+                      className="btn-icon text-ink-muted hover:text-amber-400 disabled:opacity-40"
                     >
-                      {restoring === b.filename
-                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        : <HardDriveUpload className="w-3.5 h-3.5" />}
+                      <HardDriveUpload className="w-3.5 h-3.5" />
                     </button>
                     <button onClick={() => deleteBackup(b.filename)} disabled={deleting === b.filename}
                       title="Delete" className="btn-icon text-ink-muted hover:text-loss">
@@ -322,12 +483,10 @@ export default function BackupPage() {
             onChange={handleRestoreUpload} />
           <button
             onClick={() => restoreRef.current?.click()}
-            disabled={!!restoring}
+            disabled={!!restoreTarget}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/8 text-amber-400 hover:bg-amber-500/15 text-xs font-semibold transition-colors disabled:opacity-40"
           >
-            {restoring === 'upload'
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Upload className="w-3.5 h-3.5" />}
+            <Upload className="w-3.5 h-3.5" />
             Upload &amp; Restore
           </button>
         </div>
@@ -352,13 +511,16 @@ export default function BackupPage() {
           <div className="space-y-4 pt-1">
             {/* Table selector */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider">Table</label>
+              <label htmlFor="psv-table-select" className="text-[10px] font-semibold text-ink-muted uppercase tracking-wider">
+                Table
+              </label>
               <select
+                id="psv-table-select"
                 value={selectedTable}
                 onChange={e => setSelectedTable(e.target.value)}
                 className="input w-full text-xs py-1.5"
               >
-                {TABLES.map(t => <option key={t} value={t}>{t}</option>)}
+                {tableNames.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 
@@ -367,8 +529,8 @@ export default function BackupPage() {
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-ink-secondary">Export</p>
                 <p className="text-[11px] text-ink-muted">Download the selected table as a .psv file</p>
-                <button onClick={exportPsv}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-brand-500/40 bg-brand-500/8 text-brand-400 hover:bg-brand-500/15 text-xs font-semibold transition-colors">
+                <button onClick={exportPsv} disabled={!selectedTable}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-brand-500/40 bg-brand-500/8 text-brand-400 hover:bg-brand-500/15 text-xs font-semibold transition-colors disabled:opacity-40">
                   <Download className="w-3.5 h-3.5" /> Export {selectedTable}
                 </button>
               </div>
@@ -377,16 +539,33 @@ export default function BackupPage() {
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-ink-secondary">Import</p>
                 <div className="flex items-center gap-2">
-                  <label className="text-[11px] text-ink-muted">Mode:</label>
-                  <select value={importMode} onChange={e => setImportMode(e.target.value as any)}
+                  <label htmlFor="psv-import-mode" className="text-[11px] text-ink-muted">Mode:</label>
+                  <select id="psv-import-mode" value={importMode} onChange={e => setImportMode(e.target.value as any)}
                     className="input text-[11px] py-0.5 px-2">
                     <option value="append">Append (skip duplicates)</option>
                     <option value="replace">Replace (truncate first)</option>
                   </select>
                 </div>
+
+                {importMode === 'replace' && (
+                  <div className="space-y-1">
+                    <label htmlFor="psv-replace-confirm" className="block text-[11px] text-loss">
+                      Type <span className="font-mono">REPLACE {selectedTable}</span> to confirm truncate
+                    </label>
+                    <input
+                      id="psv-replace-confirm"
+                      value={psvReplaceConfirm}
+                      onChange={e => setPsvReplaceConfirm(e.target.value)}
+                      autoComplete="off"
+                      placeholder={`REPLACE ${selectedTable}`}
+                      className="input w-full text-[11px] py-1"
+                    />
+                  </div>
+                )}
+
                 <input ref={importRef} type="file" accept=".psv,.txt,.csv" className="hidden"
                   onChange={handlePsvImport} />
-                <button onClick={() => importRef.current?.click()} disabled={importing}
+                <button onClick={() => importRef.current?.click()} disabled={!canImport}
                   className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/8 text-amber-400 hover:bg-amber-500/15 text-xs font-semibold transition-colors disabled:opacity-40">
                   {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                   Import into {selectedTable}
@@ -404,6 +583,15 @@ export default function BackupPage() {
           </div>
         )}
       </div>
+
+      {restoreTarget && (
+        <RestoreModal
+          target={restoreTarget}
+          wipeTables={wipeTables}
+          onClose={() => setRestoreTarget(null)}
+          onSuccess={handleRestoreSuccess}
+        />
+      )}
 
     </div>
   )

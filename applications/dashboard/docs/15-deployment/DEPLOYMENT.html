@@ -247,5 +247,75 @@ docker compose up -d --force-recreate</code></pre>
   <tr><td>Redis</td><td><code>redis-cli ping</code></td><td><code>PONG</code></td></tr>
 </table>
 
+<hr>
+
+<h2>13. Database Backup &amp; Restore</h2>
+
+<p>Database backups are taken and restored through the in-app admin page
+<strong>Settings &rarr; Backup</strong> (<code>/settings/backup</code>), backed by
+<code>POST /api/v1/backup/create</code> / <code>POST /api/v1/backup/restore/*</code>. It
+covers <strong>every table</strong> in the shared <code>investment_db</code> database —
+including the <code>tracking-backend</code>-owned <code>ft_*</code> tables — discovered
+dynamically from the PostgreSQL catalogue.</p>
+
+<div class="callout">Full procedures (take a backup, restore into a fresh vs a populated
+database, error/recovery reference, escalation) are in the
+<a href="../19-backup-restore/RUNBOOK.html">Backup &amp; Restore Runbook</a>. Design:
+<a href="../19-backup-restore/TECHNICAL.html">19-backup-restore/TECHNICAL.html</a>. API:
+<a href="../02-infrastructure/API-BACKUP.html">API-BACKUP.html</a>.</div>
+
+<h3>Where backup files live</h3>
+<table>
+  <tr><th>Property</th><th>Value</th></tr>
+  <tr><td>Directory (in <code>inv_backend</code>)</td><td><code>BACKUP_DIR</code>, default <code>/app/uploads/backups</code></td></tr>
+  <tr><td>Docker volume</td><td><code>uploads_data</code> (mounted at <code>/app/uploads</code>)</td></tr>
+  <tr><td>File name / format</td><td><code>backup_&lt;YYYYMMDD_HHMMSS&gt;.json.gz</code> — gzip JSON, format v2.0</td></tr>
+  <tr><td>Permissions</td><td><code>0o600</code> (service account only)</td></tr>
+  <tr><td>Retention</td><td>Newest <code>BACKUP_RETENTION</code> files (default 7); older deleted after each create</td></tr>
+  <tr><td>Encryption</td><td><span class="badge red">NONE</span> — contains <code>users.hashed_password</code> and all PII</td></tr>
+</table>
+
+<div class="callout warn">A backup file is a full dump of every table and is <strong>not
+encrypted at rest</strong>. Treat any downloaded copy as a credential-bearing secret: keep it
+on access-controlled storage, never commit it to git or attach it to a ticket/chat, and
+delete it when finished.</div>
+
+<h3>Configuration (backend <code>.env</code>)</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Notes</th></tr>
+  <tr><td><code>BACKUP_DIR</code></td><td><code>/app/uploads/backups</code></td><td>Must be inside a writable, persistent volume</td></tr>
+  <tr><td><code>BACKUP_RETENTION</code></td><td><code>7</code></td><td>Server-side file count kept</td></tr>
+  <tr><td><code>BACKUP_MAX_UNCOMPRESSED_BYTES</code></td><td><code>209715200</code> (200 MiB)</td><td>Decompressed-size cap for <em>Upload &amp; Restore</em></td></tr>
+  <tr><td><code>BACKUP_FORMAT_VERSION</code></td><td><code>2.0</code></td><td>Stamped into new files</td></tr>
+</table>
+
+<h3>DB role requirement</h3>
+<div class="callout warn"><strong>Restore</strong> issues
+<code>SET LOCAL session_replication_role = replica</code> and therefore needs a
+<strong>superuser-capable</strong> PostgreSQL role. In this stack both services connect as
+the <code>postgres</code> superuser, so this holds. If the <code>backend</code> role is ever
+de-privileged, restore fails fast with <code>500 urn:backup:error:insufficient-privilege</code>
+(backup and the coverage list still work). Verify:
+<code>docker exec inv_postgres psql -U postgres -d investment_db -tAc "SELECT rolsuper OR rolreplication FROM pg_roles WHERE rolname = current_user;"</code> &rarr; <code>t</code>.</div>
+
+<h3>Restore semantics (operational summary)</h3>
+<table>
+  <tr><th>Mode</th><th>Effect</th><th>Guard</th></tr>
+  <tr><td><code>skip_if_conflict</code> (default)</td><td>Loads covered tables only if <em>all</em> are empty; otherwise <span class="badge yellow">409</span> and nothing is written</td><td>Automatic pre-write conflict check</td></tr>
+  <tr><td><code>replace_all</code></td><td><code>TRUNCATE</code> + reload every covered table in one transaction; any row failure rolls back the whole restore (<span class="badge red">422</span>)</td><td>Request must carry <code>confirm = "REPLACE ALL DATA"</code> verbatim</td></tr>
+</table>
+<p>The Alembic version tables (<code>alembic_version</code>, <code>ft_alembic_version</code>)
+are never written by a restore; schema-vs-file drift is reported in the response. Tables in
+the DB but absent from the backup are left untouched.</p>
+
+<h3>Feature rollback</h3>
+<p>No database migration is involved. Revert
+<code>backend/app/api/v1/endpoints/backup.py</code>, <code>backend/app/services/backup/</code>,
+<code>backend/app/schemas/backup.py</code> (backend hot-reloads) and the frontend files
+<code>frontend/src/app/(dashboard)/settings/backup/page.tsx</code> +
+<code>RestoreModal.tsx</code>, then
+<code>docker compose build frontend &amp;&amp; docker compose up -d --no-deps frontend</code>.
+Existing <code>backup_*.json.gz</code> files become inert.</p>
+
 </body>
 </html>

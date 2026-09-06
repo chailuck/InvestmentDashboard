@@ -52,6 +52,11 @@ class InitialInvestmentEntry(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(19, 4), nullable=False)
     entry_date: Mapped[date] = mapped_column(Date, nullable=False)
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Optional free-text CODE / NAME labels for a ledger entry (BOND register
+    # feature). Both additive, nullable, no CHECK/index — same posture as
+    # `note`. Blank/whitespace is coerced to NULL at the schema layer.
+    code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

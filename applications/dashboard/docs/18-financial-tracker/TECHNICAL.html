@@ -32,7 +32,9 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Technical Design</h1>
 
-<p><strong>Version:</strong> 3.7 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 — Phase 5 (ADR-018): a <code>note</code> column on <code>ft_initial_investment_entry</code> (migration <code>e7c4d9b21a83</code>), a shared <code>profit_math.compute_profit</code> helper, the <code>original_investment_rollup</code> service and its <code>GET /sets/{set_id}/dashboard/original-investment</code> endpoint, a <code>profitVsOriginal</code> block on the running-total response, and export version 2; Phase 6 (ADR-019): the read-only frontend-only "Analysis" view at <code>/tracking/analysis</code> — no backend, schema, or migration change — see §14) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-08-30</p>
+<p><strong>Version:</strong> 3.9 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + Phase 7 — Phase 5 (ADR-018): a <code>note</code> column on <code>ft_initial_investment_entry</code> (migration <code>e7c4d9b21a83</code>), a shared <code>profit_math.compute_profit</code> helper, the <code>original_investment_rollup</code> service and its <code>GET /sets/{set_id}/dashboard/original-investment</code> endpoint, a <code>profitVsOriginal</code> block on the running-total response, and export version 2; Phase 6 (ADR-019): the read-only frontend-only "Analysis" view at <code>/tracking/analysis</code> — no backend, schema, or migration change — see §14; Phase 7 (ADR-020–ADR-025): the <code>BOND</code> tracking-item type and the standalone <code>ft_bond</code> register table with a read-time <code>compute_bond_status</code> helper (migration <code>ea8407e31992</code>), plus additive nullable <code>code</code> / <code>name</code> columns on <code>ft_initial_investment_entry</code> (migration <code>00f7a890545d</code>) — see §15; Phase 7 enhancement (ADR-026): an additive nullable <code>ft_bond.interest_rate NUMERIC(19,4)</code> column with a 0–100 range CHECK (migration <code>b1c2d3e4f5a6</code>), a read-time <code>compute_bond_years</code> helper beside <code>compute_bond_status</code>, and client-side column sorting on the bonds table — see §16) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-09-02</p>
+
+<!-- Changelog: 3.9 (2026-09-02) — ADR-026: ft_bond.interest_rate stored column + ck_ft_bond_interest_rate_range CHECK (migration b1c2d3e4f5a6, new head), compute_bond_years read-time helper (never stored), client-side bonds-table sorting (§16). 3.8 (2026-08-31) — Phase 7 BOND type + ft_bond + ledger code/name. -->
 
 <hr>
 
@@ -51,24 +53,29 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 │   │   ├── auth/dependencies.py← get_current_user_id (duplicated, not imported)
 │   │   ├── database/session.py ← own async SQLAlchemy engine/session/Base
 │   │   ├── database/redis.py   ← own Redis client (blacklist check only)
-│   │   ├── models/              (7 ORM models — 5 from Phase 1 + 2 from
-│   │   │                          Phase 2 — see §3. Phase 3 and Phase 4 add
-│   │   │                          no new tables/models; Phase 5 adds only a
-│   │   │                          `note` column to InitialInvestmentEntry — see §13)
+│   │   ├── models/              (8 ORM models — 5 from Phase 1 + 2 from
+│   │   │                          Phase 2 + 1 from Phase 7 (`bond.py`) — see §3.
+│   │   │                          Phase 3 and Phase 4 add no new tables/models;
+│   │   │                          Phase 5 adds a `note` column to
+│   │   │                          InitialInvestmentEntry; Phase 7 adds `code` /
+│   │   │                          `name` columns to it — see §13, §15)
 │   │   ├── schemas/              (Pydantic v2, camelCase — see §5)
 │   │   │   ├── dashboard.py    ← Phase 3: balance-grid response schemas (no request schema — GET only)
-│   │   │   └── export.py       ← Phase 4: full-snapshot export response schemas (no request schema — GET only) — see §12.1
+│   │   │   ├── export.py       ← Phase 4: full-snapshot export response schemas (no request schema — GET only) — see §12.1
+│   │   │   └── bond.py         ← Phase 7: BondCreate / BondUpdate / BondOut (camelCase) — see §15
 │   │   ├── services/cascade.py ← default category/sub-category creation
 │   │   ├── services/update_tracking.py ← Phase 2: read-time delta computation
 │   │   ├── services/dashboard_balance_grid.py ← Phase 3: read-time balance-grid
 │   │   │                          aggregation + the shared compute_series_deltas engine — see §8
+│   │   ├── services/bond_status.py ← Phase 7: pure read-time bond status derivation (never stored) — see §15
 │   │   └── api/v1/
 │   │       ├── router.py       ← assembles all sub-routers
 │   │       └── endpoints/      ← health, tracking_sets, categories,
 │   │                              sub_categories, tracking_items, entries,
 │   │                              update_tracking_lists (Phase 2),
-│   │                              dashboard (Phase 3), export (Phase 4)
-│   ├── alembic/                ← OWN migration chain (see §4) — unchanged by Phase 3 AND Phase 4; Phase 5 adds ONE nullable column (migration e7c4d9b21a83)
+│   │                              dashboard (Phase 3), export (Phase 4),
+│   │                              bonds (Phase 7)
+│   ├── alembic/                ← OWN migration chain (see §4) — unchanged by Phase 3 AND Phase 4; Phase 5 adds ONE nullable column (migration e7c4d9b21a83); Phase 7 adds `ft_bond` + widens the type CHECK (ea8407e31992) and adds `code`/`name` to `ft_initial_investment_entry` (00f7a890545d)
 │   └── tests/
 ├── docker/Dockerfile.tracking-backend
 └── frontend/                   ← SHARED — new pages/components/service added
@@ -142,7 +149,7 @@ backend/                                  ← EXISTING main API service — Phas
 
 <h2>3. Data model</h2>
 
-<p>All 7 tables (5 from Phase 1, 2 from Phase 2) live in the <strong>same physical Postgres database</strong> as the main application (<code>investment_db</code>), but are prefixed <code>ft_</code> and carry <strong>no foreign keys</strong> into any table owned by <code>backend</code> (e.g. no FK to <code>users</code>). Ownership is enforced purely at the application layer via a bare <code>user_id</code> UUID column on every table. This is deliberate bounded-context isolation — the two services could point at physically separate databases in the future with no schema change on this side.</p>
+<p>All 8 tables (5 from Phase 1, 2 from Phase 2, 1 from Phase 7 — <code>ft_bond</code>) live in the <strong>same physical Postgres database</strong> as the main application (<code>investment_db</code>), but are prefixed <code>ft_</code> and carry <strong>no foreign keys</strong> into any table owned by <code>backend</code> (e.g. no FK to <code>users</code>). Ownership is enforced purely at the application layer via a bare <code>user_id</code> UUID column on every table — <strong>except <code>ft_bond</code></strong> (Phase 7), which deliberately has <em>no</em> <code>user_id</code> column at all and resolves ownership by joining to <code>ft_tracking_item.user_id</code> (§3 <code>ft_bond</code>, ADR-021). This is deliberate bounded-context isolation — the two services could point at physically separate databases in the future with no schema change on this side.</p>
 
 <h3>ft_tracking_set</h3>
 <p>ORM: <code>app/models/tracking_set.py — class TrackingSet</code></p>
@@ -199,7 +206,7 @@ backend/                                  ← EXISTING main API service — Phas
     <tr><td><code>user_id</code></td><td>UUID</td><td>No</td><td>Bare column, no FK. Indexed.</td></tr>
     <tr><td><code>sub_category_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_sub_category.id</code> ON DELETE CASCADE. Indexed.</td></tr>
     <tr><td><code>name</code></td><td>VARCHAR(255)</td><td>No</td><td>—</td></tr>
-    <tr><td><code>type</code></td><td>VARCHAR(30)</td><td>No</td><td>One of the 6 fixed values (see below). Enforced by a DB CHECK constraint AND a Pydantic validator.</td></tr>
+    <tr><td><code>type</code></td><td>VARCHAR(30)</td><td>No</td><td>One of the <strong>7</strong> fixed values (see below — <code>BOND</code> added in Phase 7). Enforced by a DB CHECK constraint AND a Pydantic validator.</td></tr>
     <tr><td><code>initial_investment_tracking</code></td><td>BOOLEAN</td><td>No</td><td>Default <code>false</code></td></tr>
     <tr><td><code>exclusive</code></td><td>BOOLEAN</td><td>No</td><td>Default <code>false</code>. Reserved for future rollup reporting — read but not acted on anywhere in Phase 1.</td></tr>
     <tr><td><code>order_index</code></td><td>INTEGER</td><td>No</td><td>Default 0</td></tr>
@@ -209,7 +216,7 @@ backend/                                  ← EXISTING main API service — Phas
     <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td>—</td></tr>
   </tbody>
 </table>
-<p><strong>Constraint:</strong> <code>ck_ft_tracking_item_type</code> — <code>CHECK (type IN ('Bank account','Property','Investment Account','TaxSaving','Materials','Insurance'))</code>. Source comment marks this list "FINAL, verbatim — do not alter"; it is duplicated in <code>app/models/tracking_item.py</code>'s <code>TRACKING_ITEM_TYPES</code> tuple (used by the Pydantic validator) and must be changed in both places together if it ever changes.</p>
+<p><strong>Constraint:</strong> <code>ck_ft_tracking_item_type</code> — <code>CHECK (type IN ('Bank account','Property','Investment Account','TaxSaving','Materials','Insurance','BOND'))</code>. <em>(Phase 7)</em> <code>'BOND'</code> was appended to the list by migration <code>ea8407e31992</code>, which drops and recreates the CHECK (Postgres cannot <code>ALTER</code> a CHECK expression in place — ADR-025). The list is duplicated in <code>app/models/tracking_item.py</code>'s <code>TRACKING_ITEM_TYPES</code> tuple (used by the Pydantic validator) and must be changed in both places together if it ever changes.</p>
 <p><strong>Index:</strong> <code>ix_ft_tracking_item_subcat_order</code> on <code>(sub_category_id, order_index)</code>.</p>
 
 <h3>ft_initial_investment_entry</h3>
@@ -223,12 +230,14 @@ backend/                                  ← EXISTING main API service — Phas
     <tr><td><code>amount</code></td><td>NUMERIC(19,4)</td><td>No</td><td>Signed. Positive = increase, negative = decrease. Zero is rejected.</td></tr>
     <tr><td><code>entry_date</code></td><td>DATE</td><td>No</td><td>—</td></tr>
     <tr><td><code>note</code></td><td>VARCHAR(500)</td><td>Yes</td><td><em>(Phase 5 — migration <code>e7c4d9b21a83</code>)</em> Optional free text, max 500 chars. Blank or whitespace-only input is coerced to <code>NULL</code> by a Pydantic validator; any other value (Thai text included) is stored verbatim. Over-length input is rejected with HTTP 422 before the write. Rows that existed before this migration are <code>NULL</code> — backward compatible.</td></tr>
+    <tr><td><code>code</code></td><td>VARCHAR(100)</td><td>Yes</td><td><em>(Phase 7 — migration <code>00f7a890545d</code>)</em> Optional free-text label, max 100 chars. Same posture as <code>note</code>: blank / whitespace-only is coerced to <code>NULL</code> by the shared <code>_coerce_blank</code> validator (§13.1, ADR-023); any other value (Thai included) stored verbatim; over-length → HTTP 422. Additive, no backfill — pre-existing rows are <code>NULL</code>. No index, CHECK, or constraint.</td></tr>
+    <tr><td><code>name</code></td><td>VARCHAR(100)</td><td>Yes</td><td><em>(Phase 7 — migration <code>00f7a890545d</code>)</em> Optional free-text label, max 100 chars. Identical rules to <code>code</code> above — independent column, same <code>_coerce_blank</code> handling, no index / CHECK / constraint.</td></tr>
     <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td>—</td></tr>
   </tbody>
 </table>
 <p><strong>Constraint:</strong> <code>ck_ft_entry_amount_nonzero</code> — <code>CHECK (amount &lt;&gt; 0)</code>.</p>
 <p><strong>Indexes:</strong> <code>ix_ft_entry_tracking_item_id</code> on <code>(tracking_item_id)</code>; <code>ix_ft_entry_item_date</code> on <code>(tracking_item_id, entry_date)</code> — supports the running-total query's chronological ordering.</p>
-<p><em>(Phase 5)</em> Migration <code>e7c4d9b21a83</code> adds only the nullable <code>note</code> column above — <code>ck_ft_entry_amount_nonzero</code> and both <code>ix_ft_entry_*</code> indexes are untouched, and no index, CHECK, or other constraint is added for <code>note</code>.</p>
+<p><em>(Phase 5)</em> Migration <code>e7c4d9b21a83</code> adds only the nullable <code>note</code> column above — <code>ck_ft_entry_amount_nonzero</code> and both <code>ix_ft_entry_*</code> indexes are untouched, and no index, CHECK, or other constraint is added for <code>note</code>. <em>(Phase 7)</em> Migration <code>00f7a890545d</code> adds the two nullable <code>code</code> / <code>name</code> columns above under the same additive, no-backfill, no-constraint rule; its <code>downgrade()</code> is LOSSY (drops both columns, discarding any values) — see §4, §15, ADR-023.</p>
 <div class="callout">The model docstring explicitly notes that the FK column intentionally omits SQLAlchemy's <code>index=True</code> shortcut here: the approved design calls for the shorter, explicit index names <code>ix_ft_entry_*</code> rather than the longer name SQLAlchemy would auto-generate (<code>ix_ft_initial_investment_entry_tracking_item_id</code>), so both indexes are declared explicitly in <code>__table_args__</code> instead.</div>
 
 <h3>ft_update_tracking_list (Phase 2)</h3>
@@ -264,18 +273,40 @@ backend/                                  ← EXISTING main API service — Phas
 <p><strong>Constraint:</strong> <code>uq_ft_update_tracking_list_balance_list_item</code> — UNIQUE <code>(update_tracking_list_id, tracking_item_id)</code>. Enforces exactly one balance row per (list, item) pairing; the bulk-upsert endpoint updates the existing row in place if one is present, otherwise inserts a new one.</p>
 <div class="callout">Row-absence and <code>balance IS NULL</code> are treated identically as "no data" everywhere this table is read (both the detail view and the previous-list delta lookup) — there is no behavioral difference between "no row was ever written for this item" and "a row exists but its balance was cleared back to null" (e.g. by clearing the Latest Balance field and clicking Save All).</div>
 
+<h3>ft_bond (Phase 7)</h3>
+<p>ORM: <code>app/models/bond.py — class Bond</code>. One row per registered bond holding, attached to a Tracking Item of type <code>BOND</code>. Created by migration <code>ea8407e31992</code> (§4). Style deliberately mirrors <code>ft_initial_investment_entry</code>: UUID PK with a DB-side <code>uuid_generate_v4()</code> default, a <code>NUMERIC(19,4)</code> money column, timezone-aware <code>created_at</code>/<code>updated_at</code>, and an explicitly-named short index on the FK column.</p>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>UUID</td><td>No</td><td>PK, <code>server_default=text("uuid_generate_v4()")</code></td></tr>
+    <tr><td><code>tracking_item_id</code></td><td>UUID</td><td>No</td><td>FK → <code>ft_tracking_item.id</code> <strong>ON DELETE CASCADE</strong> — a bond can never outlive its item. Indexed (<code>ix_ft_bond_tracking_item_id</code>).</td></tr>
+    <tr><td><code>code</code></td><td>VARCHAR(100)</td><td>No</td><td>Required identifier. Stored verbatim — <strong>not</strong> trimmed — but must not be blank / whitespace-only (Pydantic validator → 422). <strong>No uniqueness constraint</strong> (ADR-022).</td></tr>
+    <tr><td><code>issuer</code></td><td>VARCHAR(200)</td><td>Yes</td><td>Optional. Blank / whitespace-only coerced to <code>NULL</code> by the shared <code>_coerce_blank</code> validator (ADR-023).</td></tr>
+    <tr><td><code>start_date</code></td><td>DATE</td><td>Yes</td><td>Optional start / issue date. Independently clearable via explicit <code>null</code> on update.</td></tr>
+    <tr><td><code>expired_date</code></td><td>DATE</td><td>Yes</td><td>Optional maturity / expiry date. Independently clearable. Not validated against <code>start_date</code> (inverted dates are allowed — see §15.2 / <code>compute_bond_status</code>).</td></tr>
+    <tr><td><code>amount</code></td><td>NUMERIC(19,4)</td><td>No</td><td>Face / invested amount. <code>CHECK (amount &gt;= 0)</code> — zero is allowed. Excess precision beyond 4 dp is quantized on write by the column type (Postgres rounds half away from zero), not rejected.</td></tr>
+    <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TIMESTAMPTZ</td><td>No</td><td><code>server_default=func.now()</code>; <code>updated_at</code> also <code>onupdate=func.now()</code>.</td></tr>
+  </tbody>
+</table>
+<p><strong>Constraint:</strong> <code>ck_ft_bond_amount_nonneg</code> — <code>CHECK (amount &gt;= 0)</code>.</p>
+<p><strong>Index:</strong> <code>ix_ft_bond_tracking_item_id</code> on <code>(tracking_item_id)</code> — declared explicitly (not via <code>index=True</code>) to get that exact short name rather than SQLAlchemy's longer auto-generated one, the same rationale as the <code>ix_ft_entry_*</code> indexes above.</p>
+<div class="callout warn"><strong>No <code>user_id</code> column</strong> — unlike every other <code>ft_*</code> table. Ownership of a bond is resolved by JOINing to <code>ft_tracking_item.user_id</code>; the FK CASCADE guarantees a bond cannot exist without a parent item. See §15.2 and ADR-021. There is also <strong>no <code>status</code> column</strong> — a bond's status is a pure read-time function of its dates and is never persisted (§15.1, ADR-020).</div>
+
 <h3>Entity relationships</h3>
 <pre><code>ft_tracking_set (1)
   ├─ ft_category (N)             [tracking_set_id → ft_tracking_set.id  ON DELETE CASCADE]
   │    └─ ft_sub_category (N)    [category_id → ft_category.id  ON DELETE CASCADE]
   │         └─ ft_tracking_item (N)  [sub_category_id → ft_sub_category.id  ON DELETE CASCADE]
   │              ├─ ft_initial_investment_entry (N)  [tracking_item_id → ft_tracking_item.id  ON DELETE CASCADE]
-  │              └─ ft_update_tracking_list_balance (N)  [tracking_item_id → ft_tracking_item.id  ON DELETE CASCADE]  (Phase 2)
+  │              ├─ ft_update_tracking_list_balance (N)  [tracking_item_id → ft_tracking_item.id  ON DELETE CASCADE]  (Phase 2)
+  │              └─ ft_bond (N)  [tracking_item_id → ft_tracking_item.id  ON DELETE CASCADE]  (Phase 7)
   └─ ft_update_tracking_list (N)  [tracking_set_id → ft_tracking_set.id  ON DELETE CASCADE]  (Phase 2)
        └─ ft_update_tracking_list_balance (N)  [update_tracking_list_id → ft_update_tracking_list.id  ON DELETE CASCADE]
 
 No table in this chain has a foreign key to `users` or any other main-backend table.
-user_id on every table is a bare UUID column checked at the application layer only.
+user_id on every table is a bare UUID column checked at the application layer only —
+EXCEPT ft_bond (Phase 7), which has no user_id column at all: a bond's owner is
+reached only by joining up to ft_tracking_item.user_id.
 
 Note: ft_update_tracking_list_balance has TWO parent FKs (its own list, and the
 tracking item it prices) — deleting either the list or the underlying tracking
@@ -290,8 +321,8 @@ item cascades to remove the balance row.</code></pre>
   <tbody>
     <tr><td>Config location</td><td><code>tracking-backend/alembic.ini</code>, <code>tracking-backend/alembic/env.py</code></td></tr>
     <tr><td><code>version_table</code></td><td><strong><code>ft_alembic_version</code></strong> — distinct from the main backend's default <code>alembic_version</code> table, so neither service's <code>alembic upgrade head</code> can stamp or read the other's current revision</td></tr>
-    <tr><td>Current head</td><td><code>e7c4d9b21a83</code> — <code>add_note_to_ft_initial_investment_entry</code> (2026-08-30) <em>(Phase 5 / ADR-018)</em> — hand-written revision adding a single additive nullable column, <code>ft_initial_investment_entry.note VARCHAR(500) NULL</code>; <code>down_revision = d112fa78e9c2</code> (the prior head). <code>upgrade()</code> is <code>op.add_column("ft_initial_investment_entry", sa.Column("note", sa.String(500), nullable=True))</code>; <code>downgrade()</code> is <code>op.drop_column(...)</code> and is <strong>LOSSY</strong> — it permanently discards any note text, which the migration docstring states explicitly. No index / constraint / CHECK change.</td></tr>
-    <tr><td>Chain</td><td><code>f1a2b3c4d5e6</code> — <code>create_ft_tables</code> (2026-08-22) — creates all 5 Phase 1 tables in one migration; <code>down_revision = None</code> (first migration in the chain) → <code>c001eb66b381</code> — <code>create_ft_update_tracking_list_tables</code> (2026-08-25) — creates the 2 Phase 2 tables → <code>20260827_1000_d112fa78e9c2</code> — <code>split_quarter_year_label_into_quarter_and_year</code> (2026-08-27) — drops <code>ft_update_tracking_list.quarter_year_label</code> (VARCHAR(50)) and replaces it with two independent nullable <code>INTEGER</code> columns, <code>quarter</code> and <code>year</code> → <code>e7c4d9b21a83</code> — <code>add_note_to_ft_initial_investment_entry</code> (2026-08-30 — Phase 5 / ADR-018, head — see the row above)</td></tr>
+    <tr><td>Current head</td><td><code>00f7a890545d</code> — <code>add_code_name_to_ft_initial_investment_entry</code> (2026-08-31) <em>(Phase 7 / ADR-023)</em> — hand-written revision adding two additive nullable columns, <code>ft_initial_investment_entry.code VARCHAR(100) NULL</code> and <code>ft_initial_investment_entry.name VARCHAR(100) NULL</code>; <code>down_revision = ea8407e31992</code>. No backfill (existing rows get <code>NULL</code>), no index / CHECK / constraint. <code>downgrade()</code> drops both columns and is <strong>LOSSY</strong> — every <code>code</code> / <code>name</code> value written under this revision is permanently discarded, the same intentional posture the docstring states as for <code>e7c4d9b21a83</code> (<code>note</code>) and <code>d112fa78e9c2</code> (<code>quarter_year_label</code>).</td></tr>
+    <tr><td>Chain</td><td><code>f1a2b3c4d5e6</code> — <code>create_ft_tables</code> (2026-08-22) — creates all 5 Phase 1 tables in one migration; <code>down_revision = None</code> (first migration in the chain) → <code>c001eb66b381</code> — <code>create_ft_update_tracking_list_tables</code> (2026-08-25) — creates the 2 Phase 2 tables → <code>20260827_1000_d112fa78e9c2</code> — <code>split_quarter_year_label_into_quarter_and_year</code> (2026-08-27) — drops <code>ft_update_tracking_list.quarter_year_label</code> (VARCHAR(50)) and replaces it with two independent nullable <code>INTEGER</code> columns, <code>quarter</code> and <code>year</code> → <code>e7c4d9b21a83</code> — <code>add_note_to_ft_initial_investment_entry</code> (2026-08-30 — Phase 5 / ADR-018) — adds the additive nullable <code>ft_initial_investment_entry.note VARCHAR(500) NULL</code>; <code>downgrade()</code> is a LOSSY <code>op.drop_column</code> → <code>20260831_1000_ea8407e31992</code> — <code>add_bond_type_and_ft_bond</code> (2026-08-31 — Phase 7 / ADR-024, ADR-025) — (1) widens <code>ck_ft_tracking_item_type</code> from the 6-value list to 7 by drop + recreate (additive at the value level, safe with data present — Postgres cannot <code>ALTER</code> a CHECK expression), and (2) creates <code>ft_bond</code> (with <code>ck_ft_bond_amount_nonneg</code> and <code>ix_ft_bond_tracking_item_id</code>). <code>downgrade()</code> is <strong>GUARDED and LOSSY</strong>: it raises <code>RuntimeError</code> if any <code>ft_tracking_item</code> row still has <code>type = 'BOND'</code> (those rows would violate the narrowed 6-value CHECK), otherwise it drops <code>ft_bond</code> (discarding every registered bond) and re-narrows the CHECK → <code>20260831_1100_00f7a890545d</code> — <code>add_code_name_to_ft_initial_investment_entry</code> (2026-08-31 — Phase 7 / ADR-023, <strong>head</strong> — see the row above)</td></tr>
     <tr><td>Startup behaviour</td><td>Unlike the main backend, this service does <strong>not</strong> call <code>Base.metadata.create_all</code> at startup as a dev convenience. Migrations must be applied out-of-band (<code>alembic upgrade head</code>) before the service starts.</td></tr>
   </tbody>
 </table>
@@ -309,13 +340,14 @@ item cascades to remove the balance row.</code></pre>
     <tr><td><code>categories.py</code></td><td><code>/categories</code></td><td>Category CRUD by id + nested Sub-category create/list/reorder</td></tr>
     <tr><td><code>sub_categories.py</code></td><td><code>/sub-categories</code></td><td>Sub-category CRUD by id + nested Tracking Item create/list/reorder</td></tr>
     <tr><td><code>tracking_items.py</code></td><td><code>/items</code></td><td>Tracking Item CRUD by id + nested Ledger Entry create/list + running-total</td></tr>
-    <tr><td><code>entries.py</code></td><td><code>/entries</code></td><td>Ledger Entry CRUD by id</td></tr>
+    <tr><td><code>entries.py</code></td><td><code>/entries</code></td><td>Ledger Entry CRUD by id — <em>(Phase 7)</em> <code>EntryCreate</code>/<code>EntryUpdate</code>/<code>EntryOut</code> and the running-total row gain optional <code>code</code>/<code>name</code> labels (§13.1, §15.6)</td></tr>
+    <tr><td><code>bonds.py</code> <em>(Phase 7)</em></td><td><code>/items/{id}/bonds</code> + <code>/bonds/{id}</code></td><td>Standalone BOND register — collection under a tracking item + single bond by id; <code>status</code> computed on every read — see §15</td></tr>
     <tr><td><code>update_tracking_lists.py</code> <em>(Phase 2)</em></td><td><code>/sets/{id}/update-lists</code> + <code>/update-lists</code></td><td>Update Tracking List header CRUD, hierarchy+delta detail view, bulk balance upsert — see §7</td></tr>
     <tr><td><code>dashboard.py</code> <em>(Phase 3)</em></td><td><code>/sets/{id}/dashboard</code></td><td>Single read-only GET returning the quarterly/yearly balance-grid rollup — see §8</td></tr>
     <tr><td><code>export.py</code> <em>(Phase 4)</em></td><td><code>/sets/{id}/export</code></td><td>Single read-only GET returning a full, restorable JSON snapshot of the tracking set — see §12.1</td></tr>
   </tbody>
 </table>
-<div class="callout">Unlike every other router in this table, <code>update_tracking_lists.py</code> declares no single fixed <code>prefix=</code> on its <code>APIRouter</code> — it spans two URL families (<code>/sets/{set_id}/update-lists</code> for header create/list, and standalone <code>/update-lists/{list_id}...</code> for everything else), so each route spells out its full path explicitly. This mirrors how <code>tracking_sets.py</code> already nests <code>/sets/{set_id}/categories</code> alongside its own <code>/sets</code> CRUD.</div>
+<div class="callout">Unlike most routers in this table, <code>update_tracking_lists.py</code> declares no single fixed <code>prefix=</code> on its <code>APIRouter</code> — it spans two URL families (<code>/sets/{set_id}/update-lists</code> for header create/list, and standalone <code>/update-lists/{list_id}...</code> for everything else), so each route spells out its full path explicitly. This mirrors how <code>tracking_sets.py</code> already nests <code>/sets/{set_id}/categories</code> alongside its own <code>/sets</code> CRUD. <em>(Phase 7)</em> <code>bonds.py</code> follows the same no-prefix shape for the same reason — it spans <code>/items/{item_id}/bonds</code> (collection under an item) and standalone <code>/bonds/{bond_id}</code> — mirroring how <code>tracking_items.py</code> + <code>entries.py</code> already split the ledger feature.</div>
 <p>All routers are mounted under the app-level prefix <code>settings.api_prefix = "/api/v1/tracking"</code> (set in <code>main.py</code> via <code>app.include_router(v1_router, prefix=settings.api_prefix)</code>), so the full external path for, e.g., listing sets is <code>GET /api/v1/tracking/sets</code>.</p>
 
 <h3>5.1 Ownership pattern</h3>
@@ -670,6 +702,16 @@ item cascades to remove the balance row.</code></pre>
       <td><em>(Phase 5)</em> When a tracking set has no Update Tracking List with both <code>year</code> and <code>quarter</code> set, the balance grid yields no current values, so no item is covered and the "Original Investment vs Profit" section is omitted from the Email Dashboard export.</td>
       <td>Minor and correct-by-consequence rather than a bug: with zero eligible snapshots there is genuinely nothing to compare a cost basis against. The email still sends with its balance tables and backup attachment.</td>
     </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-12</span></td>
+      <td><em>(Phase 7)</em> Bond status is derived independently in two languages — the canonical Python <code>compute_bond_status</code> (<code>app/services/bond_status.py</code>) and a TypeScript parity mirror <code>src/lib/bond-status.ts</code> used only for the in-form preview (§15.1, ADR-020).</td>
+      <td>The two can drift. Parity is locked by <code>src/lib/__tests__/bond-status.test.ts</code> and must be re-verified on any change to the Python rule (boundary inclusivity, the missing-date → <code>Unknown</code> case, the Asia/Bangkok "today" source, or the check ordering for inverted dates). Same class of gap as ADR-019's Python/TS delta-engine parity.</td>
+    </tr>
+    <tr>
+      <td><span class="badge yellow">TD-FT-13</span></td>
+      <td><em>(Phase 7)</em> <code>ea8407e31992</code> / <code>00f7a890545d</code> are not exercised by the automated test run — the tracking-backend test bootstrap builds its schema with <code>Base.metadata.create_all</code>, not <code>alembic upgrade head</code> (same pre-existing, project-wide gap as TD-FT-10).</td>
+      <td>A broken migration — including the guarded lossy <code>downgrade()</code> in <code>ea8407e31992</code> — would not be caught by CI. Mitigated only by hand-running <code>alembic upgrade head</code> (and a manual round-trip check) during deployment (§4).</td>
+    </tr>
   </tbody>
 </table>
 
@@ -885,6 +927,7 @@ item cascades to remove the balance row.</code></pre>
     <tr><td><code>lib/tracking-analysis-export.ts</code></td><td>Pure CSV string builders: <code>buildAnalysisCsv</code>, <code>buildComparisonCsv</code>, <code>csvField</code> (RFC-4180 quoting + formula-injection neutralisation), header-comment builder, filename helpers.</td></tr>
     <tr><td><code>lib/tracking-format.ts</code></td><td>Shared cell / number / delta formatting (wraps the app-wide <code>formatNumber</code>); the "–" / "No prior data" / "n/a (prior was ฿0)" conventions defined once for the charts and the Scoped grid.</td></tr>
     <tr><td><code>components/charts/svg-primitives.tsx</code></td><td>Shared inline-SVG primitives (<code>linearScale</code>, <code>niceTicks</code>, <code>buildLinePath</code>/<code>buildAreaPath</code>/<code>buildStackedAreaPaths</code> with null-gap breaking, <code>formatPeriodLabel</code>, <code>&lt;AxisX&gt;</code>/<code>&lt;AxisY&gt;</code>/<code>&lt;ChartTooltip&gt;</code>). A light additive extraction of logic currently inline on <code>tracking/dashboard/page.tsx</code> and <code>analytics/daily-performance/page.tsx</code>; those two pages were <strong>not</strong> refactored this iteration. <strong>No charting library</strong> (ADR-019 #5).</td></tr>
+    <tr><td><code>components/tracking/balanceGridStyles.ts</code></td><td>Shared balance-grid style tokens — Tailwind class-string literals for the header (<code>border-b-2</code> divider, elevated-surface tint), <code>border-l-2</code> period-group borders, <code>font-mono</code> cells and padding, the em-dash blank cell, <code>text-gain</code> / <code>text-loss</code> delta colours and the row-emphasis tiers — plus the <code>useSharedBalanceColWidths</code> per-column <code>ch</code>-width helper. Consumed by <code>ScopedBalanceGrid</code> so the Scoped Dashboard grid matches the main <code>tracking/dashboard</code> year table; that page still holds its own local copies of the same literals (intentional interim duplication, no behaviour change on the dashboard side).</td></tr>
     <tr><td><code>components/layouts/Sidebar.tsx</code></td><td><em>touched</em> — one <code>&lt;SubLink&gt;</code> line added.</td></tr>
   </tbody>
 </table>
@@ -919,7 +962,228 @@ item cascades to remove the balance row.</code></pre>
 </ul>
 
 <h3>14.7 Deployment</h3>
-<p>Frontend-only build; no migration, no config change, no service restart beyond the normal frontend deploy. Rollback = revert the route directory, the three <code>lib/</code> files, <code>components/charts/svg-primitives.tsx</code>, and the one <code>Sidebar.tsx</code> line. Independent of ADR-018 (they do not overlap).</p>
+<p>Frontend-only build; no migration, no config change, no service restart beyond the normal frontend deploy. Rollback = revert the route directory, the three <code>lib/</code> files, <code>components/charts/svg-primitives.tsx</code>, <code>components/tracking/balanceGridStyles.ts</code>, and the one <code>Sidebar.tsx</code> line. Independent of ADR-018 (they do not overlap).</p>
+
+<hr>
+
+<h2>15. BOND register &amp; ledger CODE/NAME (Phase 7 / ADR-020–ADR-025)</h2>
+<p>Phase 7 adds a standalone register of individual bond holdings plus two optional label columns on the ledger. Its schema footprint is two migrations: <code>ea8407e31992</code> (widen <code>ck_ft_tracking_item_type</code> to 7 values + create <code>ft_bond</code>) and <code>00f7a890545d</code> (additive nullable <code>ft_initial_investment_entry.code</code> / <code>name</code>) — both covered in §3 and §4. Everything else is read-time computation and CRUD wiring. New code: <code>app/models/bond.py</code>, <code>app/schemas/bond.py</code>, <code>app/services/bond_status.py</code>, <code>app/api/v1/endpoints/bonds.py</code> (registered in <code>app/api/v1/router.py</code>), and on the frontend <code>src/lib/bond-status.ts</code> + <code>src/components/tracking/BondsSection.tsx</code>. Backend test suites: <code>tests/test_bond_status.py</code>, <code>tests/test_bonds.py</code>, <code>tests/test_entries_code_name.py</code> (285/285 tracking-backend tests pass; 98% coverage; migration round-trip verified by hand).</p>
+
+<h3>15.1 <code>compute_bond_status</code> — read-time status derivation</h3>
+<p>Source: new pure module <code>app/services/bond_status.py</code>. Two public callables:</p>
+<ul>
+  <li><code>bangkok_today() -&gt; date</code> — the reference "now" for status. Returns <code>datetime.now(tz).date()</code> where <code>tz</code> is <code>ZoneInfo("Asia/Bangkok")</code>, falling back to a fixed <code>UTC+07:00</code> offset (<code>timezone(timedelta(hours=7))</code>) only when the IANA tz database is unavailable on the host (e.g. a Windows dev box without <code>tzdata</code>). Bangkok — not the server's local tz or UTC — is used so a bond that starts or expires "today" flips at Bangkok midnight, matching how the Financial Tracker's single user thinks about their holdings.</li>
+  <li><code>compute_bond_status(start: date | None, expired: date | None, today: date) -&gt; BondStatus</code> — a pure function, no I/O, no clock read of its own (the caller passes <code>today</code>). <code>BondStatus</code> is <code>Literal["Pre-order", "Active", "Expire", "Unknown"]</code>.</li>
+</ul>
+<p>The rule, in evaluation order:</p>
+<table>
+  <thead><tr><th>#</th><th>Test</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>start is None or expired is None</code></td><td><code>"Unknown"</code></td></tr>
+    <tr><td>2</td><td><code>today &lt; start</code></td><td><code>"Pre-order"</code></td></tr>
+    <tr><td>3</td><td><code>today &gt; expired</code></td><td><code>"Expire"</code></td></tr>
+    <tr><td>4</td><td>otherwise (i.e. <code>start &lt;= today &lt;= expired</code>)</td><td><code>"Active"</code></td></tr>
+  </tbody>
+</table>
+<ul>
+  <li><strong>Both bounds inclusive</strong> — <code>today == start</code> and <code>today == expired</code> are both <code>"Active"</code>.</li>
+  <li><strong>Missing-date wins first</strong> — the <code>None</code> check precedes the ordering checks, so a bond with only one of the two dates is <code>"Unknown"</code>, never <code>"Pre-order"</code>/<code>"Active"</code>.</li>
+  <li><strong>Inverted dates</strong> (<code>start &gt; expired</code>, if a client somehow persists them) never raise. Checks 2 then 3 apply in order: the bond reads <code>"Pre-order"</code> until <code>today &gt;= start</code>, then <code>"Expire"</code> once <code>today &gt; expired</code> (already true given the inversion); it is never <code>"Active"</code>. This ordering is the documented, deterministic behaviour.</li>
+</ul>
+<div class="callout warn"><strong>Never stored.</strong> <code>ft_bond</code> has no <code>status</code> column (§3). Status is recomputed on <em>every</em> read. The bonds endpoints capture a single <code>bangkok_today()</code> once per request and evaluate every bond in the response against that one date, so a list response never mixes reference dates. The <strong>server value is canonical.</strong> The frontend <code>src/lib/bond-status.ts</code> is a byte-for-byte parity mirror of the four-way rule used <em>only</em> for the in-form status preview while the user is still typing dates; the persisted row always shows the server-computed value. As with ADR-019's Python/TS delta engine, <strong>this parity must be re-verified on any change to the server rule</strong> — boundary inclusivity, the missing-date case, the Bangkok "today" source, or the inverted-date check ordering. Locked by <code>src/lib/__tests__/bond-status.test.ts</code>; tracked as TD-FT-12 (§11).</div>
+
+<h3>15.2 <code>bonds.py</code> — endpoints, gating, and ownership</h3>
+<p>Source: <code>app/api/v1/endpoints/bonds.py</code>. The router carries <strong>no <code>prefix=</code></strong> (its routes span <code>/items/{item_id}/bonds</code> and <code>/bonds/{bond_id}</code>) — the same shape as <code>update_tracking_lists.py</code> and the <code>tracking_items.py</code>+<code>entries.py</code> pair (§5). All five routes require the standard Bearer token (<code>get_current_user_id</code>).</p>
+<table>
+  <thead><tr><th>Route</th><th>Success</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /items/{item_id}/bonds</code></td><td>200 <code>BondOut[]</code></td><td>Ordered by <code>start_date</code> asc (<code>NULLS LAST</code>), then <code>created_at</code> asc. Type-gated (see below).</td></tr>
+    <tr><td><code>POST /items/{item_id}/bonds</code></td><td>201 <code>BondOut</code></td><td>Type-gated. Body <code>BondCreate</code>.</td></tr>
+    <tr><td><code>GET /bonds/{bond_id}</code></td><td>200 <code>BondOut</code></td><td>Instance op — <strong>not</strong> type-re-gated.</td></tr>
+    <tr><td><code>PUT /bonds/{bond_id}</code></td><td>200 <code>BondOut</code></td><td>Instance op — not type-re-gated. Body <code>BondUpdate</code>, presence-aware (see §15.3).</td></tr>
+    <tr><td><code>DELETE /bonds/{bond_id}</code></td><td>204 (no body)</td><td>Instance op — not type-re-gated. Hard delete.</td></tr>
+  </tbody>
+</table>
+<p><strong>Type gate (ADR-021).</strong> The two collection routes resolve the parent item via <code>_get_item_or_404(item_id, user_id, db)</code> (filters by <code>id</code> AND <code>TrackingItem.user_id</code> in one query → bare 404) and then call <code>_require_bond_item(item)</code>, which raises <strong>HTTP 400</strong> if <code>item.type != "BOND"</code> (message quotes both the actual and required type). The three by-id routes deliberately skip this re-check: a bond can only exist because it was created against a BOND item, and an item's <code>type</code> is not editable away from BOND while bonds hang off it without going through the same UI — mirroring how <code>entries.py</code>'s by-id routes do not re-assert the parent item's <code>initial_investment_tracking</code> flag.</p>
+<p><strong>Ownership (ADR-021).</strong> <code>_get_bond_or_404(bond_id, user_id, db)</code> is a single <code>SELECT ... JOIN ft_tracking_item ON ft_tracking_item.id = ft_bond.tracking_item_id WHERE ft_bond.id = :bond_id AND ft_tracking_item.user_id = :uid</code>. <code>ft_bond</code> has no <code>user_id</code> of its own — the JOIN is the only ownership path. No match → bare <strong>404</strong> ("Bond not found"), never 403, consistent with §5.1.</p>
+<p><strong>Serialisation.</strong> <code>_to_out(bond, today)</code> builds <code>BondOut</code> and injects <code>status=compute_bond_status(bond.start_date, bond.expired_date, today)</code> — <code>status</code> is a constructor argument, not an ORM attribute. Every handler passes <code>bangkok_today()</code> captured once (the list route captures it once for the whole list).</p>
+
+<h3>15.3 <code>bond.py</code> schemas — validation &amp; presence-aware update</h3>
+<p>Source: <code>app/schemas/bond.py</code>. camelCase wire keys via <code>CamelModel</code>/<code>CamelRequestModel</code>; imports the generalised <code>_coerce_blank</code> from <code>app/schemas/initial_investment_entry.py</code> (ADR-023).</p>
+<ul>
+  <li><strong><code>BondCreate</code></strong> — <code>code</code> (required, <code>max_length=100</code>, rejected if blank/whitespace after <code>strip()</code> — but stored <em>un-trimmed</em>), <code>issuer</code> (optional, <code>max_length=200</code>, <code>_coerce_blank</code> → <code>None</code>), <code>start_date</code> / <code>expired_date</code> (optional <code>date</code>; Pydantic rejects a non-ISO / unparseable value with 422), <code>amount</code> (<code>Decimal</code>, required, validator rejects <code>&lt; 0</code> — <code>0</code> is allowed).</li>
+  <li><strong><code>BondUpdate</code></strong> — every field optional. The handler applies <code>model_dump(exclude_unset=True)</code>: a key the client omits leaves that column untouched; an explicit <code>null</code> clears <code>issuer</code> / <code>start_date</code> / <code>expired_date</code>. <code>code</code> and <code>amount</code> are <code>NOT NULL</code> at the DB layer, so an explicit <code>null</code> for either is rejected by the endpoint with <strong>422</strong> ("code cannot be null" / "amount cannot be null") — it is a client error, not a clear-to-null request. Over-length / negative-amount / bad-date validation is identical to <code>BondCreate</code>.</li>
+  <li><strong><code>BondOut</code></strong> — <code>id</code>, <code>tracking_item_id</code>, <code>code</code>, <code>issuer</code>, <code>start_date</code>, <code>expired_date</code>, <code>amount</code>, <code>status</code> (<code>BondStatus</code> enum, always present), <code>created_at</code>, <code>updated_at</code>. Serialised camelCase: <code>trackingItemId</code>, <code>startDate</code>, <code>expiredDate</code>, <code>createdAt</code>, <code>updatedAt</code>. <code>amount</code> is emitted as a JSON string like every other <code>Decimal</code> in this API.</li>
+</ul>
+<p>Full request/response reference and worked examples: <a href="../02-infrastructure/API-FINANCIAL-TRACKER.html">API-FINANCIAL-TRACKER.html</a> "Bonds (Phase 7)".</p>
+
+<h3>15.4 <code>ft_bond</code> table</h3>
+<p>Columns, types, constraints, the FK CASCADE, the single index, and the deliberate absence of a <code>user_id</code> column are documented in <strong>§3 (<code>ft_bond</code>)</strong>. The migration that creates it (<code>ea8407e31992</code>) — including the CHECK-widening drop+recreate and the guarded lossy downgrade — is in <strong>§4</strong>.</p>
+
+<h3>15.5 Ledger <code>code</code> / <code>name</code> labels</h3>
+<p>Documented in <strong>§13.1</strong> (the generalised <code>_coerce_blank</code> validator, presence-aware <code>EntryUpdate</code>) and <strong>§3</strong> (the two nullable columns). Summary: <code>EntryCreate</code> / <code>EntryUpdate</code> gain camelCase <code>code</code> / <code>name</code> (each <code>str | None</code>, <code>max_length=100</code>, <code>_coerce_blank</code>); <code>EntryOut</code> and <code>RunningTotalRow</code> gain <code>code: str | null</code> / <code>name: str | null</code>. Handlers in <code>tracking_items.py</code> (create, running-total) and <code>entries.py</code> (update) pass them through exactly like <code>note</code> — omit = untouched, <code>null</code>/<code>""</code>/whitespace = clear, &gt; 100 → 422. No effect on the running-total math or the <code>profitVsOriginal</code> block. <code>_coerce_blank_note</code> is retained as a backwards-compatible alias of <code>_coerce_blank</code>.</p>
+
+<h3>15.6 Non-integration (ADR-024)</h3>
+<p>Nothing in <code>dashboard_balance_grid.py</code>, <code>original_investment_rollup.py</code>, <code>update_tracking.py</code>, <code>export.py</code>, the frontend Analysis derivations (<code>lib/tracking-analysis.ts</code>), or <code>tracking-export-html.ts</code> reads <code>ft_bond</code>. The property/non-property split (<code>_rollup_values</code> keyed on <code>type == "Property"</code>, §8.3, §12.4) places a <code>BOND</code> item on the non-property side automatically — no code change was needed. A "total active bond value" surface is possible future work, not built.</p>
+
+<h3>15.7 Architecture Decision Records</h3>
+
+<h4>ADR-020 — Bond status is computed on read, never stored</h4>
+<p><strong>Status:</strong> <span class="badge green">Accepted</span> (2026-08-31)</p>
+<p><strong>Context.</strong> A bond's lifecycle position (before term / in term / matured) is a deterministic function of two dates and the current date. It changes with the passage of time, not with any user action. Storing it would require a scheduled job (or a trigger) to advance it, and would let the stored value silently disagree with the dates after an edit. The Financial Tracker already computes every derived figure — running totals, deltas, profit, the whole balance grid — at read time and stores nothing derived.</p>
+<p><strong>Decision.</strong> <code>ft_bond</code> has <strong>no <code>status</code> column</strong>. Status is derived on every read by the pure helper <code>compute_bond_status(start, expired, today)</code> in <code>app/services/bond_status.py</code>. "Today" is the current date in <strong>Asia/Bangkok</strong>, captured once per request via <code>bangkok_today()</code> and passed in, so all bonds in one response share a reference date. Rule: missing either date → <code>"Unknown"</code>; <code>today &lt; start</code> → <code>"Pre-order"</code>; <code>today &gt; expired</code> → <code>"Expire"</code>; else → <code>"Active"</code>. Both bounds inclusive. The server value is canonical; the frontend <code>src/lib/bond-status.ts</code> is a parity mirror used only for the in-form preview.</p>
+<p><strong>Alternatives considered.</strong></p>
+<ul>
+  <li><em>Persist <code>status</code> and advance it with a cron / Celery beat job</em> — rejected: adds a scheduled-work dependency this single-user service does not otherwise have, and creates a staleness window between midnight and the job run.</li>
+  <li><em>Persist <code>status</code>, recompute it on write only</em> — rejected: a bond that is never edited would keep a stale status forever; the value would be a lie the moment a boundary date passes.</li>
+  <li><em>A generated / computed column in Postgres</em> — rejected: Postgres <code>GENERATED</code> columns cannot reference a non-immutable value like <code>CURRENT_DATE</code>, and a view would still need the tz handling that lives more naturally in Python.</li>
+  <li><em>Compute in the frontend only</em> — rejected: the value must be correct for any API consumer, not just this UI, and the four-way rule + tz handling should have one canonical home.</li>
+</ul>
+<p><strong>Consequences.</strong> Positive: zero background work; the status can never contradict the dates; one canonical rule; trivially unit-testable (<code>tests/test_bond_status.py</code>). Negative: the rule now exists in Python <em>and</em> TypeScript (for the preview) — <strong>parity must be re-verified whenever the Python rule changes</strong> (boundary inclusivity, the missing-date case, the Bangkok "today" source, the inverted-date ordering); locked by <code>src/lib/__tests__/bond-status.test.ts</code>, tracked as TD-FT-12. A client that caches a <code>BondOut</code> across a Bangkok-midnight boundary will show a stale badge until it re-fetches — acceptable for this app.</p>
+<p><strong>Risks.</strong> Host without <code>tzdata</code> falls back to a fixed <code>UTC+07:00</code> offset — correct for Bangkok (no DST) but a latent surprise if the helper is ever reused for a DST zone. Python/TS parity drift (mitigated by the test).</p>
+
+<h4>ADR-021 — Bonds are a nested sub-resource of a tracking item, type-gated, owned by JOIN</h4>
+<p><strong>Status:</strong> <span class="badge green">Accepted</span> (2026-08-31)</p>
+<p><strong>Context.</strong> A bond only makes sense under a tracking item that represents a bond holding. The rest of this service enforces ownership with a bare <code>user_id</code> column per table and a <code>_get_or_404(id, user_id)</code> helper returning 404 (never 403). The ledger feature already models a "belongs to an item" collection (<code>entries.py</code>) whose by-id routes do not re-assert the parent's eligibility flag.</p>
+<p><strong>Decision.</strong> Bonds are reached as <code>/items/{item_id}/bonds</code> (collection) and <code>/bonds/{bond_id}</code> (instance). The two collection routes are <strong>type-gated</strong>: after resolving the parent item (filtered by <code>id</code> + <code>user_id</code>), a helper raises <strong>HTTP 400</strong> if <code>item.type != "BOND"</code>. The three instance routes (<code>GET</code>/<code>PUT</code>/<code>DELETE</code> by id) are <strong>not</strong> type-re-gated — mirroring <code>entries.py</code>. <code>ft_bond</code> has <strong>no <code>user_id</code> column</strong>; ownership is a JOIN to <code>ft_tracking_item.user_id</code> in <code>_get_bond_or_404</code>. A non-owner or unknown id gets a bare 404.</p>
+<p><strong>Alternatives considered.</strong></p>
+<ul>
+  <li><em>Give <code>ft_bond</code> its own <code>user_id</code> column</em> (like every other <code>ft_*</code> table) — rejected: it would be redundant with the FK to <code>ft_tracking_item</code>, could drift from the parent's <code>user_id</code>, and needs backfilling. The FK CASCADE already guarantees a bond cannot outlive its item; a JOIN is one clause.</li>
+  <li><em>Flat top-level <code>/bonds</code> resource with <code>trackingItemId</code> in the body</em> — rejected: loses the natural "list the bonds for this item" route and the create-time type gate.</li>
+  <li><em>Type-gate the by-id routes too</em> — rejected: a bond's existence already implies its parent was a BOND item at creation; re-checking on every read adds a JOIN condition and a failure mode (what does a 400 on <code>DELETE</code> even mean?) for no security gain, and diverges from the <code>entries.py</code> precedent.</li>
+  <li><em>Return 403 for a wrong-owner bond</em> — rejected: the whole service returns 404 to avoid confirming resource existence across users (§5.1).</li>
+</ul>
+<p><strong>Consequences.</strong> Positive: consistent with the ledger feature's shape; no schema redundancy; ownership is un-spoofable (no client-supplied owner anywhere). Negative: every bond read carries a JOIN it would not need if <code>user_id</code> were denormalised onto <code>ft_bond</code> — negligible at this scale and index-supported by the PK / FK. A future "all my bonds across items" query would need a JOIN through <code>ft_tracking_item</code> rather than a single indexed column.</p>
+<p><strong>Risks.</strong> Low. If a future feature allows changing an item's <code>type</code> away from <code>BOND</code>, orphan-in-spirit bonds could remain readable via the by-id routes — acceptable, and a validation on the item update would close it.</p>
+
+<h4>ADR-022 — No uniqueness constraint on <code>ft_bond.code</code></h4>
+<p><strong>Status:</strong> <span class="badge green">Accepted</span> (2026-08-31)</p>
+<p><strong>Context.</strong> <code>code</code> is a required short identifier for a bond (ISIN, a broker's code, or the user's own label). A user might legitimately register the same instrument twice (two tranches, two purchase lots) or reuse a personal label.</p>
+<p><strong>Decision.</strong> <code>code</code> is <code>NOT NULL</code> and non-blank, but has <strong>no <code>UNIQUE</code> constraint</strong> — not per item, not per user, not globally — in this iteration.</p>
+<p><strong>Alternatives considered.</strong></p>
+<ul>
+  <li><em><code>UNIQUE (tracking_item_id, code)</code></em> — rejected for now: blocks the legitimate "same bond, two lots" case and forces the user to invent disambiguating suffixes.</li>
+  <li><em>Application-level "warn on duplicate" without a DB constraint</em> — deferred: no requirement for it yet; easy to add later as a non-breaking UI affordance.</li>
+</ul>
+<p><strong>Consequences.</strong> Positive: no artificial data-entry friction; matches the "personal tool, minimal constraints" posture used elsewhere (e.g. duplicate Update Tracking List dates, §3). Negative: the UI cannot assume <code>code</code> identifies a row — it must key on <code>id</code>. Introducing a uniqueness rule later would be a breaking change requiring a data cleanup.</p>
+<p><strong>Risks.</strong> Low. Accidental duplicate entries are possible; they are visible in the list and individually deletable.</p>
+
+<h4>ADR-023 — Reuse the ledger blank→NULL coercion for bond <code>issuer</code> and entry <code>code</code>/<code>name</code></h4>
+<p><strong>Status:</strong> <span class="badge green">Accepted</span> (2026-08-31)</p>
+<p><strong>Context.</strong> Phase 5 added <code>_coerce_blank_note</code> in <code>app/schemas/initial_investment_entry.py</code>: a Pydantic validator that maps <code>None</code> and whitespace-only strings to <code>NULL</code> while storing everything else verbatim (no trimming, Thai-safe, multi-line-safe). Phase 7 introduces three more optional free-text fields with the same "blank means absent" semantics: <code>ft_bond.issuer</code> and <code>ft_initial_investment_entry.code</code> / <code>name</code>.</p>
+<p><strong>Decision.</strong> Generalise <code>_coerce_blank_note</code> to <code>_coerce_blank</code> (identical body, field-agnostic name) and reuse it as the validator for <code>issuer</code>, <code>code</code>, and <code>name</code> as well as <code>note</code>. Keep <code>_coerce_blank_note = _coerce_blank</code> as a backwards-compatible alias for any external importer.</p>
+<p><strong>Alternatives considered.</strong></p>
+<ul>
+  <li><em>Copy the validator body into <code>bond.py</code></em> — rejected: three near-identical copies of a subtle rule (the "no trimming" part is easy to get wrong) is exactly the duplication this codebase avoids for delta math (§8.2) and profit math (§13.2).</li>
+  <li><em>A new shared <code>app/schemas/_text.py</code> module</em> — rejected as over-engineering for one 3-line function; <code>bond.py</code> already imports from <code>initial_investment_entry.py</code> conceptually adjacent.</li>
+  <li><em><code>str.strip()</code> the stored value</em> — rejected: consistent with the Phase 5 decision that meaningful leading/trailing spaces and Thai text must round-trip unchanged.</li>
+</ul>
+<p><strong>Consequences.</strong> Positive: one implementation, one set of edge-case tests, identical behaviour across all four fields (blank/whitespace → <code>NULL</code>, everything else verbatim). Negative: a cross-module import coupling <code>bond.py</code> to <code>initial_investment_entry.py</code> — mild, and in the direction of a stable helper. Renaming the canonical function again would need the alias updated.</p>
+<p><strong>Risks.</strong> Minimal. The alias could rot if the canonical implementation diverges — covered by the entry and bond schema tests exercising the same cases.</p>
+
+<h4>ADR-024 — The bond register is standalone; explicit non-integration</h4>
+<p><strong>Status:</strong> <span class="badge green">Accepted</span> (2026-08-31)</p>
+<p><strong>Context.</strong> The Financial Tracker has several aggregate surfaces — the Dashboard balance grid and its rollups (§8), the original-investment rollup (§13.3), the Update Tracking List snapshots (§7), the Email/HTML export (§12), and the frontend Analysis view (§14). A new "bonds" concept could plausibly feed any of them. The Phase 7 requirement is a <em>register</em>: a place to record and see bond holdings and their lifecycle status, nothing more.</p>
+<p><strong>Decision.</strong> <code>ft_bond</code> is read by <strong>nothing except its own endpoints</strong>. No aggregate service, export, or analysis derivation references it. In particular: bonds do not appear in the balance grid, do not contribute to any subtotal / grand total / property split, are not part of the JSON export or the emailed HTML, and are absent from the Analysis view. The property/non-property split keys on <code>type == "Property"</code> exact-match, so a <code>BOND</code> item lands in "non-property" with <strong>no code change</strong>. Surfacing a "total active bond value" figure is recorded as possible <strong>future</strong> work and is explicitly not built.</p>
+<p><strong>Alternatives considered.</strong></p>
+<ul>
+  <li><em>Roll each bond's <code>amount</code> into the owning item's balance-grid value</em> — rejected: the balance grid is fed exclusively by Update Tracking List snapshots (a deliberate single source, §8); injecting a second, differently-shaped source would break its "recompute from snapshots" model and its delta semantics.</li>
+  <li><em>Add an "active bond total" row to the Dashboard now</em> — rejected as scope creep; no requirement, and it forces decisions about which statuses count and how it interacts with the property split.</li>
+  <li><em>Include bonds in the JSON export</em> — deferred: the export is versioned (<code>exportVersion</code>) and a restore path is not built; adding <code>ft_bond</code> to it is a clean future bump, not a Phase 7 need.</li>
+</ul>
+<p><strong>Consequences.</strong> Positive: Phase 7 touches no aggregate code path, so the balance grid, rollups, export, and Analysis view carry <strong>zero regression risk</strong> from it; the feature ships behind its own endpoints and one UI section. Negative: a user cannot yet see bonds reflected in their net-worth totals or back them up via the Email Dashboard — a known, documented limitation (FUNCTIONAL.html §15.5).</p>
+<p><strong>Risks.</strong> Low. The main risk is expectation mismatch (a user assuming bonds count toward totals) — addressed by the FUNCTIONAL.html §15.5 callout.</p>
+
+<h4>ADR-025 — CHECK-constraint evolution by drop + recreate, with a guarded lossy downgrade</h4>
+<p><strong>Status:</strong> <span class="badge green">Accepted</span> (2026-08-31)</p>
+<p><strong>Context.</strong> Adding <code>BOND</code> to the allowed <code>ft_tracking_item.type</code> values means changing the expression of the existing <code>ck_ft_tracking_item_type</code> CHECK. PostgreSQL has no <code>ALTER CONSTRAINT</code> to rewrite a CHECK expression in place — the constraint must be dropped and recreated. The forward change is purely additive at the value level (no existing row can violate a <em>wider</em> IN-list), so it is safe with data present. The reverse change narrows the list, which <em>can</em> be violated by rows written while the wider list was active.</p>
+<p><strong>Decision.</strong> Migration <code>ea8407e31992</code> <code>upgrade()</code>: <code>op.drop_constraint(_TYPE_CK, "ft_tracking_item", type_="check")</code> then <code>op.create_check_constraint(...)</code> with the 7-value list. Its <code>downgrade()</code> is <strong>guarded and lossy</strong>: it first <code>SELECT count(*) FROM ft_tracking_item WHERE type = 'BOND'</code> and <strong>raises <code>RuntimeError</code></strong> if any such row exists (instructing the operator to re-point or delete those items first), because silently deleting or rewriting user rows inside a downgrade is unacceptable; only then does it drop <code>ft_bond</code> (permanently discarding every registered bond — the same intentional unrecoverable posture as <code>e7c4d9b21a83</code>'s <code>note</code> drop) and recreate the 6-value CHECK. The list literal lives in two module constants (<code>_TYPES_6</code> / <code>_TYPES_7</code>) and is also duplicated in <code>app/models/tracking_item.py</code>.</p>
+<p><strong>Alternatives considered.</strong></p>
+<ul>
+  <li><em>Convert <code>type</code> to a Postgres <code>ENUM</code></em> — rejected: <code>ENUM</code> value additions are themselves awkward to reverse, the column is already <code>VARCHAR(30)</code> with a working CHECK, and this was not the place to take on that migration.</li>
+  <li><em>Best-effort downgrade that rewrites <code>type='BOND'</code> rows to some other value</em> — rejected: picking a substitute type is a silent data corruption; failing loudly and telling the operator what to do is safer.</li>
+  <li><em>Best-effort downgrade that deletes <code>type='BOND'</code> rows</em> — rejected for the same reason; also cascades to their sub-rows.</li>
+  <li><em>Non-lossy downgrade that keeps <code>ft_bond</code></em> — impossible while narrowing the CHECK if BOND rows exist; and an orphan <code>ft_bond</code> table with no way to create rows for it is not meaningfully "kept".</li>
+</ul>
+<p><strong>Consequences.</strong> Positive: forward migration is safe online; the reverse path cannot silently destroy user data — it either runs cleanly (no BOND items) or stops with an actionable error. Negative: a downgrade is a deliberate two-step operator task (clean up BOND items, then downgrade), not a one-command rollback; and it <em>does</em> discard bond rows once it proceeds. The 3-place duplication of the type list (2 migration constants + the model) must be kept in sync.</p>
+<p><strong>Risks.</strong> The drop+recreate of the CHECK briefly holds an <code>ACCESS EXCLUSIVE</code> lock on <code>ft_tracking_item</code> while it re-validates every row — negligible at this scale, potentially notable on a large table. Not exercised by CI (TD-FT-13).</p>
+
+<hr>
+
+<h2>16. Bond <code>interest_rate</code>, computed <code>years</code> &amp; bonds-table sorting (Phase 7 enhancement / ADR-026)</h2>
+<p>An additive enhancement to the Phase 7 bond register (§15). Schema footprint is one migration — <code>b1c2d3e4f5a6</code> (<code>add_interest_rate_to_ft_bond</code>): an additive nullable <code>ft_bond.interest_rate NUMERIC(19,4)</code> column plus a range CHECK. Everything else is read-time computation and frontend wiring. Touched code: <code>app/models/bond.py</code> (new column + CHECK in <code>__table_args__</code>), <code>app/schemas/bond.py</code> (<code>interestRate</code> on <code>BondCreate</code> / <code>BondUpdate</code>; <code>interestRate</code> + <code>years</code> on <code>BondOut</code>), <code>app/services/bond_status.py</code> (new pure <code>compute_bond_years</code> beside <code>compute_bond_status</code>), <code>app/api/v1/endpoints/bonds.py</code> (<code>_to_out</code> injects <code>years</code>), and on the frontend <code>src/components/tracking/BondsSection.tsx</code> (new columns, client-side sort) + <code>src/lib/bond-status.ts</code> (preview-only <code>years</code> mirror). The bond register remains standalone (ADR-024): <code>interest_rate</code> and <code>years</code> feed nothing outside the register.</p>
+
+<h3>16.1 <code>ft_bond.interest_rate</code> column</h3>
+<table>
+  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>interest_rate</code></td><td>NUMERIC(19,4)</td><td>Yes</td><td><em>(Phase 7 enh. — migration <code>b1c2d3e4f5a6</code>)</em> Optional annual interest / coupon rate entered as a <strong>percent</strong> (a stored <code>3.25</code> means 3.25% p.a.; a stored <code>3</code> means 3%). Same numeric shape as <code>amount</code> — 4 dp, excess precision quantized on write (Postgres rounds half away from zero), not rejected. Range-checked <code>0 &lt;= interest_rate &lt;= 100</code> by a DB CHECK <em>and</em> a Pydantic validator. Additive, no backfill — pre-existing rows are <code>NULL</code>. Independently clearable via explicit <code>null</code> on update, exactly like <code>issuer</code> / <code>start_date</code> / <code>expired_date</code>.</td></tr>
+  </tbody>
+</table>
+<p><strong>Constraint:</strong> <code>ck_ft_bond_interest_rate_range</code> — <code>CHECK (interest_rate IS NULL OR (interest_rate &gt;= 0 AND interest_rate &lt;= 100))</code>. Sits alongside <code>ck_ft_bond_amount_nonneg</code> in <code>ft_bond.__table_args__</code>; both are unaffected by the other. No index is added for <code>interest_rate</code>.</p>
+<p>The full <code>ft_bond</code> table (all other columns, the FK CASCADE, <code>ix_ft_bond_tracking_item_id</code>, the deliberate absence of <code>user_id</code> and <code>status</code> columns) is in <strong>§3 (<code>ft_bond</code>)</strong>; the migration that adds this column is in <strong>§4</strong> and <strong>§16.4</strong>.</p>
+
+<h3>16.2 <code>compute_bond_years</code> — read-time term length</h3>
+<p>Source: <code>app/services/bond_status.py</code>, a new pure callable beside <code>compute_bond_status</code> (§15.1). No clock read of its own, no <code>today</code> parameter — term length is independent of the current date, unlike status.</p>
+<pre><code>compute_bond_years(start: date | None, expired: date | None) -&gt; int | None</code></pre>
+<p>The rule:</p>
+<table>
+  <thead><tr><th>#</th><th>Test</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>start is None or expired is None</code></td><td><code>None</code></td></tr>
+    <tr><td>2</td><td>otherwise</td><td><code>round_half_up( (expired - start).days / Decimal("365.25") )</code> as an <code>int</code></td></tr>
+  </tbody>
+</table>
+<ul>
+  <li><strong>Rounding.</strong> Uses <code>decimal.Decimal</code> quantized with <code>rounding=decimal.ROUND_HALF_UP</code> — ties are rounded <em>away from zero</em>. This is deliberately <strong>not</strong> Python's built-in <code>round()</code>, which does banker's rounding (round-half-to-even) and would make e.g. a <code>0.5</code>-year span round to <code>0</code>. A <code>183/365.25 = 0.5010…</code> span rounds to <code>1</code>; a <code>182/365.25 = 0.4983…</code> span rounds to <code>0</code>.</li>
+  <li><strong>Divisor.</strong> The fixed nominal year length <code>365.25</code>. The function does <strong>not</strong> count the actual leap days inside the span — a documented simplification (ADR-026), acceptable because <code>years</code> is an at-a-glance figure.</li>
+  <li><strong>Missing date wins first</strong> — like <code>compute_bond_status</code>, the <code>None</code> check precedes the arithmetic, so a bond with only one date yields <code>None</code> (renders "—"). A computed <code>0</code> is a real value and renders as <code>0</code>.</li>
+  <li><strong>Inverted dates</strong> (<code>expired &lt; start</code>) — <code>(expired - start).days</code> is negative and flows straight through with no clamp and no error; the result can be <code>0</code> or a negative <code>int</code>. Deterministic, matching how <code>compute_bond_status</code> tolerates inverted dates (§15.1).</li>
+</ul>
+<div class="callout warn"><strong>Never stored.</strong> <code>ft_bond</code> has no <code>years</code> column (§3). It is recomputed on <em>every</em> read — list, <code>GET</code>, <code>POST</code> response, <code>PUT</code> response — by <code>_to_out(bond, today)</code>, which now also injects <code>years=compute_bond_years(bond.start_date, bond.expired_date)</code> as a <code>BondOut</code> constructor argument (not an ORM attribute), the same pattern <code>status</code> uses. The <strong>server value is canonical.</strong> <code>src/lib/bond-status.ts</code> gains a byte-for-byte parity mirror of this rule used <em>only</em> for the in-form live preview while the user types the dates; the saved row always shows the server value. As with <code>compute_bond_status</code> (TD-FT-12), <strong>Python/TS parity must be re-verified on any change to the rule</strong> — the rounding mode, the <code>365.25</code> divisor, the missing-date case, or the inverted-date pass-through. Locked by <code>src/lib/__tests__/bond-status.test.ts</code>; backend cases in <code>tests/test_bond_status.py</code>.</div>
+
+<h3>16.3 <code>bond.py</code> schema changes &amp; <code>bonds.py</code></h3>
+<ul>
+  <li><strong><code>BondCreate</code></strong> — gains optional <code>interest_rate</code> (<code>Decimal | None</code>, camelCase <code>interestRate</code>). Validator rejects a value <code>&lt; 0</code> or <code>&gt; 100</code> with <strong>422</strong>; <code>0</code> and <code>100</code> are accepted; a non-numeric / non-finite value (e.g. <code>"abc"</code>, <code>NaN</code>, <code>Infinity</code>) is a <strong>422</strong> from Pydantic's <code>Decimal</code> coercion. Omitted → stored <code>NULL</code>.</li>
+  <li><strong><code>BondUpdate</code></strong> — <code>interest_rate</code> is optional and <strong>presence-aware</strong>: a key the client omits leaves the column untouched; an explicit <code>null</code> <strong>clears</strong> it. This differs from <code>code</code> / <code>amount</code> (whose explicit <code>null</code> is a 422 because they are <code>NOT NULL</code>) — <code>interest_rate</code> is nullable, so <code>null</code> is a legal clear, exactly like <code>issuer</code>. Same range / numeric validation as <code>BondCreate</code>.</li>
+  <li><strong><code>BondOut</code></strong> — gains <code>interestRate</code> (<code>Decimal</code>-as-string like <code>"3.2500"</code>, or <code>null</code>) and <code>years</code> (<code>int</code>, or <code>null</code>). <code>interestRate</code> is serialised as a JSON string like every other <code>Decimal</code>; <code>years</code> is a bare JSON number.</li>
+  <li><strong><code>bonds.py</code></strong> — no route signature change. <code>_to_out</code> gains the <code>years</code> injection (§16.2); <code>interest_rate</code> rides through as an ordinary mapped column on create / update / read. No new endpoint, no query-param, no change to ordering or the type gate (§15.2).</li>
+</ul>
+<p>Full request/response reference and the 422 catalogue additions: <a href="../02-infrastructure/API-FINANCIAL-TRACKER.html">API-FINANCIAL-TRACKER.html</a> "Bonds (Phase 7)".</p>
+
+<h3>16.4 Migration <code>b1c2d3e4f5a6</code></h3>
+<p>File <code>alembic/versions/20260902_1200_b1c2d3e4f5a6_add_interest_rate_to_ft_bond.py</code>. <code>revision = "b1c2d3e4f5a6"</code>, <code>down_revision = "00f7a890545d"</code> — it becomes the <strong>new single head</strong> of the tracking-backend chain (the prior head was the Phase 7 <code>00f7a890545d</code>). <code>upgrade()</code>: <code>op.add_column("ft_bond", sa.Column("interest_rate", sa.Numeric(19, 4), nullable=True))</code> then <code>op.create_check_constraint("ck_ft_bond_interest_rate_range", "ft_bond", "interest_rate IS NULL OR (interest_rate &gt;= 0 AND interest_rate &lt;= 100)")</code>. Additive nullable column + CHECK, <strong>no backfill</strong> (existing rows get <code>NULL</code>, which satisfies the CHECK). <code>downgrade()</code> drops the CHECK then the column and is <strong>LOSSY</strong> — every <code>interest_rate</code> value written under this revision is permanently discarded, the same intentional posture the docstrings state for <code>e7c4d9b21a83</code> (<code>note</code>) and <code>00f7a890545d</code> (<code>code</code>/<code>name</code>). Not exercised by CI — same pre-existing gap as TD-FT-13 (the test bootstrap builds schema with <code>Base.metadata.create_all</code>, not <code>alembic upgrade head</code>); verify by hand-running <code>alembic upgrade head</code> and a round-trip during deployment (§4).</p>
+
+<h3>16.5 Bonds-table client-side sorting (frontend)</h3>
+<p>Source: <code>src/components/tracking/BondsSection.tsx</code>. Entirely client-side over the already-fetched <code>BondOut[]</code>; <strong>no</strong> backend sort parameter exists and the server response order is unchanged (still <code>start_date</code> asc <code>NULLS LAST</code>, then <code>created_at</code> asc — §15.2), acting only as the initial order before the component re-sorts.</p>
+<ul>
+  <li><strong>Sortable columns (8):</strong> <code>CODE</code>, <code>ISSUER</code>, <code>START DATE</code>, <code>EXPIRED DATE</code>, <code>AMOUNT</code>, <code>STATUS</code>, <code>INTEREST RATE</code>, <code>YEARS</code>. The Actions column is not sortable.</li>
+  <li><strong>Toggle model:</strong> component state holds <code>{ column, direction }</code>. First click on a header sets <code>column</code> to it and <code>direction = "asc"</code>; clicking the already-active header flips <code>direction</code> to <code>"desc"</code>; clicking another header switches <code>column</code> and resets to <code>"asc"</code>. Initial state = <code>{ column: "expiredDate", direction: "asc" }</code>.</li>
+  <li><strong>Null handling:</strong> a null / missing comparand (<code>issuer</code>, <code>startDate</code>, <code>expiredDate</code>, <code>interestRate</code>, <code>years</code>) always sorts <strong>last</strong>, in <em>both</em> directions — nulls are partitioned out before the direction is applied, never merely treated as <code>-Infinity</code>.</li>
+  <li><strong>Comparators:</strong> <code>CODE</code> / <code>ISSUER</code> — locale string compare; <code>START DATE</code> / <code>EXPIRED DATE</code> — ISO date lexical / timestamp compare; <code>AMOUNT</code> / <code>INTEREST RATE</code> — numeric (parsed from the decimal string); <code>YEARS</code> — numeric integer; <code>STATUS</code> — mapped to a lifecycle rank <code>Pre-order(0) &lt; Active(1) &lt; Expire(2) &lt; Unknown(3)</code>, <strong>not</strong> alphabetical.</li>
+  <li><strong>Accessibility:</strong> each sortable header cell is a <code>&lt;th&gt;</code> whose only child is a real <code>&lt;button&gt;</code>; the <code>&lt;th&gt;</code> carries <code>aria-sort</code> = <code>"ascending"</code> / <code>"descending"</code> on the active column and <code>"none"</code> on the rest.</li>
+</ul>
+
+<h3>16.6 Non-integration (ADR-024 still holds)</h3>
+<p><code>interest_rate</code> and <code>years</code> are read only by the bond register — its schemas, its <code>_to_out</code>, and <code>BondsSection.tsx</code>. Nothing in <code>dashboard_balance_grid.py</code>, <code>original_investment_rollup.py</code>, <code>update_tracking.py</code>, <code>export.py</code>, the frontend Analysis derivations, or <code>tracking-export-html.ts</code> references either. No "weighted average coupon" or "projected interest income" surface is built — possible future work, explicitly out of scope (consistent with §15.6).</p>
+
+<h3>16.7 Architecture Decision Record</h3>
+
+<h4>ADR-026 — Bond <code>interest_rate</code> is a stored display-only column; <code>years</code> is computed on read like <code>status</code></h4>
+<p><strong>Status:</strong> <span class="badge green">Accepted</span> (2026-09-02)</p>
+<p><strong>Context.</strong> The bond register (§15, ADR-020–ADR-025) records a bond's identity, term dates, amount, and a computed lifecycle status. Two gaps surfaced in use: there is nowhere to note a bond's coupon rate, and the term length has to be worked out by hand from the two dates. A coupon rate is a fact the user supplies and that does not change with time; a term length is a deterministic function of the two dates. The register is deliberately standalone (ADR-024) and everything derived in the Financial Tracker is computed at read time and never persisted.</p>
+<p><strong>Decision.</strong> Add <code>ft_bond.interest_rate NUMERIC(19,4) NULL</code> — a <strong>stored</strong>, optional, user-entered percent (0–100 inclusive, enforced by <code>ck_ft_bond_interest_rate_range</code> and a Pydantic validator), 4 dp like <code>amount</code>, nullable-clearable on update. Add <code>years</code> as a <strong>computed, never-stored</strong> field: <code>compute_bond_years(start, expired) = round_half_up((expired - start).days / 365.25)</code> as an <code>int</code>, <code>None</code> if either date is missing, no clamp on inverted dates — a pure helper beside <code>compute_bond_status</code>, recomputed on every read, canonical on the server, mirrored preview-only in the frontend. Both fields are display-only: neither feeds any rollup, grid, export, or analysis figure.</p>
+<p><strong>Alternatives considered.</strong></p>
+<ul>
+  <li><em>Store <code>years</code> as a column too</em> — rejected: it would go stale the moment either date is edited, exactly the failure mode ADR-020 rejected for <code>status</code>; it is a pure function of data already on the row.</li>
+  <li><em>Compute <code>years</code> only in the frontend</em> — rejected: the value must be correct for any API consumer, and the rounding rule + <code>365.25</code> convention should have one canonical home (the Python helper), mirrored — not owned — by the UI.</li>
+  <li><em>Use Python's built-in <code>round()</code></em> — rejected: banker's rounding (round-half-to-even) is surprising here — a 6-month bond (<code>0.5</code> years) would round to <code>0</code>. <code>decimal.ROUND_HALF_UP</code> (ties away from zero) matches user expectation.</li>
+  <li><em>Count actual leap days in the span</em> — rejected as over-precision for an at-a-glance term figure; the fixed <code>365.25</code> divisor is simpler, stable, and documented.</li>
+  <li><em>Store <code>interest_rate</code> as a fraction (0–1) instead of a percent</em> — rejected: the user types "3.25" meaning 3.25%; storing the number they typed avoids a lossy ×100 round-trip and a class of "is this 3% or 300%?" bugs. Range CHECK 0–100 encodes the percent convention.</li>
+  <li><em>Clamp inverted-date <code>years</code> to 0</em> — rejected: silently hiding a data-entry mistake; passing the negative through is deterministic and consistent with <code>compute_bond_status</code>'s inverted-date handling (ADR-020 discussion).</li>
+</ul>
+<p><strong>Consequences.</strong> Positive: the register captures the one missing bond attribute and shows term length for free; <code>years</code> can never contradict the dates; one canonical rounding rule; trivially unit-testable; zero regression risk to any aggregate surface (ADR-024 unchanged). The bonds table also becomes sortable client-side on all 8 columns with proper <code>aria-sort</code>. Negative: the year rule now lives in Python <em>and</em> TypeScript (preview mirror) — parity must be re-verified on any rule change, same class of gap as ADR-019's delta engine and ADR-020's status mirror (TD-FT-12). A client caching a <code>BondOut</code> would keep a stale <code>years</code> only if it also cached stale dates — a non-issue in practice.</p>
+<p><strong>Risks.</strong> Low. The <code>NUMERIC(19,4)</code> column silently rounds sub-0.0001 precision on <code>interest_rate</code> (accepted, matches <code>amount</code>). Python/TS parity drift on the year rule (mitigated by <code>src/lib/__tests__/bond-status.test.ts</code>). Migration <code>b1c2d3e4f5a6</code> is not exercised by CI (TD-FT-13); its lossy <code>downgrade()</code> discards <code>interest_rate</code> values — intentional and documented.</p>
 
 </body>
 </html>

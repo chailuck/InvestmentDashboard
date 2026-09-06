@@ -35,7 +35,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
 <h1>API Spec — Financial Tracker</h1>
 
 <div class="obj">
-<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1); Update Tracking Lists with read-time balance deltas (Phase 2); a read-only quarterly/yearly balance-grid rollup report (Phase 3); and a full-snapshot export endpoint (Phase 4) used by the Dashboard page's "Email Dashboard" button. Phase 5 (ADR-018) adds an optional <code>note</code> on ledger entries, a <code>profitVsOriginal</code> block on the running-total response, and a per-set "profit vs original investment" rollup endpoint. Served by the independent <code>tracking-backend</code> microservice. All routes are mounted under <code>/api/v1/tracking</code>.
+<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1); Update Tracking Lists with read-time balance deltas (Phase 2); a read-only quarterly/yearly balance-grid rollup report (Phase 3); and a full-snapshot export endpoint (Phase 4) used by the Dashboard page's "Email Dashboard" button. Phase 5 (ADR-018) adds an optional <code>note</code> on ledger entries, a <code>profitVsOriginal</code> block on the running-total response, and a per-set "profit vs original investment" rollup endpoint. Phase 7 (ADR-020–ADR-025) adds the <code>BOND</code> tracking-item type, a standalone bond-register resource (5 endpoints) whose <code>status</code> is computed on every read, and optional <code>code</code> / <code>name</code> labels on ledger entries. Served by the independent <code>tracking-backend</code> microservice. All routes are mounted under <code>/api/v1/tracking</code>.
 </div>
 
 <div class="tip">
@@ -77,12 +77,17 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Get one Tracking Item</td></tr>
   <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Partial update of a Tracking Item</td></tr>
   <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Delete (cascades to ledger entries) (HTTP 204)</td></tr>
-  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>Add a ledger entry (HTTP 201)</td></tr>
-  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>List ledger entries, chronological</td></tr>
-  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/running-total</code></td><td>Ledger entries with a cumulative running total, plus a <code>profitVsOriginal</code> block <em>(Phase 5)</em></td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>Add a ledger entry (HTTP 201) — <em>(Phase 7)</em> accepts optional <code>code</code> / <code>name</code></td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>List ledger entries, chronological — each carries <code>code</code> / <code>name</code> <em>(Phase 7)</em></td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/running-total</code></td><td>Ledger entries with a cumulative running total, plus a <code>profitVsOriginal</code> block <em>(Phase 5)</em>; each row carries <code>code</code> / <code>name</code> <em>(Phase 7)</em></td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Get one ledger entry</td></tr>
-  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Update a ledger entry</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Update a ledger entry — <em>(Phase 7)</em> presence-aware <code>code</code> / <code>name</code></td></tr>
   <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/entries/{id}</code></td><td>Delete a ledger entry (HTTP 204)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{itemId}/bonds</code></td><td><em>(Phase 7)</em> List bonds registered under a BOND-type item</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/items/{itemId}/bonds</code></td><td><em>(Phase 7)</em> Register a bond under a BOND-type item (HTTP 201)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/bonds/{bondId}</code></td><td><em>(Phase 7)</em> Get one bond (with computed <code>status</code>)</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/bonds/{bondId}</code></td><td><em>(Phase 7)</em> Update a bond (presence-aware)</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/bonds/{bondId}</code></td><td><em>(Phase 7)</em> Delete a bond (HTTP 204)</td></tr>
   <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/sets/{setId}/update-lists</code></td><td><em>(Phase 2)</em> Create an Update Tracking List header (HTTP 201)</td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/sets/{setId}/update-lists</code></td><td><em>(Phase 2)</em> List Update Tracking Lists for a set, newest date first</td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/update-lists/{listId}</code></td><td><em>(Phase 2)</em> Get one Update Tracking List header</td></tr>
@@ -261,7 +266,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   "createdAt":                  "2026-08-23T09:25:00+00:00",
   "updatedAt":                  "2026-08-23T09:25:00+00:00"
 }</code></pre>
-<p><code>type</code> must be one of: <code>Bank account</code>, <code>Property</code>, <code>Investment Account</code>, <code>TaxSaving</code>, <code>Materials</code>, <code>Insurance</code>.</p>
+<p><code>type</code> must be one of: <code>Bank account</code>, <code>Property</code>, <code>Investment Account</code>, <code>TaxSaving</code>, <code>Materials</code>, <code>Insurance</code>, <code>BOND</code> <em>(Phase 7)</em>. An item saved as <code>BOND</code> gains a bond register — see <strong>Bonds (Phase 7)</strong> below.</p>
 
 <h3>POST /api/v1/tracking/sub-categories/{subCategoryId}/items</h3>
 <pre><code>// Request — name and type are required; the rest default as shown
@@ -275,7 +280,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
 // Response 201 — full item object</code></pre>
 <div class="err">
 <strong>404 Not Found</strong> — parent sub-category not found.<br>
-<strong>422 Unprocessable Entity</strong> — <code>type</code> is not one of the 6 allowed values.
+<strong>422 Unprocessable Entity</strong> — <code>type</code> is not one of the 7 allowed values.
 </div>
 
 <h3>GET /api/v1/tracking/sub-categories/{subCategoryId}/items</h3>
@@ -316,7 +321,8 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
 <h3>POST /api/v1/tracking/items/{itemId}/entries</h3>
 <pre><code>// Request — amount must be non-zero; positive = increase, negative = decrease.
 // note (Phase 5) is optional: max 500 chars; blank/whitespace-only is stored as null; Thai text kept verbatim.
-{ "amount": 50000.00, "entryDate": "2026-01-15", "note": "annual top-up" }
+// code, name (Phase 7) are optional: max 100 chars each; blank/whitespace-only -> null; Thai kept verbatim.
+{ "amount": 50000.00, "entryDate": "2026-01-15", "note": "annual top-up", "code": "TH0623A", "name": "5Y govvy tranche" }
 
 // Response 201
 {
@@ -325,18 +331,20 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
   "amount":          50000.00,
   "entryDate":       "2026-01-15",
   "note":            "annual top-up",
+  "code":            "TH0623A",
+  "name":            "5Y govvy tranche",
   "createdAt":       "2026-08-23T09:30:00+00:00",
   "updatedAt":       "2026-08-23T09:30:00+00:00"
 }</code></pre>
-<p><code>note</code> is <code>null</code> when omitted, sent empty, or sent blank/whitespace-only.</p>
+<p><code>note</code>, <code>code</code>, and <code>name</code> are each <code>null</code> when omitted, sent empty, or sent blank/whitespace-only. The three fields are independent.</p>
 <div class="err">
 <strong>400 Bad Request</strong> — item does not have <code>initialInvestmentTracking</code> enabled: <code>{"detail": "This tracking item does not have initial_investment_tracking enabled; enable it before adding ledger entries"}</code><br>
 <strong>404 Not Found</strong> — item not found.<br>
-<strong>422 Unprocessable Entity</strong> — <code>amount</code> is zero (<code>"amount must not be zero (positive = increase, negative = decrease)"</code>), or <code>note</code> is longer than 500 characters.
+<strong>422 Unprocessable Entity</strong> — <code>amount</code> is zero (<code>"amount must not be zero (positive = increase, negative = decrease)"</code>), <code>note</code> longer than 500 characters, or <code>code</code> / <code>name</code> longer than 100 characters.
 </div>
 
 <h3>GET /api/v1/tracking/items/{itemId}/entries</h3>
-<p>Ordered by <code>entryDate</code> ascending, then <code>createdAt</code> ascending for same-day entries. Each entry object has the same shape as the POST response above, including the <em>(Phase 5)</em> <code>note</code> field (<code>null</code> when the entry has no note).</p>
+<p>Ordered by <code>entryDate</code> ascending, then <code>createdAt</code> ascending for same-day entries. Each entry object has the same shape as the POST response above, including the <em>(Phase 5)</em> <code>note</code> field and the <em>(Phase 7)</em> <code>code</code> / <code>name</code> fields (each <code>null</code> when the entry has no value).</p>
 <div class="err"><strong>404 Not Found</strong> — item not found.</div>
 
 <h3>GET /api/v1/tracking/items/{itemId}/running-total</h3>
@@ -345,8 +353,8 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
   "itemId":       "e4d5f6a7-...",
   "currentTotal": 45000.00,
   "entries": [
-    { "id": "...", "entryDate": "2026-01-15", "amount": 50000.00, "runningTotal": 50000.00, "note": "annual top-up" },
-    { "id": "...", "entryDate": "2026-03-01", "amount": -5000.00, "runningTotal": 45000.00, "note": null }
+    { "id": "...", "entryDate": "2026-01-15", "amount": 50000.00, "runningTotal": 50000.00, "note": "annual top-up", "code": "TH0623A", "name": "5Y govvy tranche" },
+    { "id": "...", "entryDate": "2026-03-01", "amount": -5000.00, "runningTotal": 45000.00, "note": null, "code": null, "name": null }
   ],
   "profitVsOriginal": {
     "netOriginalInvestment": 45000.00,
@@ -380,23 +388,159 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
 
 <h3>PUT /api/v1/tracking/entries/{id}</h3>
 <pre><code>// Request — presence-aware (Phase 5): only the fields you send are changed.
-//   omit a field                       -> left untouched
-//   "note": null  /  "note": ""        -> clears the note (blank/whitespace is coerced to null)
+//   omit a field                         -> left untouched
+//   "note": null  /  "note": ""          -> clears the note (blank/whitespace is coerced to null)
+//   "code": null / "name": null / ""     -> clears that label (Phase 7; same blank->null coercion)
 //   "amount": null  /  "entryDate": null -> rejected with 422 (these are non-nullable)
-{ "amount": 55000.00, "note": "sold half position" }
+{ "amount": 55000.00, "note": "sold half position", "name": "renamed tranche" }
 
-// Response 200 — updated entry (same shape as the POST response, including note)</code></pre>
+// Response 200 — updated entry (same shape as the POST response, including note / code / name)</code></pre>
 <div class="obj">
 <strong>Presence-aware semantics:</strong> the handler applies <code>model_dump(exclude_unset=True)</code>, so a field absent from the request body is not modified. This is what lets a caller change only <code>note</code> without resending <code>amount</code> / <code>entryDate</code>. Explicit <code>null</code> is meaningful only for <code>note</code> (it clears it); for <code>amount</code> and <code>entryDate</code>, <code>null</code> is a validation error, not "leave as-is".
 </div>
 <div class="err">
 <strong>404 Not Found</strong> — entry not found.<br>
-<strong>422 Unprocessable Entity</strong> — <code>amount</code> provided as zero; <code>amount</code> or <code>entryDate</code> provided as <code>null</code>; or <code>note</code> longer than 500 characters.
+<strong>422 Unprocessable Entity</strong> — <code>amount</code> provided as zero; <code>amount</code> or <code>entryDate</code> provided as <code>null</code>; <code>note</code> longer than 500 characters; or <code>code</code> / <code>name</code> longer than 100 characters.
 </div>
 
 <h3>DELETE /api/v1/tracking/entries/{id}</h3>
 <p>Hard delete. HTTP 204.</p>
 <div class="err"><strong>404 Not Found</strong> — entry not found.</div>
+
+<hr>
+
+<h2>Bonds (Phase 7)</h2>
+
+<div class="obj">
+A standalone register of individual bond holdings, each attached to a Tracking Item of type <code>BOND</code>. Implemented in <code>app/api/v1/endpoints/bonds.py</code>; schemas in <code>app/schemas/bond.py</code>; status logic in <code>app/services/bond_status.py</code>. The router carries <strong>no prefix</strong> — its routes span <code>/items/{itemId}/bonds</code> (collection under an item) and <code>/bonds/{bondId}</code> (single bond by id), the same shape the ledger feature uses across <code>tracking_items.py</code> + <code>entries.py</code>. <strong>Standalone by design</strong> (ADR-024): bonds do not appear in the Dashboard balance grid, the Update Tracking Lists, the original-investment rollup, the export snapshot, or the Analysis view. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §15 and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §15 (ADR-020–ADR-025).
+</div>
+
+<h4>Wire-format conventions</h4>
+<ul>
+  <li><strong>camelCase</strong> keys, like the rest of this API: <code>trackingItemId</code>, <code>startDate</code>, <code>expiredDate</code>, <code>createdAt</code>, <code>updatedAt</code>.</li>
+  <li><code>amount</code> is a <strong>JSON string</strong> (e.g. <code>"100000.0000"</code>) — every <code>Decimal</code> in this API is serialised as a string. It is quantized to 4 decimal places on write by the <code>NUMERIC(19,4)</code> column: excess precision is silently rounded (half away from zero), <strong>not</strong> rejected.</li>
+  <li><code>status</code> is a <strong>computed string enum</strong> — <code>"Pre-order" | "Active" | "Expire" | "Unknown"</code> — present on every bond read, never accepted on write and never stored. It is derived on every read from <code>startDate</code> / <code>expiredDate</code> versus the current date in <strong>Asia/Bangkok</strong>: <code>Unknown</code> if either date is missing; <code>Pre-order</code> if today &lt; start; <code>Active</code> if start ≤ today ≤ expired (both bounds inclusive); <code>Expire</code> if today &gt; expired. All bonds in a list response are evaluated against one "today" captured once for that response.</li>
+  <li><code>interestRate</code> <em>(Phase 7 enh. — ADR-026)</em> is an <strong>optional stored</strong> annual rate entered as a <strong>percent</strong> — <code>"3.2500"</code> means 3.25% p.a. JSON string like every other <code>Decimal</code> (or <code>null</code>). Allowed range <strong>0–100 inclusive</strong>; 4 dp, excess precision rounded on write.</li>
+  <li><code>years</code> <em>(Phase 7 enh. — ADR-026)</em> is a <strong>computed integer</strong> (bare JSON number, or <code>null</code>) — <code>round_half_up((expiredDate - startDate).days / 365.25)</code>. Present on every bond read; never accepted on write, never stored. <code>null</code> when either date is missing; not clamped for inverted dates (can be <code>0</code> or negative). See §16 of <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a>.</li>
+  <li>Dates are ISO <code>YYYY-MM-DD</code> strings or <code>null</code>.</li>
+</ul>
+
+<h4>Schemas</h4>
+<table>
+  <thead><tr><th>Schema</th><th>Field</th><th>Rules</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="6"><code>BondCreate</code><br>(POST body)</td><td><code>code</code></td><td>string, <strong>required</strong>, must be non-blank after trim (blank / whitespace-only → 422), max 100 chars. Stored verbatim (not trimmed).</td></tr>
+    <tr><td><code>issuer</code></td><td>string | null, optional, max 200 chars. Blank / whitespace-only → stored as <code>null</code>.</td></tr>
+    <tr><td><code>startDate</code></td><td>string date (<code>YYYY-MM-DD</code>) | null, optional. A non-ISO / unparseable value → 422.</td></tr>
+    <tr><td><code>expiredDate</code></td><td>string date | null, optional. Not validated against <code>startDate</code> (inverted dates are accepted — see <code>status</code> rule).</td></tr>
+    <tr><td><code>amount</code></td><td>string / number decimal, <strong>required</strong>, must be <strong>≥ 0</strong> (zero is allowed; negative → 422). Quantized to 4dp on write (rounded, not rejected).</td></tr>
+    <tr><td><code>interestRate</code> <em>(ADR-026)</em></td><td>string / number decimal | null, <strong>optional</strong>. Percent value; must be <strong>0 ≤ interestRate ≤ 100</strong> (both bounds valid; <code>&lt; 0</code> → 422, <code>&gt; 100</code> → 422, non-numeric / non-finite → 422). Quantized to 4dp on write. Omitted → stored <code>null</code>.</td></tr>
+    <tr><td colspan="2"><code>BondUpdate</code><br>(PUT body)</td><td>All fields optional and <strong>presence-aware</strong>: a key you omit leaves that column untouched. An explicit <code>null</code> clears <code>issuer</code> / <code>startDate</code> / <code>expiredDate</code> <strong>and <code>interestRate</code></strong> <em>(ADR-026 — <code>interestRate</code> is nullable, so explicit <code>null</code> is a legal clear, same as <code>issuer</code>)</em>. An explicit <code>null</code> for <code>code</code> or <code>amount</code> → <strong>422</strong> ("code cannot be null" / "amount cannot be null") — these are NOT NULL. Same length / non-negative / date / interest-rate-range validation as <code>BondCreate</code>.</td></tr>
+    <tr><td colspan="2"><code>BondOut</code><br>(all responses)</td><td><code>{ id, trackingItemId, code, issuer, startDate, expiredDate, amount (string), interestRate (string | null), status (enum), years (int | null), createdAt, updatedAt }</code>. <code>issuer</code> / <code>startDate</code> / <code>expiredDate</code> / <code>interestRate</code> / <code>years</code> may be <code>null</code>; <code>status</code> is always one of the four enum values; <code>interestRate</code> and <code>years</code> <em>(ADR-026)</em> are on every list / GET / POST / PUT response.</td></tr>
+  </tbody>
+</table>
+
+<h3>GET /api/v1/tracking/items/{itemId}/bonds</h3>
+<p>Lists the bonds registered under a <code>BOND</code>-type item, ordered by <code>startDate</code> ascending (bonds with no <code>startDate</code> last), then by creation time.</p>
+<pre><code>// Response 200 — BondOut[]
+[
+  {
+    "id":             "d1e2f3a4-...",
+    "trackingItemId": "e4d5f6a7-...",
+    "code":           "TH0623A",
+    "issuer":         "Ministry of Finance",
+    "startDate":      "2026-06-01",
+    "expiredDate":    "2031-06-01",
+    "amount":         "1000000.0000",
+    "interestRate":   "3.2500",
+    "status":         "Active",
+    "years":          5,
+    "createdAt":      "2026-08-31T09:00:00+00:00",
+    "updatedAt":      "2026-08-31T09:00:00+00:00"
+  },
+  {
+    "id":             "a9b8c7d6-...",
+    "trackingItemId": "e4d5f6a7-...",
+    "code":           "CORP-XYZ",
+    "issuer":         null,
+    "startDate":      null,
+    "expiredDate":    null,
+    "amount":         "250000.0000",
+    "interestRate":   null,
+    "status":         "Unknown",
+    "years":          null,
+    "createdAt":      "2026-08-31T09:05:00+00:00",
+    "updatedAt":      "2026-08-31T09:05:00+00:00"
+  }
+]</code></pre>
+<div class="err">
+<strong>400 Bad Request</strong> — the item exists and is owned by the caller, but its <code>type</code> is not <code>BOND</code>: <code>{"detail": "Tracking item is of type '&lt;actual&gt;'; bonds can only be registered against an item of type 'BOND'"}</code><br>
+<strong>404 Not Found</strong> — item does not exist or belongs to another user (bare 404, never 403).<br>
+<strong>401</strong> — missing / invalid / expired token.
+</div>
+
+<h3>POST /api/v1/tracking/items/{itemId}/bonds</h3>
+<pre><code>// Request — BondCreate. code and amount required; the rest optional.
+{
+  "code":         "TH0623A",
+  "issuer":       "Ministry of Finance",
+  "startDate":    "2026-06-01",
+  "expiredDate":  "2031-06-01",
+  "amount":       "1000000.00",
+  "interestRate": "3.25"
+}
+
+// Response 201 — BondOut (status + years computed from the dates; interestRate echoed as "3.2500")</code></pre>
+<div class="err">
+<strong>400 Bad Request</strong> — item's <code>type</code> is not <code>BOND</code> (same message as the GET above).<br>
+<strong>404 Not Found</strong> — item does not exist or is not owned by the caller.<br>
+<strong>422 Unprocessable Entity</strong> — <code>code</code> blank / whitespace-only or &gt; 100 chars; <code>amount</code> negative; <code>amount</code> missing; <code>startDate</code> / <code>expiredDate</code> not a valid ISO <code>YYYY-MM-DD</code> date; <code>issuer</code> &gt; 200 chars; <em>(ADR-026)</em> <code>interestRate</code> &lt; 0, <code>interestRate</code> &gt; 100, or <code>interestRate</code> non-numeric / non-finite (<code>0</code> and <code>100</code> are valid).<br>
+<strong>401</strong> — missing / invalid / expired token.
+</div>
+
+<h3>GET /api/v1/tracking/bonds/{bondId}</h3>
+<p>Returns one bond with its freshly-computed <code>status</code>. This is an instance route — it is <strong>not</strong> re-gated on the parent item's <code>type</code>.</p>
+<pre><code>// Response 200 — BondOut</code></pre>
+<div class="err">
+<strong>404 Not Found</strong> — bond does not exist, or its parent item is not owned by the caller (ownership is resolved by JOIN to <code>ft_tracking_item.user_id</code>; <code>ft_bond</code> has no owner column): <code>{"detail": "Bond not found"}</code><br>
+<strong>401</strong> — missing / invalid / expired token.
+</div>
+
+<h3>PUT /api/v1/tracking/bonds/{bondId}</h3>
+<p>Presence-aware partial update. An omitted key is left untouched; an explicit <code>null</code> clears <code>issuer</code> / <code>startDate</code> / <code>expiredDate</code> only. Instance route — not re-gated on the parent item's <code>type</code>.</p>
+<pre><code>// Request — BondUpdate. Every field optional.
+//   omit a field                                  -> left untouched
+//   "issuer": null / "startDate": null            -> clears that column
+//   "interestRate": null                          -> clears interestRate (ADR-026 — it is nullable)
+//   "code": null / "amount": null                 -> rejected with 422 (NOT NULL columns)
+{ "expiredDate": "2032-06-01", "amount": "1050000.00", "interestRate": "3.5" }
+
+// Response 200 — BondOut (status + years recomputed against the updated dates)</code></pre>
+<div class="err">
+<strong>404 Not Found</strong> — bond not found / not owned.<br>
+<strong>422 Unprocessable Entity</strong> — explicit <code>null</code> for <code>code</code> or <code>amount</code>; <code>amount</code> negative; <code>code</code> &gt; 100 / <code>issuer</code> &gt; 200 chars; <code>startDate</code> / <code>expiredDate</code> not a valid ISO date; <em>(ADR-026)</em> <code>interestRate</code> &lt; 0, &gt; 100, or non-numeric / non-finite.<br>
+<strong>401</strong> — missing / invalid / expired token.
+</div>
+
+<h3>DELETE /api/v1/tracking/bonds/{bondId}</h3>
+<p>Hard delete of a single bond. Deleting the parent Tracking Item (or anything above it) also removes its bonds via <code>ON DELETE CASCADE</code>. Instance route — not re-gated on the parent item's <code>type</code>. Returns HTTP 204 No Content.</p>
+<div class="err">
+<strong>404 Not Found</strong> — bond not found / not owned.<br>
+<strong>401</strong> — missing / invalid / expired token.
+</div>
+
+<h4>Bonds — <code>interestRate</code> &amp; <code>years</code> (Phase 7 enhancement / ADR-026)</h4>
+<p>Additive to every bond endpoint above; no route, path, or query-param change. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §16 and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §16.</p>
+<table>
+  <thead><tr><th>Field</th><th>On</th><th>Contract</th></tr></thead>
+  <tbody>
+    <tr><td><code>interestRate</code></td><td><code>BondCreate</code> request (<code>POST /items/{itemId}/bonds</code>)</td><td><strong>Optional</strong>, <code>number | string decimal | null</code>. Annual rate as a <strong>percent</strong> (<code>3.25</code> = 3.25% p.a.). Must satisfy <strong>0 ≤ value ≤ 100</strong>. Omitted ⇒ stored <code>null</code>. Quantized to 4 dp on write (rounded, not rejected).</td></tr>
+    <tr><td><code>interestRate</code></td><td><code>BondUpdate</code> request (<code>PUT /bonds/{bondId}</code>)</td><td><strong>Optional &amp; presence-aware.</strong> Omit the key ⇒ column untouched. Explicit <code>null</code> ⇒ <strong>clears</strong> it (legal, because <code>interestRate</code> is nullable — unlike <code>code</code>/<code>amount</code> whose explicit <code>null</code> is a 422; same behaviour as <code>issuer</code>). A supplied value is range-checked 0–100 as on create.</td></tr>
+    <tr><td><code>interestRate</code></td><td><code>BondOut</code> response — <em>list, GET, POST 201, PUT 200</em></td><td><code>string | null</code>. Decimal serialised as a string like <code>"3.2500"</code>; <code>null</code> when the bond has no rate.</td></tr>
+    <tr><td><code>years</code></td><td><code>BondOut</code> response — <em>list, GET, POST 201, PUT 200</em></td><td><strong>Computed, never stored, never accepted on write.</strong> <code>integer | null</code> (bare JSON number). <code>round_half_up((expiredDate − startDate).days / 365.25)</code> — ties away from zero, fixed 365.25 divisor (ignores actual leap days). <code>null</code> when <code>startDate</code> or <code>expiredDate</code> is missing; <code>0</code> is a real value; <strong>not clamped</strong> for inverted dates (may be <code>0</code> or negative). Recomputed on every read against the row's current dates.</td></tr>
+  </tbody>
+</table>
+<p><strong>422 additions</strong> (both <code>POST /items/{itemId}/bonds</code> and <code>PUT /bonds/{bondId}</code>): <code>interestRate &lt; 0</code>; <code>interestRate &gt; 100</code>; <code>interestRate</code> non-numeric or non-finite (e.g. <code>"abc"</code>, <code>NaN</code>, <code>Infinity</code>). <code>interestRate</code> = <code>0</code> and <code>interestRate</code> = <code>100</code> are valid. <code>years</code> is never part of a request and produces no error.</p>
 
 <hr>
 
@@ -738,11 +882,11 @@ A single read-only endpoint returning a full, restorable snapshot of one Trackin
 <h2>Common Error Handling</h2>
 <table>
   <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
-  <tr><td>400</td><td>Reorder ids not belonging to the parent; ledger action on an item with <code>initialInvestmentTracking=false</code>; Update Tracking List balance upsert containing a <code>trackingItemId</code> outside the list's own tracking set</td><td>Specific message per case</td></tr>
+  <tr><td>400</td><td>Reorder ids not belonging to the parent; ledger action on an item with <code>initialInvestmentTracking=false</code>; Update Tracking List balance upsert containing a <code>trackingItemId</code> outside the list's own tracking set; <em>(Phase 7)</em> bond create / list against a Tracking Item whose <code>type</code> is not <code>BOND</code></td><td>Specific message per case</td></tr>
   <tr><td>401</td><td>Missing/invalid/expired Bearer token, missing <code>jti</code> claim, or token revoked (blacklisted)</td><td>"Missing authentication credentials" / "Invalid token: ..." / "Token missing jti claim" / "Token has been revoked"</td></tr>
   <tr><td>404</td><td>Resource UUID not found, or belongs to another user (ownership check never distinguishes the two — see TECHNICAL.html §5.1)</td><td>"&lt;Resource&gt; not found"</td></tr>
   <tr><td>409</td><td>Duplicate Tracking Set name for the same user</td><td>"A tracking set with this name already exists"</td></tr>
-  <tr><td>422</td><td>Missing required field, wrong type, invalid <code>type</code> enum value, zero-amount ledger entry, ledger <code>note</code> longer than 500 chars, or an explicit <code>null</code> for a ledger entry's <code>amount</code> / <code>entryDate</code> on <code>PUT /entries/{id}</code> <em>(Phase 5)</em></td><td>Pydantic validation error array</td></tr>
+  <tr><td>422</td><td>Missing required field, wrong type, invalid <code>type</code> enum value, zero-amount ledger entry, ledger <code>note</code> longer than 500 chars, or an explicit <code>null</code> for a ledger entry's <code>amount</code> / <code>entryDate</code> on <code>PUT /entries/{id}</code> <em>(Phase 5)</em>; <em>(Phase 7)</em> ledger <code>code</code> / <code>name</code> longer than 100 chars; blank / over-length bond <code>code</code>, negative or missing bond <code>amount</code>, over-length bond <code>issuer</code>, non-ISO bond date, or an explicit <code>null</code> for a bond's <code>code</code> / <code>amount</code> on <code>PUT /bonds/{id}</code>; <em>(ADR-026)</em> bond <code>interestRate</code> &lt; 0, &gt; 100, or non-numeric / non-finite on <code>POST /items/{id}/bonds</code> or <code>PUT /bonds/{id}</code></td><td>Pydantic validation error array</td></tr>
   <tr><td>503</td><td>Redis unreachable while checking the token blacklist (fails closed, not open)</td><td>"Authentication service temporarily unavailable"</td></tr>
 </table>
 

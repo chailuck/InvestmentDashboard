@@ -106,6 +106,7 @@ _assert_test_database(TEST_DATABASE_URL)
 from jose import jwt as jose_jwt  # noqa: E402
 
 from app.database.session import Base, get_db  # noqa: E402
+from app.models.bond import Bond  # noqa: F401,E402
 from app.models.category import Category  # noqa: F401,E402
 from app.models.initial_investment_entry import InitialInvestmentEntry  # noqa: F401,E402
 from app.models.sub_category import SubCategory  # noqa: F401,E402

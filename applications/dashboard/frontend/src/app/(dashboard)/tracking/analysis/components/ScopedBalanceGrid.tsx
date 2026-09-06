@@ -2,7 +2,15 @@
 
 import { Fragment, useMemo } from 'react'
 import { cn } from '@/lib/utils'
-import { fmtBalance, fmtDeltaAmount, fmtDeltaPercent, NO_DATA_DASH, NO_PRIOR_DATA } from '@/lib/tracking-format'
+import { fmtBalance, fmtDeltaAmount, fmtDeltaPercent, NO_PRIOR_DATA } from '@/lib/tracking-format'
+import {
+  balanceGrid,
+  balanceValueClass,
+  deltaSignClass,
+  useSharedBalanceColWidths,
+  type BalanceEmphasis,
+  type BalanceWidthRow,
+} from '@/components/tracking/balanceGridStyles'
 import { yearlyRowView, type ScopedGrid, type ScopedRow } from '@/lib/tracking-analysis'
 import type { Granularity, Measure } from '../types'
 
@@ -12,6 +20,11 @@ import type { Granularity, Measure } from '../types'
  * `ScopedGrid` row list. Never applies the chart-only leading/trailing trim
  * to quarters (every quarter column is shown); it DOES trim whole
  * leading/trailing all-blank years, keeping interior all-blank years.
+ *
+ * Visual styling (column widths, header, group borders, row emphasis, blank
+ * / gain-loss colour coding) is deliberately identical to the main
+ * Tracking / Dashboard year table — the shared tokens live in
+ * `@/components/tracking/balanceGridStyles`.
  */
 export function ScopedBalanceGrid({
   scoped,
@@ -38,23 +51,146 @@ export function ScopedBalanceGrid({
     return lo > hi ? ys : ys.slice(lo, hi + 1)
   }, [scoped])
 
-  const deltaFmt = (amount: number | null, percent: number | null, hasData: boolean, hasPrev: boolean) => {
-    if (!hasData) return NO_DATA_DASH
-    if (!hasPrev) return NO_PRIOR_DATA
-    return measure === 'deltaPercent' ? fmtDeltaPercent(percent) : fmtDeltaAmount(amount)
+  // The exact Balance / Delta strings this grid will render — passed to the
+  // shared width helper so every per-year sub-table's columns line up, and
+  // keyed off `measure` (Δ amount vs Δ%) so the Delta column is sized for
+  // whichever it actually shows.
+  const fmt = useMemo(
+    () => ({
+      balance: (v: number) => fmtBalance(v),
+      deltaText: (amount: number, percent: number | null) =>
+        measure === 'deltaPercent'
+          ? fmtDeltaPercent(percent)
+          : percent !== null
+            ? `${fmtDeltaAmount(amount)} (${fmtDeltaPercent(percent)})`
+            : fmtDeltaAmount(amount),
+    }),
+    [measure],
+  )
+
+  // Width sample set: quarterly measures the raw per-quarter series; yearly
+  // measures the derived "as-of year end" series (its own values + its own
+  // year-over-year deltas), since that is what the yearly table renders.
+  const widthRows = useMemo<BalanceWidthRow[]>(() => {
+    const base = [...scoped.rows, ...scoped.exclusiveRows]
+    if (granularity !== 'yearly') return base
+    return base.map(r => {
+      const yv = yearlyRowView(r, scoped.axis)
+      return {
+        balance: yv.years.map(y => y.value),
+        deltaAmount: yv.deltaAmount,
+        deltaPercent: yv.deltaPercent,
+        hasData: yv.years.map(y => y.value !== null),
+        hasPreviousData: yv.hasPreviousData,
+      }
+    })
+  }, [scoped, granularity])
+
+  const colW = useSharedBalanceColWidths(widthRows, fmt)
+  const inlineWidth = (w: string) => ({ width: w, minWidth: w, maxWidth: w })
+
+  // ── row / label-cell / value emphasis, keyed off row kind ────────────────
+  const rowMeta = (
+    r: ScopedRow,
+  ): { row: string; labelTd: string; emphasis: BalanceEmphasis } => {
+    switch (r.kind) {
+      case 'scopeTotal':
+        return { row: balanceGrid.grandRow, labelTd: balanceGrid.grandLabelTd, emphasis: 'grand' }
+      case 'subCategorySubtotal':
+        return {
+          row: balanceGrid.subtotalRow,
+          labelTd: cn(balanceGrid.subtotalLabelTd, r.indent === 1 ? 'pl-8' : 'pl-3'),
+          emphasis: 'strong',
+        }
+      case 'item':
+        return {
+          row: balanceGrid.itemRow,
+          labelTd: cn(balanceGrid.itemLabelTd, r.indent === 1 ? 'pl-14' : 'pl-6'),
+          emphasis: 'normal',
+        }
+      case 'splitProperty':
+      case 'splitNonProperty':
+        return {
+          row: cn(balanceGrid.plainRow, 'text-ink-secondary italic'),
+          labelTd: cn(balanceGrid.plainLabelTd, 'pl-6'),
+          emphasis: 'normal',
+        }
+      default:
+        return { row: balanceGrid.plainRow, labelTd: balanceGrid.plainLabelTd, emphasis: 'normal' }
+    }
   }
 
-  const rowClass = (r: ScopedRow) =>
-    cn(
-      'border-t border-border/30',
-      (r.kind === 'scopeTotal' || r.kind === 'subCategorySubtotal') && 'font-semibold text-ink-primary',
-      (r.kind === 'splitProperty' || r.kind === 'splitNonProperty') && 'text-ink-secondary italic',
-      r.indent === 1 && '[&>td:first-child]:pl-6',
+  const balanceCell = (
+    emphasis: BalanceEmphasis,
+    hasData: boolean,
+    value: number | null | undefined,
+    groupBorder: boolean,
+  ) => (
+    <td
+      className={cn(
+        balanceGrid.balanceTd,
+        emphasis === 'grand' ? 'text-sm' : 'text-xs',
+        groupBorder && balanceGrid.groupBorder,
+      )}
+      style={inlineWidth(colW.balance)}
+    >
+      {!hasData || value === null || value === undefined ? (
+        <span className={balanceGrid.blankSpan}>{balanceGrid.blankGlyph}</span>
+      ) : (
+        <span className={balanceValueClass(emphasis)}>{fmtBalance(value)}</span>
+      )}
+    </td>
+  )
+
+  const deltaCell = (
+    amount: number | null | undefined,
+    percent: number | null | undefined,
+    hasData: boolean,
+    hasPrev: boolean,
+  ) => {
+    const w = inlineWidth(colW.delta)
+    if (!hasData || !hasPrev) {
+      return (
+        <td className={balanceGrid.deltaTd} style={w}>
+          <span
+            className={balanceGrid.blankSpan}
+            title={hasData && !hasPrev ? NO_PRIOR_DATA : undefined}
+          >
+            {balanceGrid.blankGlyph}
+          </span>
+        </td>
+      )
+    }
+    if (amount === null || amount === undefined) {
+      return (
+        <td className={balanceGrid.deltaTd} style={w}>
+          <span className={balanceGrid.blankSpan}>{balanceGrid.blankGlyph}</span>
+        </td>
+      )
+    }
+    const isPercentMeasure = measure === 'deltaPercent'
+    const signed = isPercentMeasure ? percent ?? amount : amount
+    return (
+      <td className={balanceGrid.deltaTd} style={w}>
+        <span className={balanceGrid.deltaWrap}>
+          <span className={cn(balanceGrid.deltaAmountSpan, deltaSignClass(signed))}>
+            {isPercentMeasure ? fmtDeltaPercent(percent) : fmtDeltaAmount(amount)}
+          </span>
+          {!isPercentMeasure && percent !== null && percent !== undefined && (
+            <span className={balanceGrid.deltaPercentSpan}>({fmtDeltaPercent(percent)})</span>
+          )}
+        </span>
+      </td>
     )
+  }
 
   const labelCell = (r: ScopedRow) =>
     r.kind === 'item' && r.itemId ? (
-      <button type="button" className="text-left text-brand-400 hover:underline" onClick={() => onDrillItem(r.itemId as string)}>
+      <button
+        type="button"
+        className="text-left text-brand-400 hover:underline"
+        onClick={() => onDrillItem(r.itemId as string)}
+      >
         {r.label}
         {r.exclusive && <span className="ml-1 badge-neutral">exclusive</span>}
       </button>
@@ -76,17 +212,28 @@ export function ScopedBalanceGrid({
     return (
       <div className="space-y-2">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs border-collapse">
+          <table className={balanceGrid.table}>
             <caption className="sr-only">Scoped yearly as-of balance grid</caption>
             <thead>
-              <tr className="text-ink-muted">
-                <th className="text-left px-2 py-1 font-medium">Row</th>
-                {years.map(y => {
+              <tr className={balanceGrid.headRow}>
+                <th scope="col" className={balanceGrid.headLabelTh}>Row</th>
+                {years.map((y, yi) => {
                   const yp = headerAsOf?.years.find(v => v.year === y)
+                  const asOf = yp?.asOfQuarter ? ` (as of Q${yp.asOfQuarter})` : ''
                   return (
-                    <th key={y} colSpan={2} className="text-right px-2 py-1 font-medium">
-                      {y}{yp?.asOfQuarter ? ` (as of Q${yp.asOfQuarter})` : ''}
-                    </th>
+                    <Fragment key={y}>
+                      <th
+                        scope="col"
+                        className={cn(balanceGrid.headValueTh, yi > 0 && balanceGrid.groupBorder)}
+                        style={inlineWidth(colW.balance)}
+                      >
+                        {y}
+                        {asOf}
+                      </th>
+                      <th scope="col" className={balanceGrid.headValueTh} style={inlineWidth(colW.delta)}>
+                        Δ
+                      </th>
+                    </Fragment>
                   )
                 })}
               </tr>
@@ -94,21 +241,23 @@ export function ScopedBalanceGrid({
             <tbody>
               {allRows.map((r, ri) => {
                 const yv = asOfByRow[ri]
+                const meta = rowMeta(r)
                 return (
-                  <tr key={r.key} className={rowClass(r)}>
-                    <td className="px-2 py-1">{labelCell(r)}</td>
-                    {years.map(y => {
+                  <tr key={r.key} className={meta.row}>
+                    <td className={meta.labelTd}>{labelCell(r)}</td>
+                    {years.map((y, yi) => {
                       const idx = yv.years.findIndex(v => v.year === y)
                       const point = yv.years[idx]
                       const hasData = !!point && point.value !== null
                       return (
                         <Fragment key={y}>
-                          <td className="px-2 py-1 text-right tabular-nums text-ink-primary">
-                            {hasData ? fmtBalance(point.value) : NO_DATA_DASH}
-                          </td>
-                          <td className="px-2 py-1 text-right tabular-nums text-ink-muted">
-                            {deltaFmt(yv.deltaAmount[idx] ?? null, yv.deltaPercent[idx] ?? null, hasData, yv.hasPreviousData[idx] ?? false)}
-                          </td>
+                          {balanceCell(meta.emphasis, hasData, point?.value ?? null, yi > 0)}
+                          {deltaCell(
+                            yv.deltaAmount[idx] ?? null,
+                            yv.deltaPercent[idx] ?? null,
+                            hasData,
+                            yv.hasPreviousData[idx] ?? false,
+                          )}
                         </Fragment>
                       )
                     })}
@@ -131,36 +280,50 @@ export function ScopedBalanceGrid({
         const quarters = scoped.axis.filter(p => p.year === year)
         return (
           <div key={year} className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
+            <table className={balanceGrid.table}>
               <caption className="sr-only">Scoped quarterly balance grid — {year}</caption>
               <thead>
-                <tr className="text-ink-muted">
-                  <th className="text-left px-2 py-1 font-medium">{year}</th>
-                  {quarters.map(q => (
-                    <th key={q.quarter} colSpan={2} className="text-right px-2 py-1 font-medium">Q{q.quarter}</th>
+                <tr className={balanceGrid.headRow}>
+                  <th scope="col" className={balanceGrid.headLabelTh}>{year}</th>
+                  {quarters.map((q, qi) => (
+                    <Fragment key={q.quarter}>
+                      <th
+                        scope="col"
+                        className={cn(balanceGrid.headValueTh, qi > 0 && balanceGrid.groupBorder)}
+                        style={inlineWidth(colW.balance)}
+                      >
+                        Q{q.quarter}
+                      </th>
+                      <th
+                        scope="col"
+                        className={balanceGrid.headValueTh}
+                        style={inlineWidth(colW.delta)}
+                      >
+                        Q{q.quarter} Δ
+                      </th>
+                    </Fragment>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {allRows.map(r => (
-                  <tr key={r.key} className={rowClass(r)}>
-                    <td className="px-2 py-1">{labelCell(r)}</td>
-                    {quarters.map(q => {
-                      const i = q.index
-                      const hasData = r.hasData[i]
-                      return (
-                        <Fragment key={q.quarter}>
-                          <td className="px-2 py-1 text-right tabular-nums text-ink-primary">
-                            {hasData ? fmtBalance(r.balance[i]) : NO_DATA_DASH}
-                          </td>
-                          <td className="px-2 py-1 text-right tabular-nums text-ink-muted">
-                            {deltaFmt(r.deltaAmount[i], r.deltaPercent[i], hasData, r.hasPreviousData[i])}
-                          </td>
-                        </Fragment>
-                      )
-                    })}
-                  </tr>
-                ))}
+                {allRows.map(r => {
+                  const meta = rowMeta(r)
+                  return (
+                    <tr key={r.key} className={meta.row}>
+                      <td className={meta.labelTd}>{labelCell(r)}</td>
+                      {quarters.map((q, qi) => {
+                        const i = q.index
+                        const hasData = r.hasData[i]
+                        return (
+                          <Fragment key={q.quarter}>
+                            {balanceCell(meta.emphasis, hasData, r.balance[i], qi > 0)}
+                            {deltaCell(r.deltaAmount[i], r.deltaPercent[i], hasData, r.hasPreviousData[i])}
+                          </Fragment>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

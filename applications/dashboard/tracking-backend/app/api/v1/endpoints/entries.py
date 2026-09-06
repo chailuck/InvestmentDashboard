@@ -63,6 +63,10 @@ async def update_entry(
         entry.entry_date = data["entry_date"]
     if "note" in data:
         entry.note = data["note"]  # already blank -> None coerced by the schema
+    if "code" in data:
+        entry.code = data["code"]  # nullable; explicit null / blank clears it
+    if "name" in data:
+        entry.name = data["name"]  # nullable; explicit null / blank clears it
 
     await db.commit()
     await db.refresh(entry)

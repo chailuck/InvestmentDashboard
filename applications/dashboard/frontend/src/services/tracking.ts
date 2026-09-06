@@ -41,6 +41,7 @@ export type TrackingItemType =
   | 'TaxSaving'
   | 'Materials'
   | 'Insurance'
+  | 'BOND'
 
 /** All valid item type values, in display order — used to populate the type <select>. */
 export const TRACKING_ITEM_TYPES: TrackingItemType[] = [
@@ -50,7 +51,60 @@ export const TRACKING_ITEM_TYPES: TrackingItemType[] = [
   'TaxSaving',
   'Materials',
   'Insurance',
+  'BOND',
 ]
+
+// ── Bond register ───────────────────────────────────────────────────────────
+// A `BOND`-typed tracking item owns a standalone bond register: rows recording
+// an individual bond holding's code, issuer, term dates and face amount. The
+// backend derives `status` from the term dates against "today" (see
+// `computeBondStatus` in lib/bond-status.ts for the mirrored client rule) —
+// the register table always shows the server value, never a client guess.
+
+export type BondStatus = 'Pre-order' | 'Active' | 'Expire' | 'Unknown'
+
+export interface Bond {
+  id: string
+  trackingItemId: string
+  code: string
+  issuer: string | null
+  /** ISO date (yyyy-MM-dd) or `null`. */
+  startDate: string | null
+  /** ISO date (yyyy-MM-dd) or `null`. */
+  expiredDate: string | null
+  /** Face amount — coerced from the backend's Decimal-as-string to a real number here. */
+  amount: number
+  /** Server-computed from the term dates; render verbatim, never derived client-side. */
+  status: BondStatus
+  /**
+   * Coupon rate as a percentage (e.g. `3.25` means 3.25%). Coerced from the
+   * backend's Decimal-as-string (`"3.2500"`); `null` when unset.
+   */
+  interestRate: number | null
+  /**
+   * Server-computed whole-year term span (see `computeBondYears` for the
+   * mirrored client rule). `null` when either term date is missing. Render the
+   * server value verbatim — the client mirror is a transient form preview only.
+   */
+  years: number | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BondInput {
+  /** Required, non-blank, max 100 chars. */
+  code: string
+  /** Optional, max 200 chars. Blank is coerced to `null` by the backend; send `null` to clear. */
+  issuer?: string | null
+  /** ISO date (yyyy-MM-dd). Send `null` to clear; omit to leave untouched on update. */
+  startDate?: string | null
+  /** ISO date (yyyy-MM-dd). Send `null` to clear; omit to leave untouched on update. */
+  expiredDate?: string | null
+  /** Face amount, `>= 0` (0 is allowed). */
+  amount: number
+  /** Coupon rate as a percentage in `[0, 100]`. Send `null` to clear. */
+  interestRate: number | null
+}
 
 export interface TrackingItem {
   id: string
@@ -74,6 +128,10 @@ export interface Entry {
   entryDate: string
   /** Optional free-text note (UTF-8 / Thai OK), max 500 chars. `null` when unset. */
   note: string | null
+  /** Optional short code (max 100 chars). `null` when unset. */
+  code: string | null
+  /** Optional short name/label (max 100 chars). `null` when unset. */
+  name: string | null
   createdAt: string
   updatedAt: string
 }
@@ -297,6 +355,16 @@ export interface EntryInput {
    * leaves an existing note untouched; sending `null` clears it.
    */
   note?: string | null
+  /**
+   * Optional short code, max 100 chars. Same presence-aware / blank->null
+   * semantics as `note`: omit to leave untouched, `null` to clear.
+   */
+  code?: string | null
+  /**
+   * Optional short name/label, max 100 chars. Same presence-aware / blank->null
+   * semantics as `note`: omit to leave untouched, `null` to clear.
+   */
+  name?: string | null
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -372,6 +440,8 @@ const normalizeRunningTotal = (d: Wire): RunningTotal => ({
     amount: num(e.amount),
     entryDate: String(e.entryDate),
     note: (e.note as string | null) ?? null,
+    code: (e.code as string | null) ?? null,
+    name: (e.name as string | null) ?? null,
     createdAt: String(e.createdAt ?? ''),
     updatedAt: String(e.updatedAt ?? ''),
     runningTotal: num(e.runningTotal),
@@ -405,6 +475,30 @@ const normalizeOriginalInvestmentRollup = (d: Wire): OriginalInvestmentRollup =>
     },
   }
 }
+
+/**
+ * Coerce a raw bond wire object to the `Bond` shape. `amount` arrives as a
+ * Decimal-as-string ("1000.0000") and MUST be coerced to a real number so the
+ * register table can call `.toFixed(2)` on it; `status` is passed through
+ * verbatim (the backend owns that value); nullable string fields normalize
+ * `undefined` to `null`. `interestRate` arrives as a Decimal-as-string
+ * ("3.2500") and `years` as a JSON number-or-null — both go through the
+ * null-preserving `numOrNull` helper so `0` survives and `null`/absent → `null`.
+ */
+const normalizeBond = (w: Wire): Bond => ({
+  id: String(w.id),
+  trackingItemId: String(w.trackingItemId ?? ''),
+  code: String(w.code ?? ''),
+  issuer: (w.issuer as string | null) ?? null,
+  startDate: (w.startDate as string | null) ?? null,
+  expiredDate: (w.expiredDate as string | null) ?? null,
+  amount: num(w.amount),
+  status: String(w.status) as BondStatus,
+  interestRate: numOrNull(w.interestRate),
+  years: numOrNull(w.years),
+  createdAt: String(w.createdAt ?? ''),
+  updatedAt: String(w.updatedAt ?? ''),
+})
 
 export const trackingService = {
   // Tracking Sets ────────────────────────────────────────────────────────────
@@ -508,6 +602,27 @@ export const trackingService = {
   async getRunningTotal(itemId: string): Promise<RunningTotal> {
     const { data } = await apiClient.get(p(`/items/${itemId}/running-total`))
     return normalizeRunningTotal(data as Wire)
+  },
+
+  // Bond register (BOND-typed items) ─────────────────────────────────────────
+  async listBonds(itemId: string): Promise<Bond[]> {
+    const { data } = await apiClient.get(p(`/items/${itemId}/bonds`))
+    return ((data as Wire[] | undefined) ?? []).map(normalizeBond)
+  },
+  async getBond(bondId: string): Promise<Bond> {
+    const { data } = await apiClient.get(p(`/bonds/${bondId}`))
+    return normalizeBond(data as Wire)
+  },
+  async createBond(itemId: string, input: BondInput): Promise<Bond> {
+    const { data } = await apiClient.post(p(`/items/${itemId}/bonds`), input)
+    return normalizeBond(data as Wire)
+  },
+  async updateBond(bondId: string, input: Partial<BondInput>): Promise<Bond> {
+    const { data } = await apiClient.put(p(`/bonds/${bondId}`), input)
+    return normalizeBond(data as Wire)
+  },
+  async deleteBond(bondId: string): Promise<void> {
+    await apiClient.delete(p(`/bonds/${bondId}`))
   },
 
   // Dashboard ──────────────────────────────────────────────────────────────

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backup &amp; Restore — Functional Specification — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 900px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .2rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Backup &amp; Restore — Functional Specification</h1>
+
+<p><strong>Version:</strong> 2.0 &nbsp;·&nbsp; <strong>Last updated:</strong> 2026-09-01 &nbsp;·&nbsp;
+<strong>Audience:</strong> administrators (the page is admin-only) &nbsp;·&nbsp;
+<strong>Location in app:</strong> Settings &rarr; Backup (<code>/settings/backup</code>).</p>
+
+<p>The Backup &amp; Restore page lets an administrator take a full snapshot of the
+application database, restore one, and move individual tables in and out as pipe-separated
+files. Every table in the shared <code>investment_db</code> database is covered — including
+the Financial Tracker (<code>ft_*</code>) tables owned by the separate
+<code>tracking-backend</code> service.</p>
+
+<div class="callout">
+Related: <a href="TECHNICAL.html">Technical Design</a> ·
+<a href="RUNBOOK.html">Operations Runbook</a> ·
+<a href="../02-infrastructure/API-BACKUP.html">API reference</a> ·
+<a href="../02-infrastructure/DATABASE.html">Database schema</a>
+</div>
+
+<h2>1. Access</h2>
+<ul>
+  <li>The page is visible only to users with the <code>admin</code> role and every endpoint is
+  enforced server-side by <code>require_admin</code>. A non-admin who navigates directly to
+  the URL gets <span class="badge red">403</span> on every call.</li>
+  <li>An &ldquo;Admin only&rdquo; badge is shown in the page header.</li>
+</ul>
+
+<h2>2. Coverage card</h2>
+<p>A collapsible card at the top of the page summarises what a backup will contain, from
+<code>GET /api/v1/backup/tables</code>.</p>
+<ul>
+  <li><strong>Header:</strong> &ldquo;Covers N tables&rdquo;, the database name, and the
+  snapshot timestamp.</li>
+  <li><strong>Expanded list</strong> — one row per table with:
+    <ul>
+      <li>table name;</li>
+      <li>current row count;</li>
+      <li>an owner-service badge: <span class="badge blue">backend</span> or
+      <span class="badge yellow">tracking-backend</span> (the <code>ft_*</code> tables);</li>
+      <li>for the two schema-version tables (<code>alembic_version</code>,
+      <code>ft_alembic_version</code>) an italic note explaining they are
+      &ldquo;managed by Alembic migrations, never restored&rdquo;.</li>
+    </ul>
+  </li>
+</ul>
+<p>The list reflects the live database at the moment it was loaded, so a table added by a
+future migration appears automatically with no app update.</p>
+
+<h2>3. Full database backup</h2>
+
+<h3>3.1 Create a backup</h3>
+<ul>
+  <li><strong>Create Backup</strong> button &rarr; <code>POST /api/v1/backup/create</code>.</li>
+  <li>The server writes a gzip-compressed JSON file
+  <code>backup_&lt;UTC timestamp&gt;.json.gz</code> to the server-side backup directory,
+  readable only by the service account.</li>
+  <li>On success a green result box shows the file name, and the &ldquo;Stored Backups&rdquo;
+  list refreshes.</li>
+  <li>Only the newest <strong>7</strong> backups are kept on the server; older ones are
+  deleted automatically after each successful create.</li>
+</ul>
+
+<h3>3.2 Stored backups list</h3>
+<p>Each stored file shows its name, creation date/time and size, with three actions:</p>
+<table>
+  <thead><tr><th>Action</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><span class="badge blue">Download</span></td><td>Downloads the <code>.json.gz</code> file to the admin's machine.</td></tr>
+    <tr><td><span class="badge yellow">Restore</span></td><td>Opens the Restore dialog (§4) for that stored file.</td></tr>
+    <tr><td><span class="badge red">Delete</span></td><td>Asks for confirmation, then permanently deletes the stored file.</td></tr>
+  </tbody>
+</table>
+
+<h3>3.3 Restore from a local file</h3>
+<p><strong>Upload &amp; Restore</strong> lets the admin pick a <code>.json</code> /
+<code>.json.gz</code> file from their machine; it opens the same Restore dialog (§4). The
+upload is size-capped after decompression; an oversized file is rejected with a clear
+message.</p>
+
+<h2>4. Restore dialog</h2>
+<p>Replaces the old blind browser confirm with an explicit, keyboard-accessible dialog
+(<kbd>Esc</kbd> closes it). It forces a deliberate choice of restore mode.</p>
+
+<h3>4.1 Safe restore — &ldquo;only into empty tables&rdquo; (default)</h3>
+<ul>
+  <li>Sends <code>mode=skip_if_conflict</code>.</li>
+  <li>Before writing anything, the server checks whether any covered table already holds
+  data.</li>
+  <li>If <strong>every</strong> covered table is empty, the restore proceeds and the result
+  box shows per-table row counts.</li>
+  <li>If <strong>any</strong> covered table already has rows, <strong>nothing is written</strong>.
+  The dialog shows an amber panel: &ldquo;These tables already contain data&rdquo; with the
+  table names and row counts, and suggests switching to Replace all data or restoring into a
+  fresh database.</li>
+</ul>
+<p>This is the correct path for rebuilding a brand-new / empty environment from a backup.</p>
+
+<h3>4.2 Replace all data (destructive)</h3>
+<ul>
+  <li>Selecting this radio reveals a red panel listing exactly which tables and how many rows
+  will be permanently deleted (the populated covered tables).</li>
+  <li>The admin must type <code>REPLACE ALL DATA</code> verbatim into a text field. The
+  confirm button stays disabled until the text matches exactly.</li>
+  <li>On confirm, the server wipes every covered table and reloads it from the backup, all in
+  a single transaction. If any row fails to load, the <strong>entire</strong> restore is
+  rolled back and an error with the failing tables is shown — the database is left as it was.</li>
+  <li>Tables that exist in the database but are not in the backup file are left completely
+  untouched.</li>
+</ul>
+
+<h3>4.3 Result and diagnostics</h3>
+<p>After any restore the result box can show:</p>
+<table>
+  <thead><tr><th>Section</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Restored rows</strong></td><td>Per-table count of rows loaded.</td></tr>
+    <tr><td><strong>Checksum verification</strong></td><td>Per-table chip:
+      <span class="badge green">ok</span> (file intact),
+      <span class="badge red">mismatch</span> (the backup file was modified after it was
+      created — treat the data as suspect),
+      <span class="badge yellow">skipped</span> (no checksum in the file, e.g. an old
+      backup).</td></tr>
+    <tr><td><strong>Schema version drift</strong></td><td>Amber warning when the migration
+      version recorded in the backup differs from the live database
+      (<code>file X &rarr; live Y</code>). The schema-version tables themselves are never
+      changed by a restore — this is informational, telling you the backup was taken against
+      a different schema.</td></tr>
+    <tr><td><strong>Legacy backup format</strong></td><td>Amber banner when an older
+      (pre-2.0) backup was restored, listing any tables that were not present in that older
+      file.</td></tr>
+    <tr><td><strong>Errors</strong></td><td>Any per-table failure messages (restore was rolled
+      back).</td></tr>
+  </tbody>
+</table>
+
+<h2>5. Per-table export / import (PSV)</h2>
+<p>A collapsible panel for moving one table at a time as a pipe-separated
+(<code>|</code>) text file — useful for spot fixes and for copying a single table between
+environments.</p>
+<ul>
+  <li><strong>Table selector</strong> — lists every restorable table. The two schema-version
+  tables are deliberately not offered (the server rejects them anyway).</li>
+  <li><strong>Export</strong> — downloads <code>&lt;table&gt;_&lt;date&gt;.psv</code>: a header
+  row of column names, then one line per row. Empty field = <code>NULL</code>; JSON values
+  are preserved; a literal <code>|</code> in a value is written as <code>\|</code>.</li>
+  <li><strong>Import — Append</strong> — adds rows, skipping any that collide with an existing
+  key (<code>ON CONFLICT DO NOTHING</code>).</li>
+  <li><strong>Import — Replace</strong> — empties the table first, then loads the file. The
+  admin must type <code>REPLACE &lt;table&gt;</code> verbatim to unlock the import button.</li>
+  <li>Unknown column names in the uploaded header are rejected with a clear message; a failed
+  import is rolled back entirely.</li>
+</ul>
+
+<h2>6. What a backup contains — and the sensitivity of the file</h2>
+<div class="callout warn">
+A full backup contains <strong>every row of every application table</strong>, including
+<code>users</code> with password hashes and any personal data held in the platform. Backup
+files are <strong>not encrypted</strong>. Treat a downloaded <code>.json.gz</code> as a
+credential-bearing secret: store it somewhere access-controlled and delete copies you no
+longer need. See the <a href="RUNBOOK.html">Runbook</a> for handling guidance.
+</div>
+
+<h2>7. Behaviour summary</h2>
+<table>
+  <thead><tr><th>Situation</th><th>Outcome</th></tr></thead>
+  <tbody>
+    <tr><td>Safe restore, target database empty</td><td>All covered tables loaded; success.</td></tr>
+    <tr><td>Safe restore, some covered table already has data</td><td><span class="badge red">409</span> — nothing written; conflicting tables listed in the dialog.</td></tr>
+    <tr><td>Replace-all restore, confirmation text wrong / missing</td><td><span class="badge red">400</span> — refused; nothing written.</td></tr>
+    <tr><td>Replace-all restore, one table fails mid-load</td><td><span class="badge red">422</span> — whole restore rolled back; database unchanged.</td></tr>
+    <tr><td>Backup file edited after creation</td><td>Restore still runs, but the affected tables show <span class="badge red">mismatch</span> in checksum verification.</td></tr>
+    <tr><td>Restoring an old (pre-2.0) backup</td><td>Works; flagged as legacy; checksums shown as <span class="badge yellow">skipped</span>.</td></tr>
+    <tr><td>Backup file with an unrecognised format version</td><td><span class="badge red">400</span> — rejected before any work.</td></tr>
+    <tr><td>Backup taken against a different schema version</td><td>Restore runs; schema-version drift is reported; the migration tables are not touched.</td></tr>
+    <tr><td>Tables in the live DB that are not in the backup</td><td>Left untouched on every restore path.</td></tr>
+    <tr><td>DB role lacks superuser capability</td><td><span class="badge red">500</span> &ldquo;requires a superuser-capable DB role&rdquo;; nothing written. (Create and the coverage card still work.)</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backup &amp; Restore — Operations Runbook — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 960px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.25rem 0 .4rem }
+h4 { font-size: .88rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.6 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 13px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .75rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.12) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.12) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
+</style>
+</head>
+<body>
+<h1>Runbook: Database Backup &amp; Restore</h1>
+
+<p><strong>Version:</strong> 1.0 &nbsp;·&nbsp; <strong>Last updated:</strong> 2026-09-01 &nbsp;·&nbsp;
+<strong>Owner:</strong> Dashboard backend team &nbsp;·&nbsp;
+<strong>Estimated duration:</strong> backup &lt; 1 min; restore 1–5 min depending on data volume.</p>
+
+<p>Operational procedures for the in-app Settings &rarr; Backup feature: taking a backup,
+where files live, restoring into an empty or a populated database, what the error codes
+mean, and how to recover. Design detail is in
+<a href="TECHNICAL.html">TECHNICAL.html</a>; the endpoint contract is in
+<a href="../02-infrastructure/API-BACKUP.html">API-BACKUP.html</a>.</p>
+
+<h2>1. Preconditions</h2>
+<ul>
+  <li>You are logged in as a user with the <code>admin</code> role.</li>
+  <li>All containers are healthy: <code>docker compose ps</code> shows
+  <code>inv_backend</code>, <code>inv_postgres</code> (and, if the Financial Tracker is
+  deployed, the tracking-backend) as <em>Up (healthy)</em>.</li>
+  <li>The <code>backend</code> service's PostgreSQL role is <strong>superuser-capable</strong>
+  (needed for restore — see §5). In this deployment both services connect as the
+  <code>postgres</code> superuser, so this holds by default.</li>
+  <li>For a restore: you have the correct <code>backup_*.json.gz</code> file, either already
+  in the stored list or on your machine.</li>
+  <li>Disk headroom in the <code>uploads_data</code> Docker volume for at least
+  <code>BACKUP_RETENTION</code> (default 7) backup files.</li>
+</ul>
+
+<h4>Verify the DB role can perform a restore</h4>
+<pre><code>docker exec inv_postgres psql -U postgres -d investment_db -tAc \
+  "SELECT rolsuper OR rolreplication FROM pg_roles WHERE rolname = current_user;"
+# Expected: t</code></pre>
+
+<h2>2. Where backup files live</h2>
+<table>
+  <thead><tr><th>Property</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>Directory (in container)</td><td><code>BACKUP_DIR</code>, default <code>/app/uploads/backups</code></td></tr>
+    <tr><td>Docker volume</td><td><code>uploads_data</code> (mounted at <code>/app/uploads</code> in <code>inv_backend</code>)</td></tr>
+    <tr><td>File name</td><td><code>backup_&lt;YYYYMMDD_HHMMSS&gt;.json.gz</code> (UTC)</td></tr>
+    <tr><td>Permissions</td><td><code>0o600</code> (owner read/write only)</td></tr>
+    <tr><td>Retention</td><td>Newest <code>BACKUP_RETENTION</code> files (default 7); older ones deleted after each successful create</td></tr>
+    <tr><td>Encryption</td><td><span class="badge red">NONE</span> — see the warning below</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+<strong>Sensitivity.</strong> A backup file is a full dump of every table, including
+<code>users.hashed_password</code> and all personal data. It is <strong>not encrypted at
+rest</strong>. It is protected only by (a) the <code>0o600</code> file mode inside a Docker
+volume and (b) the admin-authenticated <code>download</code> endpoint. When you download a
+copy: keep it on access-controlled storage, never commit it to git, never attach it to a
+ticket or chat, and delete it when done. Planned hardening: envelope/AES-GCM encryption with
+a KMS-held key.
+</div>
+
+<h4>Inspect stored files directly</h4>
+<pre><code>docker exec inv_backend ls -la /app/uploads/backups
+docker exec inv_backend sh -c 'gzip -dc /app/uploads/backups/backup_YYYYMMDD_HHMMSS.json.gz | head -c 600'</code></pre>
+
+<h2>3. Procedure — take a backup</h2>
+<ol>
+  <li>Open <strong>Settings &rarr; Backup</strong> (<code>/settings/backup</code>).</li>
+  <li>(Optional) Expand the <strong>coverage card</strong> and confirm the table list and row
+  counts look right.</li>
+  <li>Click <strong>Create Backup</strong>. Wait for the green result box
+  (&ldquo;Backup created: <code>backup_…json.gz</code>&rdquo;).</li>
+  <li>The new file appears at the top of <strong>Stored Backups</strong>.</li>
+  <li>If you need an off-box copy, click <strong>Download</strong> and move the file to
+  access-controlled storage.</li>
+</ol>
+<p>API equivalent (admin bearer token):</p>
+<pre><code>curl -sS -X POST https://&lt;host&gt;/api/v1/backup/create \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '{filename, total_rows, version, covered_tables: (.covered_tables|length)}'</code></pre>
+
+<h4>Validation</h4>
+<ul>
+  <li>Result box shows a <code>filename</code> and a non-zero <code>total_rows</code>.</li>
+  <li><code>GET /api/v1/backup/list</code> shows the file with <code>version: "2.0"</code> and
+  a <code>covered_table_count</code> matching the coverage card's table count.</li>
+  <li>Optional integrity spot check: download the file, then
+  <code>gzip -dc backup_*.json.gz | jq '.version, (.tables | keys | length), .checksums | keys | length'</code>.</li>
+</ul>
+
+<h2>4. Procedure — restore into a fresh / empty database (safe mode)</h2>
+<p>Use this when standing up a new environment or recovering after a
+<code>docker compose down -v</code>.</p>
+<ol>
+  <li>Bring the stack up so the schema exists but holds no data:
+    <pre><code>cd applications/dashboard
+docker compose up -d postgres redis backend
+docker exec inv_backend alembic upgrade head          # backend schema
+# if the Financial Tracker is deployed:
+docker exec inv_tracking_backend alembic upgrade head  # ft_* schema</code></pre>
+    <div class="callout">The admin user is seeded on first backend startup from
+    <code>ADMIN_EMAIL</code> / <code>ADMIN_PASSWORD</code>. That single row does <em>not</em>
+    trip the safe-mode conflict check on its own only if <code>users</code> is still empty —
+    if the seed already ran, <code>users</code> has a row and safe mode will report a
+    conflict on <code>users</code>. In that case use §5 (replace-all) or truncate
+    <code>users</code> first.</div>
+  </li>
+  <li>Log in as admin &rarr; <strong>Settings &rarr; Backup</strong>.</li>
+  <li>Either click <strong>Restore</strong> on a stored file, or <strong>Upload &amp;
+  Restore</strong> and pick your <code>.json.gz</code>.</li>
+  <li>In the dialog keep the default <strong>&ldquo;Safe restore — only into empty
+  tables&rdquo;</strong> and click <strong>Restore</strong>.</li>
+  <li>Wait for the green result box with per-table row counts.</li>
+</ol>
+<p>API equivalent:</p>
+<pre><code>curl -sS -X POST "https://&lt;host&gt;/api/v1/backup/restore/backup_YYYYMMDD_HHMMSS.json.gz" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"mode":"skip_if_conflict"}'</code></pre>
+
+<h4>Validation</h4>
+<ul>
+  <li>Result: <code>errors</code> is empty; <code>restored</code> row counts match the
+  backup's <code>row_counts</code>.</li>
+  <li><code>checksum_verification</code> is <code>ok</code> for every table (or
+  <code>skipped</code> for a legacy file).</li>
+  <li>Spot-check the app: users can log in, portfolios/plans/scans render.</li>
+  <li>Review <code>schema_version_drift</code> — if <code>match: false</code>, the backup was
+  taken on a different schema; run <code>alembic upgrade head</code> and verify the app, or
+  restore a backup that matches the current schema.</li>
+</ul>
+
+<h2>5. Procedure — destructive restore (<code>replace_all</code>)</h2>
+<div class="callout warn">This <strong>permanently deletes</strong> the current contents of
+every covered table before reloading. Take a fresh backup first (§3).</div>
+<ol>
+  <li>Take and download a current backup (§3) as a safety net.</li>
+  <li><strong>Settings &rarr; Backup</strong> &rarr; <strong>Restore</strong> / <strong>Upload
+  &amp; Restore</strong>.</li>
+  <li>In the dialog choose <strong>&ldquo;Replace all data (destructive)&rdquo;</strong>.</li>
+  <li>Read the red panel listing the tables and row counts that will be deleted.</li>
+  <li>Type <code>REPLACE ALL DATA</code> exactly into the confirmation field.</li>
+  <li>Click <strong>Replace all data</strong>. The wipe + reload runs in one transaction.</li>
+</ol>
+<p>API equivalent:</p>
+<pre><code>curl -sS -X POST "https://&lt;host&gt;/api/v1/backup/restore/backup_YYYYMMDD_HHMMSS.json.gz" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"mode":"replace_all","confirm":"REPLACE ALL DATA"}'
+
+# From a local file instead (mode/confirm are QUERY params):
+curl -sS -X POST "https://&lt;host&gt;/api/v1/backup/restore/upload?mode=replace_all&confirm=REPLACE%20ALL%20DATA" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -F "file=@backup_YYYYMMDD_HHMMSS.json.gz"</code></pre>
+
+<h4>Validation</h4>
+<ul>
+  <li>HTTP 200 with <code>mode: "replace_all"</code>, empty <code>errors</code>, expected
+  <code>total_rows</code>.</li>
+  <li>Tables present in the DB but absent from the backup are unchanged (check one you know
+  the backup did not include, if any).</li>
+  <li>App smoke test as in §4.</li>
+</ul>
+
+<h2>6. Error / status reference</h2>
+<table>
+  <thead><tr><th>HTTP</th><th><code>type</code></th><th>Meaning</th><th>Operator action</th></tr></thead>
+  <tbody>
+    <tr><td><span class="badge red">400</span></td><td><code>urn:backup:error:confirm-required</code></td><td>Replace-all requested without the exact phrase <code>REPLACE ALL DATA</code> (PSV: <code>REPLACE &lt;table&gt;</code>).</td><td>Re-issue with the exact confirmation string. Nothing was written.</td></tr>
+    <tr><td><span class="badge red">400</span></td><td><code>urn:backup:error:unsupported-version</code></td><td>File's <code>version</code> is not <code>2.0</code> and not a known legacy value.</td><td>Use a backup produced by this build, or a genuine v1.0/1.1 file.</td></tr>
+    <tr><td><span class="badge red">400</span></td><td><code>urn:backup:error:invalid-file</code></td><td>Not gzip/JSON, or missing the <code>tables</code> object.</td><td>File is corrupt or not a backup. Try another; re-download if the copy is bad.</td></tr>
+    <tr><td><span class="badge red">400</span></td><td><code>urn:backup:error:invalid-filename</code></td><td>Path-traversal or malformed name on a <code>{filename}</code> route.</td><td>Use the name exactly as shown in <code>GET /backup/list</code>.</td></tr>
+    <tr><td><span class="badge red">409</span></td><td><code>urn:backup:error:target-not-empty</code></td><td>Safe restore: one or more covered tables already hold data. <strong>Nothing written.</strong></td><td>Restore into an empty DB, or switch to <code>replace_all</code> (§5). Response lists <code>conflicting_tables</code>.</td></tr>
+    <tr><td><span class="badge red">413</span></td><td><code>urn:backup:error:too-large</code></td><td>Uploaded backup exceeds <code>BACKUP_MAX_UNCOMPRESSED_BYTES</code> (200 MiB) decompressed.</td><td>Restore from a server-side stored file instead, or raise the limit env var and restart the backend.</td></tr>
+    <tr><td><span class="badge red">422</span></td><td><code>urn:backup:error:unknown-column</code></td><td>The file has a column that does not exist in the live schema.</td><td>Schema/file mismatch. Align the schema (<code>alembic</code>) to the backup's era, or use a matching backup. Nothing written.</td></tr>
+    <tr><td><span class="badge red">422</span></td><td><code>urn:backup:error:restore-failed</code></td><td>A table failed during load; the <strong>whole</strong> restore was rolled back.</td><td>Read <code>errors</code> for the offending table. Common cause: schema drift. DB is unchanged — fix and retry.</td></tr>
+    <tr><td><span class="badge red">500</span></td><td><code>urn:backup:error:insufficient-privilege</code></td><td>The DB role cannot <code>SET session_replication_role = replica</code>.</td><td>Grant the <code>backend</code> role superuser / replication (see §1), restart backend, retry. Backup + coverage card are unaffected.</td></tr>
+    <tr><td><span class="badge red">403</span></td><td>(FastAPI <code>detail</code>)</td><td>Caller is not an admin.</td><td>Use an admin account.</td></tr>
+  </tbody>
+</table>
+
+<h2>7. Rollback</h2>
+<h3>7.1 A restore went wrong</h3>
+<p>Because every restore is a single transaction, a <strong>failed</strong> restore
+(<code>409</code>, <code>422</code>, <code>500</code>) leaves the database exactly as it was —
+no rollback needed. If a <strong>successful</strong> <code>replace_all</code> restored the
+wrong file:</p>
+<ol>
+  <li>Run <code>replace_all</code> again with the safety-net backup you took in §5 step 1.</li>
+  <li>If you have no safety net but Postgres data is intact, restore from the most recent
+  known-good <code>backup_*.json.gz</code> in the stored list via <code>replace_all</code>.</li>
+  <li>Last resort — restore the Postgres volume from an infrastructure-level snapshot (out of
+  scope for this feature).</li>
+</ol>
+
+<h3>7.2 Roll back the feature itself</h3>
+<p>No database migration is involved. Revert the code and redeploy:</p>
+<pre><code># backend (hot-reloads on save; restart only if requirements changed)
+git revert &lt;commit(s) touching backend/app/api/v1/endpoints/backup.py, backend/app/services/backup/, backend/app/schemas/backup.py&gt;
+
+# frontend (must rebuild)
+git revert &lt;commit(s) touching frontend/.../settings/backup/page.tsx, RestoreModal.tsx&gt;
+docker compose build frontend &amp;&amp; docker compose up -d --no-deps frontend</code></pre>
+<p>Existing <code>backup_*.json.gz</code> files under <code>BACKUP_DIR</code> become inert and
+can be deleted at leisure.</p>
+
+<h2>8. Common failures &amp; recovery</h2>
+<table>
+  <thead><tr><th>Symptom</th><th>Likely cause</th><th>Recovery</th></tr></thead>
+  <tbody>
+    <tr><td>Create hangs, then times out (~30 s)</td><td>Another create/restore holds <code>pg_advisory_xact_lock(917283641)</code>, or a long-running query; <code>statement_timeout</code> fired.</td><td>Wait for the other operation to finish and retry. Check <code>pg_stat_activity</code> for blockers.</td></tr>
+    <tr><td>Restore reports <code>checksum_verification: mismatch</code></td><td>The backup file was modified after it was created.</td><td>The data may be tampered/corrupt. Prefer a different, intact backup. If you must use it, verify the affected tables manually after restore.</td></tr>
+    <tr><td><code>schema_version_drift.match = false</code></td><td>Backup taken against a different migration head.</td><td>Run <code>alembic upgrade head</code> in the relevant service and re-test the app; or use a backup that matches the current schema.</td></tr>
+    <tr><td>Legacy banner + tables missing</td><td>Restored a pre-2.0 backup that predates some tables.</td><td>Expected. Load the missing tables separately (PSV) if you have the data.</td></tr>
+    <tr><td><code>413</code> on Upload &amp; Restore</td><td>Decompressed file &gt; 200 MiB.</td><td>Use a server-side stored file, or raise <code>BACKUP_MAX_UNCOMPRESSED_BYTES</code> and restart the backend.</td></tr>
+    <tr><td>Stored list shows <code>version: "unknown"</code> for a file</td><td>That <code>.json.gz</code> is corrupt / truncated.</td><td>Delete it; it will not restore. Use another.</td></tr>
+    <tr><td>Old backups disappearing</td><td>Retention trim keeps only the newest <code>BACKUP_RETENTION</code> (7).</td><td>Download important backups off-box; raise <code>BACKUP_RETENTION</code> if you need more on the server.</td></tr>
+  </tbody>
+</table>
+
+<h2>9. Monitoring</h2>
+<p>The feature has no dedicated dashboard. Signals come from the backend's structured logs
+(<code>service_name="backend"</code>, logger <code>backup</code>):</p>
+<table>
+  <thead><tr><th>Log event</th><th>Fields</th><th>Watch for</th></tr></thead>
+  <tbody>
+    <tr><td><code>backup.create</code></td><td><code>outcome=ok</code>, <code>tables</code>, <code>total_rows</code>, <code>filename</code></td><td>Sudden drop in <code>tables</code> or <code>total_rows</code> vs the previous run.</td></tr>
+    <tr><td><code>backup.restore</code></td><td><code>mode</code>, <code>tables</code>, <code>total_rows</code>, <code>checksum_mismatch</code></td><td>Any non-empty <code>checksum_mismatch</code>.</td></tr>
+    <tr><td><code>backup.restore blocked by conflict</code></td><td><code>conflicting_tables</code>, <code>outcome=conflict</code></td><td>Unexpected conflicts on what should be an empty DB.</td></tr>
+    <tr><td><code>backup.restore privilege error</code></td><td><code>outcome=error</code></td><td>DB role lost superuser capability.</td></tr>
+    <tr><td><code>backup.create chmod skipped</code></td><td><code>outcome=degraded</code></td><td>Filesystem can't set <code>0o600</code> — the file is more widely readable than intended.</td></tr>
+  </tbody>
+</table>
+<pre><code>docker compose logs backend --tail 200 | grep -E 'backup\.(create|restore)'</code></pre>
+
+<h2>10. Escalation</h2>
+<ul>
+  <li><strong>First responder:</strong> the acting administrator.</li>
+  <li><strong>Owning team:</strong> Dashboard backend team (feature code in
+  <code>backend/app/api/v1/endpoints/backup.py</code>).</li>
+  <li><strong>Escalate to the backend team when:</strong> a successful restore left the app
+  inconsistent; <code>insufficient-privilege</code> appears in a deployment that previously
+  worked; repeated <code>restore-failed</code> that is not explained by schema drift; or a
+  suspected tampered backup (<code>checksum mismatch</code>) whose provenance matters.</li>
+  <li><strong>Data-protection note:</strong> if an unencrypted backup file is exposed to an
+  unauthorised party, treat it as a credential + personal-data incident (it contains
+  password hashes and PII) and follow the organisation's incident process.</li>
+</ul>
+
+<h2>11. Related resources</h2>
+<ul>
+  <li><a href="TECHNICAL.html">Backup &amp; Restore — Technical Design</a></li>
+  <li><a href="FUNCTIONAL.html">Backup &amp; Restore — Functional Specification</a></li>
+  <li><a href="../02-infrastructure/API-BACKUP.html">API-BACKUP.html — endpoint contract &amp; error catalogue</a></li>
+  <li><a href="../02-infrastructure/DATABASE.html">DATABASE.html — schema &amp; covered-table inventory</a></li>
+  <li><a href="../15-deployment/DEPLOYMENT.html">DEPLOYMENT.html — stack operations, volumes, env vars</a></li>
+  <li><a href="../14-migrations/TECHNICAL.html">14-migrations/TECHNICAL.html — Alembic workflow</a></li>
+</ul>
+
+</body>
+</html>

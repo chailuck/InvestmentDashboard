@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API — Backup &amp; Restore — InvestmentDashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e2e8f0;font-size:14px;line-height:1.7;padding:2rem 2.5rem;max-width:980px;margin:0 auto}
+h1{font-size:1.5rem;font-weight:700;color:#f0f6fc;border-bottom:1px solid #30363d;padding-bottom:.5rem;margin:0 0 1.5rem}
+h2{font-size:1.1rem;font-weight:600;color:#f0f6fc;margin:2rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid #21262d}
+h3{font-size:.95rem;font-weight:600;color:#58a6ff;margin:1.2rem 0 .4rem}
+h4{font-size:.83rem;font-weight:600;color:#8b949e;margin:.9rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}
+p{color:#c9d1d9;margin-bottom:.6rem}
+ul,ol{color:#c9d1d9;padding-left:1.4rem;margin-bottom:.6rem}
+li{margin-bottom:.2rem}
+code{background:#161b22;border:1px solid #30363d;color:#79c0ff;padding:.1em .4em;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.82em}
+pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;overflow-x:auto;margin:.5rem 0}
+pre code{background:none;border:none;padding:0;color:#e2e8f0;font-size:.8em;line-height:1.55}
+table{width:100%;border-collapse:collapse;margin:.5rem 0;font-size:13px}
+th{background:#161b22;color:#8b949e;font-weight:600;padding:.4rem .65rem;text-align:left;border:1px solid #30363d}
+td{padding:.35rem .65rem;border:1px solid #21262d;color:#c9d1d9;vertical-align:top}
+tr:nth-child(even) td{background:#0d1117}
+.obj{border-left:3px solid #58a6ff;background:rgba(31,61,107,.15);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.err{border-left:3px solid #d29922;background:rgba(58,46,10,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.tip{border-left:3px solid #3fb950;background:rgba(26,58,42,.12);padding:.5rem 1rem;border-radius:0 6px 6px 0;margin:.7rem 0;font-size:13px;color:#c9d1d9}
+.badge{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:11px;font-weight:600}
+.get{background:#1a3a2a;color:#3fb950}.post{background:#1f3d6b;color:#58a6ff}
+.put{background:#3a2e0a;color:#d29922}.del{background:#3a0f0f;color:#f85149}
+hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
+</style>
+</head>
+<body>
+
+<h1>API Spec — Backup &amp; Restore</h1>
+
+<div class="obj">
+<strong>Objective:</strong> Full-database backup and restore over the shared
+<code>investment_db</code> database, plus per-table pipe-separated (PSV) export/import. The
+covered table set and a foreign-key-safe order are discovered from the live PostgreSQL
+catalogue on every call — there is no hard-coded table list, so tables added by future
+migrations in either the <code>backend</code> or the <code>tracking-backend</code> service
+(<code>ft_*</code>) are covered automatically. All endpoints are <strong>admin only</strong>
+(<code>require_admin</code>). Backup file format is <strong>v2.0</strong> (gzip JSON);
+pre-2.0 files still restore in a legacy mode.
+<br><br>
+Design detail: <a href="../19-backup-restore/TECHNICAL.html">19-backup-restore/TECHNICAL.html</a> ·
+Operations: <a href="../19-backup-restore/RUNBOOK.html">Runbook</a> ·
+UX: <a href="../19-backup-restore/FUNCTIONAL.html">Functional spec</a>.
+<br>
+Source: <code>backend/app/api/v1/endpoints/backup.py</code>,
+<code>backend/app/services/backup/__init__.py</code>,
+<code>backend/app/schemas/backup.py</code>.
+</div>
+
+<h2>Endpoints at a glance</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/backup/create</code></td><td>Write a new v2.0 backup file server-side</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/backup/tables</code></td><td>Live table catalogue + per-table restore metadata</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/backup/list</code></td><td>Metadata for stored backup files (newest first)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/backup/download/{filename}</code></td><td>Download a stored backup file</td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/backup/{filename}</code></td><td>Delete a stored backup file</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/backup/restore/{filename}</code></td><td>Restore from a stored backup file</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/backup/restore/upload</code></td><td>Restore from an uploaded backup file (bounded gunzip)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/backup/export-table/{table}</code></td><td>Export one table as a PSV file</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/backup/import-table/{table}</code></td><td>Import a PSV file into one table (append | replace)</td></tr>
+</table>
+<div class="tip">Auth: every endpoint requires a Bearer token for an <code>admin</code> user.
+<code>401</code> (no/invalid token) and <code>403</code> (non-admin) are returned as plain
+FastAPI <code>{"detail": "..."}</code> bodies. All <em>other</em> errors are
+<code>application/problem+json</code> — see <a href="#errors">Error catalogue</a>.</div>
+
+<hr>
+
+<h2>POST /api/v1/backup/create</h2>
+<div class="obj">Discovers every table, exports each covered table, and writes
+<code>backup_&lt;UTC ts&gt;.json.gz</code> to <code>BACKUP_DIR</code> with mode
+<code>0o600</code>. Retention then trims to the newest <code>BACKUP_RETENTION</code> files
+(default 7). Holds <code>pg_advisory_xact_lock</code> so it cannot run concurrently with a
+restore. Read-only on the database — does <strong>not</strong> require a superuser role.</div>
+
+<h4>Request</h4>
+<p>No body.</p>
+
+<h4>Response 200</h4>
+<pre><code>{
+  "filename": "backup_20260901_021407.json.gz",
+  "created_at": "2026-09-01T02:14:07.512+00:00",
+  "size_kb": 84.6,
+  "total_rows": 5123,
+  "version": "2.0",
+  "covered_tables": ["users", "action_plans", "purchase_plan_items", "...", "ft_bond"],
+  "row_counts": { "users": 4, "action_plans": 12, "ft_bond": 7 },
+  "checksums": { "users": "sha256:1f3b...", "action_plans": "sha256:9ac2..." }
+}</code></pre>
+<p><code>covered_tables</code> is in foreign-key-safe insert order. The schema-version tables
+(<code>alembic_version</code>, <code>ft_alembic_version</code>) are <em>not</em> in
+<code>covered_tables</code>; they are captured inside the file under
+<code>schema_versions</code> / <code>excluded_tables</code> (see
+<a href="#fileformat">File format v2.0</a>).</p>
+
+<h4>curl</h4>
+<pre><code>curl -sS -X POST https://&lt;host&gt;/api/v1/backup/create \
+  -H "Authorization: Bearer $ADMIN_TOKEN"</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/backup/tables</h2>
+<div class="obj">The authoritative &ldquo;what does a backup cover&rdquo; list. Feeds the
+frontend coverage card and the PSV table selector (which hides rows with
+<code>restorable: false</code>). Bounded by <code>statement_timeout = 30s</code>.</div>
+
+<h4>Response 200</h4>
+<pre><code>{
+  "database": "investment_db",
+  "generated_at": "2026-09-01T02:20:00+00:00",
+  "total_tables": 30,
+  "insert_order": ["users", "action_plans", "...", "ft_bond", "alembic_version", "ft_alembic_version"],
+  "tables": [
+    { "name": "users",              "row_count": 4,   "owner_service": "backend",          "restorable": true,  "in_conflict_check": true },
+    { "name": "ft_bond",            "row_count": 7,   "owner_service": "tracking-backend", "restorable": true,  "in_conflict_check": true },
+    { "name": "alembic_version",    "row_count": 1,   "owner_service": "backend",          "restorable": false, "in_conflict_check": false,
+      "note": "schema-version table; managed by Alembic migrations, never restored" },
+    { "name": "ft_alembic_version", "row_count": 1,   "owner_service": "tracking-backend", "restorable": false, "in_conflict_check": false,
+      "note": "schema-version table; managed by Alembic migrations, never restored" }
+  ]
+}</code></pre>
+<table>
+  <tr><th>Field</th><th>Meaning</th></tr>
+  <tr><td><code>owner_service</code></td><td><code>"tracking-backend"</code> for <code>ft_*</code> tables, else <code>"backend"</code>.</td></tr>
+  <tr><td><code>restorable</code></td><td><code>false</code> only for the two schema-version tables — they are never written by a restore.</td></tr>
+  <tr><td><code>in_conflict_check</code></td><td>Whether a non-empty state of this table blocks a safe-mode restore. <code>false</code> for the schema-version tables.</td></tr>
+  <tr><td><code>total_tables</code></td><td>All discovered base tables including the 2 schema-version tables. <code>covered</code> = <code>total_tables</code> &minus; 2.</td></tr>
+</table>
+
+<hr>
+
+<h2>GET /api/v1/backup/list</h2>
+<div class="obj">Metadata for every <code>backup_*.json.gz</code> under <code>BACKUP_DIR</code>,
+newest first. Tolerant of a corrupt file — it is listed with <code>version: "unknown"</code>
+rather than breaking the response.</div>
+
+<h4>Response 200</h4>
+<pre><code>[
+  { "filename": "backup_20260901_021407.json.gz", "size_kb": 84.6, "created_at": "2026-09-01T02:14:07+00:00", "version": "2.0", "covered_table_count": 28 },
+  { "filename": "backup_20260831_090000.json.gz", "size_kb": 79.1, "created_at": "2026-08-31T09:00:00+00:00", "version": "1.1", "covered_table_count": 21 }
+]</code></pre>
+
+<hr>
+
+<h2>GET /api/v1/backup/download/{filename}</h2>
+<div class="obj">Streams the stored file as <code>application/gzip</code>. <code>filename</code>
+is validated by <code>_resolve_backup_path</code> (see <a href="#errors">invalid-filename</a>).</div>
+<h4>Responses</h4>
+<ul>
+  <li><span class="badge get">200</span> — the gzip file.</li>
+  <li><span class="badge del">400</span> <code>urn:backup:error:invalid-filename</code>.</li>
+  <li><span class="badge del">404</span> <code>urn:backup:error:not-found</code>.</li>
+</ul>
+<pre><code>curl -sS -OJ "https://&lt;host&gt;/api/v1/backup/download/backup_20260901_021407.json.gz" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"</code></pre>
+
+<hr>
+
+<h2>DELETE /api/v1/backup/{filename}</h2>
+<div class="obj">Permanently deletes one stored backup file.</div>
+<h4>Response 200</h4>
+<pre><code>{ "deleted": "backup_20260901_021407.json.gz" }</code></pre>
+<p>Errors: <code>400</code> <code>invalid-filename</code>, <code>404</code>
+<code>not-found</code>.</p>
+
+<hr>
+
+<h2>POST /api/v1/backup/restore/{filename}</h2>
+<div class="obj">Restores from a stored backup file. Serialised against
+<code>create</code>/other restores by an advisory lock; the whole operation is one
+transaction. Requires a <strong>superuser-capable</strong> DB role
+(<a href="#errors">insufficient-privilege</a>).</div>
+
+<h4>Request body (optional — <code>application/json</code>)</h4>
+<pre><code>{
+  "mode": "skip_if_conflict",   // "skip_if_conflict" (default) | "replace_all"
+  "confirm": "REPLACE ALL DATA"  // REQUIRED verbatim when mode = "replace_all"
+}</code></pre>
+<table>
+  <tr><th>mode</th><th>Behaviour</th></tr>
+  <tr><td><code>skip_if_conflict</code><br>(default)</td><td>Pre-write check: <code>SELECT 1 ... LIMIT 1</code> on every covered table. If <strong>any</strong> is non-empty &rarr; rollback + <span class="badge del">409</span>, nothing written. Otherwise load all covered tables and commit.</td></tr>
+  <tr><td><code>replace_all</code></td><td>Requires <code>confirm == "REPLACE ALL DATA"</code>. <code>TRUNCATE ... CASCADE</code> covered&cap;live tables in reverse FK order, reload, single transaction. Any row failure &rarr; full rollback + <span class="badge del">422</span>.</td></tr>
+</table>
+<p>On both modes: tables in the DB but absent from the file are left untouched; the
+schema-version tables are never written (drift is reported instead).</p>
+
+<h4>Response 200 — <code>RestoreResult</code></h4>
+<pre><code>{
+  "version": "2.0",
+  "mode": "skip_if_conflict",
+  "legacy_backup": false,
+  "restored": { "users": 4, "action_plans": 12, "ft_bond": 7 },
+  "total_rows": 5123,
+  "errors": [],
+  "covered_tables": ["users", "action_plans", "...", "ft_bond"],
+  "uncovered_tables": [],
+  "file_tables_not_in_db": [],
+  "checksum_verification": { "users": "ok", "action_plans": "ok" },
+  "schema_version_drift": {
+    "alembic_version":    { "file": "d4e5f6a7b8c9", "live": "d4e5f6a7b8c9", "match": true },
+    "ft_alembic_version": { "file": "00f7a890545d", "live": "00f7a890545d", "match": true }
+  },
+  "source_created_at": "2026-09-01T02:14:07+00:00"
+}</code></pre>
+<table>
+  <tr><th>Field</th><th>Meaning</th></tr>
+  <tr><td><code>restored</code></td><td>Rows loaded per table.</td></tr>
+  <tr><td><code>checksum_verification</code></td><td>Per table: <code>ok</code> | <code>mismatch</code> (file edited post-backup) | <code>skipped</code> (no checksum, e.g. legacy).</td></tr>
+  <tr><td><code>schema_version_drift</code></td><td>Per schema-version table: file vs live <code>version_num</code> and whether they match. Informational — nothing is written to these tables.</td></tr>
+  <tr><td><code>uncovered_tables</code></td><td>Live tables not present in this backup (left untouched).</td></tr>
+  <tr><td><code>file_tables_not_in_db</code></td><td>Tables in the file with no matching live table.</td></tr>
+  <tr><td><code>legacy_backup</code> / <code>mode:"legacy"</code></td><td>Set when a pre-2.0 file was restored.</td></tr>
+</table>
+
+<h4>curl</h4>
+<pre><code># Safe restore into an empty DB
+curl -sS -X POST "https://&lt;host&gt;/api/v1/backup/restore/backup_20260901_021407.json.gz" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"mode":"skip_if_conflict"}'
+
+# Destructive replace
+curl -sS -X POST "https://&lt;host&gt;/api/v1/backup/restore/backup_20260901_021407.json.gz" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"mode":"replace_all","confirm":"REPLACE ALL DATA"}'</code></pre>
+
+<h4>Error responses</h4>
+<ul>
+  <li><span class="badge del">400</span> <code>bad-mode</code>, <code>unsupported-version</code>, <code>invalid-file</code>, <code>confirm-required</code>, <code>invalid-filename</code></li>
+  <li><span class="badge del">404</span> <code>not-found</code></li>
+  <li><span class="badge del">409</span> <code>target-not-empty</code> — body carries <code>conflicting_tables: [{table, row_count}]</code>, <code>mode</code>, and <code>legacy_backup</code> when applicable</li>
+  <li><span class="badge del">422</span> <code>unknown-column</code> (<code>errors</code> list), <code>restore-failed</code> (<code>errors</code> list — full rollback)</li>
+  <li><span class="badge del">500</span> <code>insufficient-privilege</code></li>
+</ul>
+
+<hr>
+
+<h2>POST /api/v1/backup/restore/upload</h2>
+<div class="obj">Same restore engine, from an uploaded file. The gzip is decompressed with a
+hard cap of <code>BACKUP_MAX_UNCOMPRESSED_BYTES</code> (default 200 MiB) &rarr;
+<span class="badge del">413</span> <code>urn:backup:error:too-large</code> on exceed.</div>
+
+<h4>Request — <code>multipart/form-data</code></h4>
+<table>
+  <tr><th>Part / param</th><th>Where</th><th>Notes</th></tr>
+  <tr><td><code>file</code></td><td>multipart body</td><td>The <code>.json</code> or <code>.json.gz</code> backup. Gzip is detected by magic bytes or a <code>.gz</code> name.</td></tr>
+  <tr><td><code>mode</code></td><td><strong>query string</strong></td><td><code>skip_if_conflict</code> (default) | <code>replace_all</code></td></tr>
+  <tr><td><code>confirm</code></td><td><strong>query string</strong></td><td><code>REPLACE ALL DATA</code> (URL-encoded) when <code>mode=replace_all</code></td></tr>
+</table>
+<pre><code>curl -sS -X POST "https://&lt;host&gt;/api/v1/backup/restore/upload?mode=replace_all&confirm=REPLACE%20ALL%20DATA" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -F "file=@backup_20260901_021407.json.gz"</code></pre>
+<p>Responses: as <code>POST /restore/{filename}</code>, plus <span class="badge del">413</span>
+<code>urn:backup:error:too-large</code> (body has <code>limit_bytes</code>) and
+<span class="badge del">400</span> <code>invalid-file</code> for a non-object / unparseable
+payload.</p>
+
+<hr>
+
+<h2>GET /api/v1/backup/export-table/{table}</h2>
+<div class="obj">Exports one table as a pipe-separated (PSV) file:
+<code>text/plain</code> attachment named
+<code>&lt;table&gt;_&lt;YYYYMMDD_HHMMSS&gt;.psv</code>. Line 1 is the header (column names);
+each following line is a row. Empty field = <code>NULL</code>; <code>dict</code>/<code>list</code>
+values are JSON; a literal <code>|</code> is escaped <code>\|</code> and a newline
+<code>\n</code>.</div>
+<h4>Errors</h4>
+<ul>
+  <li><span class="badge del">400</span> <code>urn:backup:error:schema-version-table</code> — <code>table</code> is <code>alembic_version</code> / <code>ft_alembic_version</code>.</li>
+  <li><span class="badge del">400</span> <code>urn:backup:error:unknown-identifier</code> — not a live table.</li>
+</ul>
+<pre><code>curl -sS -OJ "https://&lt;host&gt;/api/v1/backup/export-table/users" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"</code></pre>
+
+<hr>
+
+<h2>POST /api/v1/backup/import-table/{table}</h2>
+<div class="obj">Imports a PSV file into one table. Column identifiers are validated against
+<code>information_schema.columns</code> for the real table and quoted; values are positional
+bind parameters. Runs under <code>session_replication_role = replica</code> in one
+transaction.</div>
+
+<h4>Request — <code>multipart/form-data</code></h4>
+<table>
+  <tr><th>Part / param</th><th>Where</th><th>Notes</th></tr>
+  <tr><td><code>file</code></td><td>multipart body</td><td>PSV file (header row + &ge; 1 data row).</td></tr>
+  <tr><td><code>mode</code></td><td>query string</td><td><code>append</code> (default) &rarr; <code>INSERT ... ON CONFLICT DO NOTHING</code>. <code>replace</code> &rarr; <code>TRUNCATE ... CASCADE</code> first.</td></tr>
+  <tr><td><code>confirm</code></td><td>query string</td><td>Required <code>== "REPLACE &lt;table&gt;"</code> when <code>mode=replace</code>.</td></tr>
+</table>
+
+<h4>Response 200</h4>
+<pre><code>{ "imported": 42, "table": "users", "mode": "append" }</code></pre>
+
+<h4>Errors</h4>
+<ul>
+  <li><span class="badge del">400</span> <code>schema-version-table</code>, <code>unknown-identifier</code>, <code>confirm-required</code>, <code>invalid-file</code> (fewer than 2 lines).</li>
+  <li><span class="badge del">422</span> <code>unknown-column</code> (body has <code>columns</code>), <code>import-failed</code> (transaction rolled back).</li>
+</ul>
+<pre><code>curl -sS -X POST "https://&lt;host&gt;/api/v1/backup/import-table/users?mode=replace&confirm=REPLACE%20users" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -F "file=@users_20260901_021407.psv"</code></pre>
+
+<hr>
+
+<h2 id="fileformat">Backup file format v2.0</h2>
+<p>A backup is a <strong>gzip-compressed JSON object</strong>.</p>
+<pre><code>{
+  "version": "2.0",
+  "created_at": "2026-09-01T02:14:07.512+00:00",
+  "created_by": "3f9b1c2a-...",              // admin user UUID
+  "source_db": "investment_db",
+  "generator": "backend/backup@2.0",
+  "covered_tables": ["users", "...", "ft_bond"],   // FK-safe insert order
+  "insert_order":   ["users", "...", "ft_bond"],   // == covered_tables; TRUNCATE order is the reverse
+  "excluded_tables": {
+    "alembic_version":    "schema-version table; owned by Alembic migrations, never restored",
+    "ft_alembic_version": "schema-version table; owned by Alembic migrations, never restored"
+  },
+  "row_counts": { "users": 4, "...": 0 },
+  "checksums":  { "users": "sha256:1f3b...", "...": "sha256:..." },
+  "schema_versions": {
+    "alembic_version":    [ { "version_num": "d4e5f6a7b8c9" } ],
+    "ft_alembic_version": [ { "version_num": "00f7a890545d" } ]
+  },
+  "tables": {
+    "users": [ { "id": "...", "email": "...", "hashed_password": "...", "role": "admin", ... } ],
+    "...":   [ ... ]
+    // NOTE: alembic_version / ft_alembic_version are NOT here — only in schema_versions
+  }
+}</code></pre>
+<h4>Value normalisation (one serialiser for the payload AND the checksum)</h4>
+<table>
+  <tr><th>Python type</th><th>On disk</th></tr>
+  <tr><td><code>UUID</code></td><td>string</td></tr>
+  <tr><td><code>datetime</code> / <code>date</code></td><td>ISO-8601 string</td></tr>
+  <tr><td><code>Decimal</code></td><td><code>float</code></td></tr>
+  <tr><td><code>bytes</code></td><td>base64 ASCII string</td></tr>
+</table>
+<h4>Checksum</h4>
+<pre><code>checksums[t] = "sha256:" + sha256( "\n".join( sorted(
+                 json.dumps(row, sort_keys=True, default=&lt;normaliser&gt;) for row in rows[t] ) ) )</code></pre>
+<div class="tip">The checksum is computed over the <strong>normalised</strong> shape that
+lands in the file, so a restore recomputes an identical digest. It therefore detects
+<strong>post-backup modification of the file</strong>, not fidelity to the source database
+(the <code>Decimal &rarr; float</code> step can round a high-precision numeric invisibly).</div>
+
+<h4>Legacy &amp; unsupported versions</h4>
+<ul>
+  <li>A file whose <code>version</code> is <code>"1.0"</code>, <code>"1.1"</code> or absent —
+  or which lacks <code>covered_tables</code> / <code>checksums</code> — restores in
+  <strong>legacy mode</strong>: result carries <code>legacy_backup: true</code>,
+  <code>mode: "legacy"</code>, <code>uncovered_tables</code>, and
+  <code>checksum_verification</code> all <code>"skipped"</code>. The conflict / confirm policy
+  is identical to v2.0.</li>
+  <li>A <code>version</code> that is a non-empty string but neither <code>"2.0"</code> nor a
+  known legacy value &rarr; <span class="badge del">400</span>
+  <code>urn:backup:error:unsupported-version</code>, before any work.</li>
+</ul>
+
+<hr>
+
+<h2 id="errors">Error catalogue</h2>
+<p>Every error below is returned as <code>application/problem+json</code> (RFC 7807 / 9457):</p>
+<pre><code>{
+  "type":     "urn:backup:error:&lt;slug&gt;",
+  "title":    "Conflict",                 // standard reason phrase for the status
+  "status":   409,
+  "detail":   "human-readable message (also kept at the top level for old clients)",
+  "instance": "/api/v1/backup/restore/backup_20260901_021407.json.gz",
+  "...":      "endpoint-specific extension fields"
+}</code></pre>
+<table>
+  <tr><th>Status</th><th><code>type</code></th><th>Raised when</th><th>Extension fields</th></tr>
+  <tr><td>400</td><td><code>urn:backup:error:invalid-filename</code></td><td>Path param contains a separator / NUL / <code>.</code>/<code>..</code>, is not <code>backup_*.json.gz</code>, or resolves outside <code>BACKUP_DIR</code></td><td>—</td></tr>
+  <tr><td>400</td><td><code>urn:backup:error:bad-mode</code></td><td>Restore <code>mode</code> not <code>skip_if_conflict</code> / <code>replace_all</code></td><td>—</td></tr>
+  <tr><td>400</td><td><code>urn:backup:error:unsupported-version</code></td><td>File <code>version</code> is an unrecognised non-empty string</td><td>—</td></tr>
+  <tr><td>400</td><td><code>urn:backup:error:invalid-file</code></td><td>Not gzip/JSON, not an object, or missing the <code>tables</code> object</td><td>—</td></tr>
+  <tr><td>400</td><td><code>urn:backup:error:confirm-required</code></td><td><code>replace_all</code> without <code>confirm == "REPLACE ALL DATA"</code>; PSV <code>replace</code> without <code>confirm == "REPLACE &lt;table&gt;"</code></td><td><code>mode</code>, <code>legacy_backup?</code></td></tr>
+  <tr><td>400</td><td><code>urn:backup:error:schema-version-table</code></td><td>PSV export/import targets <code>alembic_version</code> / <code>ft_alembic_version</code></td><td>—</td></tr>
+  <tr><td>400</td><td><code>urn:backup:error:unknown-identifier</code></td><td>PSV table name is not in the live catalogue</td><td>—</td></tr>
+  <tr><td>404</td><td><code>urn:backup:error:not-found</code></td><td>Stored backup file does not exist</td><td>—</td></tr>
+  <tr><td>409</td><td><code>urn:backup:error:target-not-empty</code></td><td>Safe-mode restore and a covered table already holds data — nothing written</td><td><code>conflicting_tables:[{table,row_count}]</code>, <code>mode</code>, <code>legacy_backup?</code></td></tr>
+  <tr><td>413</td><td><code>urn:backup:error:too-large</code></td><td>Uploaded backup exceeds <code>BACKUP_MAX_UNCOMPRESSED_BYTES</code> decompressed</td><td><code>limit_bytes</code></td></tr>
+  <tr><td>422</td><td><code>urn:backup:error:unknown-column</code></td><td>File / PSV has a column absent from the live schema</td><td><code>errors</code> or <code>columns</code></td></tr>
+  <tr><td>422</td><td><code>urn:backup:error:restore-failed</code></td><td>A table failed during load — whole transaction rolled back</td><td><code>errors</code>, <code>legacy_backup?</code></td></tr>
+  <tr><td>422</td><td><code>urn:backup:error:import-failed</code></td><td>PSV import transaction failed — rolled back</td><td>—</td></tr>
+  <tr><td>500</td><td><code>urn:backup:error:insufficient-privilege</code></td><td><code>SET session_replication_role = replica</code> denied — DB role is not superuser-capable</td><td><code>legacy_backup?</code></td></tr>
+</table>
+<div class="err">DB exception text is scrubbed to the exception class name only — no SQL,
+DSNs or filesystem paths appear in any error body or log line.</div>
+
+<hr>
+
+<h2>Configuration (environment variables)</h2>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
+  <tr><td><code>BACKUP_DIR</code></td><td><code>/app/uploads/backups</code></td><td>Where stored backup files live (in the <code>uploads_data</code> volume)</td></tr>
+  <tr><td><code>BACKUP_RETENTION</code></td><td><code>7</code></td><td>Newest N <code>backup_*.json.gz</code> kept after each create</td></tr>
+  <tr><td><code>BACKUP_MAX_UNCOMPRESSED_BYTES</code></td><td><code>209715200</code></td><td>Decompressed-size cap for <code>POST /restore/upload</code></td></tr>
+  <tr><td><code>BACKUP_FORMAT_VERSION</code></td><td><code>"2.0"</code></td><td>Version stamped into new files</td></tr>
+</table>
+<div class="err"><strong>Security note.</strong> Backup files are <strong>not encrypted at
+rest</strong> and contain every table including <code>users.hashed_password</code> and
+personal data. They are protected only by the <code>0o600</code> file mode and the
+admin-only <code>download</code> endpoint. See the
+<a href="../19-backup-restore/RUNBOOK.html">Runbook</a> for handling guidance.</div>
+
+</body>
+</html>
