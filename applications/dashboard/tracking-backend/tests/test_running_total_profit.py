@@ -14,6 +14,8 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+from app.models.item_type import SYSTEM_ITEM_TYPE_IDS
+
 PREFIX = "/api/v1/tracking"
 
 
@@ -32,7 +34,11 @@ async def _make_tracked_item(client, set_id: str, name: str = "Tracked") -> str:
     sub_id = await _current_assets_sub_id(client, set_id)
     resp = await client.post(
         f"{PREFIX}/sub-categories/{sub_id}/items",
-        json={"name": name, "type": "Investment Account", "initialInvestmentTracking": True},
+        json={
+            "name": name,
+            "typeId": SYSTEM_ITEM_TYPE_IDS["Investment Account"],
+            "initialInvestmentTracking": True,
+        },
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]

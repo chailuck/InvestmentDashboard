@@ -396,7 +396,7 @@ Importing a model that is never otherwise used is intentional — it registers t
 
 ## 6. Financial Tracker tables (separate bounded context)
 
-The `ft_tracking_set`, `ft_category`, `ft_sub_category`, `ft_tracking_item`, and `ft_initial_investment_entry` tables (Phase 1), plus `ft_update_tracking_list` and `ft_update_tracking_list_balance` (Phase 2), and `ft_bond` (Phase 7), live in this **same physical Postgres database** but are owned and migrated by the independent `tracking-backend` microservice, not by this `backend` service. They are intentionally excluded from the table inventory above: they carry **no foreign keys** to `users` or any table in this section, and are managed by a separate Alembic chain with its own `ft_alembic_version` bookkeeping table.
+The `ft_tracking_set`, `ft_category`, `ft_sub_category`, `ft_tracking_item`, and `ft_initial_investment_entry` tables (Phase 1), plus `ft_update_tracking_list` and `ft_update_tracking_list_balance` (Phase 2), `ft_bond` (Phase 7), and `ft_item_type` + `ft_item_type_capability` (Configurable Item Types / ADR-027) — **10 tables** — live in this **same physical Postgres database** but are owned and migrated by the independent `tracking-backend` microservice, not by this `backend` service. They are intentionally excluded from the table inventory above: they carry **no foreign keys** to `users` or any table in this section, and are managed by a separate Alembic chain with its own `ft_alembic_version` bookkeeping table.
 
 Later `tracking-backend` migrations:
 
@@ -405,10 +405,32 @@ Later `tracking-backend` migrations:
 | `e7c4d9b21a83` | Phase 5 / ADR-018 | 2026-08-30 | Add additive nullable `ft_initial_investment_entry.note VARCHAR(500) NULL`. |
 | `ea8407e31992` | Phase 7 / ADR-024, ADR-025 | 2026-08-31 | Widen `ck_ft_tracking_item_type` from 6 → **7** values (add `'BOND'`) by drop + recreate; create `ft_bond`. |
 | `00f7a890545d` | Phase 7 / ADR-023 | 2026-08-31 | Add additive nullable `ft_initial_investment_entry.code VARCHAR(100) NULL` and `name VARCHAR(100) NULL`. |
-| `b1c2d3e4f5a6` | Phase 7 enhancement / ADR-026 | 2026-09-02 | Add additive nullable `ft_bond.interest_rate NUMERIC(19,4) NULL` (annual rate stored as a percent) + CHECK `ck_ft_bond_interest_rate_range` (`interest_rate IS NULL OR (interest_rate >= 0 AND interest_rate <= 100)`). No backfill, no index. Lossy `downgrade()`. **New chain head.** |
+| `b1c2d3e4f5a6` | Phase 7 enhancement / ADR-026 | 2026-09-02 | Add additive nullable `ft_bond.interest_rate NUMERIC(19,4) NULL` (annual rate stored as a percent) + CHECK `ck_ft_bond_interest_rate_range` (`interest_rate IS NULL OR (interest_rate >= 0 AND interest_rate <= 100)`). No backfill, no index. Lossy `downgrade()`. |
+| `c2d3e4f5a6b7` | Configurable Item Types / ADR-027 | 2026-09-06 | Create `ft_item_type` + `ft_item_type_capability`; seed the 7 pre-existing types as `is_system` rows (fixed literal UUIDs) + the `property→counts_as_property` and `bond→bond_register` grants; add `ft_tracking_item.type_id UUID` FK → `ft_item_type.id` **ON DELETE RESTRICT** (nullable → backfilled by exact `label == old type string` match, hard-abort guard → `SET NOT NULL` + `ix_ft_tracking_item_type_id`); add `BEFORE INSERT OR UPDATE` trigger `ft_tracking_item_sync_type` (sets `type := ft_item_type.label` when `type_id` set); **drop `ck_ft_tracking_item_type`**; widen the now-denormalised `ft_tracking_item.type` `VARCHAR(30)` → `VARCHAR(100)`. Guarded `downgrade()` — lossless only in the safe window (no custom type, no renamed system label), else raises. The `type` string column is **not** dropped here — a later follow-up migration drops it. **New chain head.** |
 
-`ft_tracking_item.type` allowed values (CHECK `ck_ft_tracking_item_type`), 7 total after `ea8407e31992`:
-`'Bank account'`, `'Property'`, `'Investment Account'`, `'TaxSaving'`, `'Materials'`, `'Insurance'`, `'BOND'`.
+`ft_tracking_item.type` — **no longer a CHECK-enumerated column.** Migration `c2d3e4f5a6b7` (ADR-027) dropped `ck_ft_tracking_item_type`; integrity is now the FK `ft_tracking_item.type_id → ft_item_type.id` (`ON DELETE RESTRICT`). The `type` `VARCHAR(100)` column is kept transitionally as a trigger-synced denormalised copy of `ft_item_type.label` and will be dropped by a follow-up migration once no code reads it. The 7 seeded `ft_item_type.label` values are verbatim the old CHECK list: `'Bank account'`, `'Property'`, `'Investment Account'`, `'TaxSaving'`, `'Materials'`, `'Insurance'`, `'BOND'`.
+
+`ft_item_type` (Configurable Item Types / ADR-027) — one configurable tracking-item type:
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | No | PK, `uuid_generate_v4()`. The 7 seeded `is_system` rows use fixed literal UUIDs. |
+| `slug` | varchar(50) | No | `UNIQUE` (`uq_ft_item_type_slug`). Immutable code-facing key; `CHECK ck_ft_item_type_slug_format (slug ~ '^[a-z0-9_]+$')`. Never editable via any endpoint. |
+| `label` | varchar(100) | No | Human-facing name; admin-editable for every row. Case-/trim-insensitive uniqueness via functional index `uq_ft_item_type_label_ci` on `lower(trim(label))`. |
+| `sort_order` | int | No | DEFAULT `0`. Ascending display order (seeded 0..6). |
+| `is_system` | bool | No | DEFAULT `false`. `true` for the 7 seeds — archive-only, capabilities locked. |
+| `is_archived` | bool | No | DEFAULT `false`. Hidden from the new-assignment picker; still valid on existing items. Partial index `ix_ft_item_type_active (sort_order) WHERE is_archived = false`. |
+| `created_by` | uuid | Yes | JWT `sub` of the creating admin; `NULL` for seeds. **No FK** (bounded-context isolation). |
+| `created_at` / `updated_at` | timestamptz | No | DEFAULT `now()`; `updated_at` also `onupdate now()`. |
+
+`ft_item_type_capability` (Configurable Item Types / ADR-027) — a `(type, capability)` grant:
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `item_type_id` | uuid | No | FK → `ft_item_type.id` **ON DELETE CASCADE**. Composite PK part. |
+| `capability_key` | varchar(50) | No | Composite PK part. **No DB CHECK** — validated against the code enum (`counts_as_property`, `bond_register`) at the service layer, so adding a capability later is a code-only change. |
+
+Composite PK `(item_type_id, capability_key)`. Seeded grants: `property → counts_as_property`, `bond → bond_register`.
 
 `ft_bond` (Phase 7) — one row per registered bond holding, attached to a `ft_tracking_item` of type `BOND`:
 
@@ -426,7 +448,7 @@ Later `tracking-backend` migrations:
 
 `ft_bond` has **no `user_id` column** — ownership is resolved by joining to `ft_tracking_item.user_id`. It has **no `status` column** — status is computed on every read from the dates versus the current Asia/Bangkok date, never stored. It likewise has **no `years` column** *(Phase 7 enhancement / ADR-026)* — `years` = `round_half_up((expired_date - start_date).days / 365.25)` as an integer (`NULL` if either date is missing; not clamped for inverted dates) is derived on every read and never persisted, the same treatment as `status`.
 
-Full schema, indexes, constraints, and entity relationships for all 8 tables: `18-financial-tracker/TECHNICAL.html` §3–4 (and §15–16 for the Phase 7 bond register and its ADR-026 enhancement).
+Full schema, indexes, constraints, and entity relationships for all 10 tables: `18-financial-tracker/TECHNICAL.html` §3–4 (and §15–16 for the Phase 7 bond register and its ADR-026 enhancement, §17 for Configurable Item Types / ADR-027).
 
 ---
 
@@ -463,12 +485,15 @@ Full design (file format v2.0, restore transaction/rollback model, the
 At the ship date (2026-09-01), `GET /api/v1/backup/tables` reported **28 covered tables**
 plus the 2 excluded schema-version tables. 27 of the covered tables map to current ORM
 models across the two services; discovery also captures any additional live table. The
-always-current list is the response of `GET /api/v1/backup/tables`.
+always-current list is the response of `GET /api/v1/backup/tables`. Discovery is fully
+dynamic, so the two `ft_item_type*` tables added by migration `c2d3e4f5a6b7` (ADR-027,
+2026-09-06) are covered automatically with no code change — they simply post-date this
+snapshot's count.
 
 | Owner service | Covered tables (backed up and restorable) |
 |---|---|
 | `backend` (19 model tables) | `users`, `action_plans`, `purchase_plan_items`, `portfolio_plan_items`, `portfolios`, `holdings`, `investment_transactions`, `portfolio_cash_transactions`, `portfolio_positions_db`, `symbol_notes`, `dr_mappings`, `daily_performance`, `user_scan_configs`, `user_symbol_lists`, `weekly_scans`, `weekly_scan_items`, `pe_scan_results`, `weekly_reviews`, `weekly_review_items` |
-| `tracking-backend` (8 `ft_*` tables) | `ft_tracking_set`, `ft_category`, `ft_sub_category`, `ft_tracking_item`, `ft_initial_investment_entry`, `ft_update_tracking_list`, `ft_update_tracking_list_balance`, `ft_bond` |
+| `tracking-backend` (10 `ft_*` tables) | `ft_tracking_set`, `ft_category`, `ft_sub_category`, `ft_tracking_item`, `ft_initial_investment_entry`, `ft_update_tracking_list`, `ft_update_tracking_list_balance`, `ft_bond`, `ft_item_type`, `ft_item_type_capability` |
 
 ### 8.2 Excluded tables
 

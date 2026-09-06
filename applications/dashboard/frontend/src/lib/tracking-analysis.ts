@@ -18,8 +18,8 @@ import type {
   DashboardCategoryRow,
   DashboardItemRow,
   DashboardSubCategoryRow,
+  ItemType,
 } from '@/services/tracking'
-import { TRACKING_ITEM_TYPES } from '@/services/tracking'
 import { toFiniteOrNull } from './tracking-format'
 import type {
   AnalysisSeries,
@@ -188,16 +188,20 @@ export function rollupBalances(itemBalances: readonly (number | null)[][], lengt
 // ── Lens membership ────────────────────────────────────────────────────────
 
 export interface LensItemLike {
-  type: string
+  /** True when the item's type carries the `counts_as_property` capability. */
+  countsAsProperty: boolean
   exclusive: boolean
 }
 
-/** §4.4 — a group-by bucket produces a series only if ≥ 1 descendant item passes this. */
+/**
+ * §4.4 — a group-by bucket produces a series only if ≥ 1 descendant item passes
+ * this. Property membership is now capability-driven (`countsAsProperty`), not a
+ * literal label comparison, so it survives any admin rename of the type.
+ */
 export function lensIncludes(lens: Lens, item: LensItemLike): boolean {
   if (item.exclusive) return false
   if (lens === 'grandTotal') return true
-  if (lens === 'property') return item.type === 'Property'
-  return item.type !== 'Property'
+  return lens === 'property' ? item.countsAsProperty : !item.countsAsProperty
 }
 
 export function lensLabel(lens: Lens): string {
@@ -660,7 +664,10 @@ export interface ScopedRow {
   label: string
   /** 0 = flush, 1 = indented under a sub-category subtotal. */
   indent: 0 | 1
+  /** Display label of the item's type (transitional — from the row's `type`). */
   itemType?: string
+  /** Stable slug of the item's type — key derivations on this, not the label. */
+  typeSlug?: string
   exclusive?: boolean
   /** set on `item` rows — clicking the row drills the whole view to depth 3. */
   itemId?: string
@@ -727,6 +734,7 @@ function itemRow(
     label: item.name,
     indent,
     itemType: item.type,
+    typeSlug: item.typeSlug,
     exclusive: item.exclusive,
     itemId: item.id,
     balance: cs.balance,
@@ -860,8 +868,17 @@ const EMPTY_SCOPED_BASE = {
  * presentational grid; `groupBy` + `comparison` are ignored). 100% off the
  * one already-fetched `grid`.
  */
-export function buildScopedGrid(grid: DashboardBalanceGridOut, viewState: ViewState): ScopedGrid {
+export function buildScopedGrid(
+  grid: DashboardBalanceGridOut,
+  viewState: ViewState,
+  /** Ordered item-type list (from `useItemTypes()`) — used only to resolve the
+   *  CURRENT label for the single-type `splitNote`, so a rename is reflected.
+   *  Optional: falls back to the row's transitional `type` label when absent. */
+  itemTypes: readonly ItemType[] = [],
+): ScopedGrid {
   const axis = periodsAsc(grid)
+  const currentLabelForSlug = (slug: string, fallback: string) =>
+    itemTypes.find(t => t.slug === slug)?.label ?? fallback
   const { lens, drill } = viewState
   const depth = drillDepth(drill)
 
@@ -980,9 +997,9 @@ export function buildScopedGrid(grid: DashboardBalanceGridOut, viewState: ViewSt
 
   // split rows (Grand Total lens only).
   if (lens === 'grandTotal') {
-    const propItems = nonExclusiveItems.filter(i => i.type === 'Property')
-    const nonPropItems = nonExclusiveItems.filter(i => i.type !== 'Property')
-    const distinctTypes = new Set(nonExclusiveItems.map(i => i.type))
+    const propItems = nonExclusiveItems.filter(i => i.countsAsProperty)
+    const nonPropItems = nonExclusiveItems.filter(i => !i.countsAsProperty)
+    const distinctTypes = new Set(nonExclusiveItems.map(i => i.typeSlug))
     const showSplits = depth === 1 || distinctTypes.size >= 2
     if (showSplits) {
       rows.push(derivedRow(grid, propItems, 'split:p', 'splitProperty', 'Property portion'))
@@ -992,8 +1009,12 @@ export function buildScopedGrid(grid: DashboardBalanceGridOut, viewState: ViewSt
 
   let splitNote: string | null = null
   if (depth === 2 && lens === 'grandTotal') {
-    const distinctTypes = [...new Set(nonExclusiveItems.map(i => i.type))]
-    if (distinctTypes.length === 1) splitNote = `All items in this sub-category are type: ${distinctTypes[0]}`
+    // Key the count on the stable slug; show the CURRENT label (rename-aware).
+    const bySlug = new Map(nonExclusiveItems.map(i => [i.typeSlug, i.type]))
+    if (bySlug.size === 1) {
+      const [slug, fallbackLabel] = [...bySlug.entries()][0]
+      splitNote = `All items in this sub-category are type: ${currentLabelForSlug(slug, fallbackLabel)}`
+    }
   }
 
   if (depth === 1 && scopeCat) {
@@ -1204,7 +1225,11 @@ function derivedBucket(
   return { id, label, kind, drillId, orderIndex, balance, deltaAmount: d.deltaAmount, deltaPercent: d.deltaPercent }
 }
 
-function buildRawBuckets(grid: DashboardBalanceGridOut, viewState: ViewState): RawBucketFull[] {
+function buildRawBuckets(
+  grid: DashboardBalanceGridOut,
+  viewState: ViewState,
+  itemTypes: readonly ItemType[],
+): RawBucketFull[] {
   const { lens, drill, groupBy } = viewState
   const depth = drillDepth(drill)
 
@@ -1216,10 +1241,19 @@ function buildRawBuckets(grid: DashboardBalanceGridOut, viewState: ViewState): R
 
   if (groupBy === 'itemType') {
     const items = subtreeItems(grid, drill).filter(it => lensIncludes(lens, it))
-    return TRACKING_ITEM_TYPES
-      .map((type, i) => ({ type, i, items: items.filter(it => it.type === type) }))
+    // Iterate the fetched type list ordered by sortOrder; bucket by slug, label
+    // from the type, id = `type:${slug}`. When the list has not loaded yet, fall
+    // back to the distinct types present on the items themselves (first-seen
+    // order) so the chart still renders.
+    const order: { slug: string; label: string }[] = itemTypes.length > 0
+      ? [...itemTypes]
+          .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label))
+          .map(t => ({ slug: t.slug, label: t.label }))
+      : dedupeItemTypes(items)
+    return order
+      .map((t, i) => ({ ...t, i, items: items.filter(it => it.typeSlug === t.slug) }))
       .filter(g => g.items.length > 0)
-      .map(g => derivedBucket(grid, g.items, `type:${g.type}`, g.type, 'itemType', null, g.i))
+      .map(g => derivedBucket(grid, g.items, `type:${g.slug}`, g.label, 'itemType', null, g.i))
   }
 
   if (depth === 0) {
@@ -1255,8 +1289,22 @@ function buildRawBuckets(grid: DashboardBalanceGridOut, viewState: ViewState): R
   return items.map(it => verbatimBucket(grid, it.cells, it.id, it.name, 'item', it.id, it.orderIndex))
 }
 
+/** First-seen-order distinct `{ slug, label }` pairs across the given item rows.
+ *  Fallback for the itemType group-by when the type list has not loaded. */
+function dedupeItemTypes(items: readonly DashboardItemRow[]): { slug: string; label: string }[] {
+  const seen = new Map<string, string>()
+  for (const it of items) if (!seen.has(it.typeSlug)) seen.set(it.typeSlug, it.type)
+  return [...seen.entries()].map(([slug, label]) => ({ slug, label }))
+}
+
 /** §4.5 / §4.6 — the full chart-facing model for the current `ViewState`. */
-export function deriveChartModel(grid: DashboardBalanceGridOut, viewState: ViewState): ChartModel {
+export function deriveChartModel(
+  grid: DashboardBalanceGridOut,
+  viewState: ViewState,
+  /** Ordered item-type list (from `useItemTypes()`) — used only when
+   *  `groupBy === 'itemType'` to order/label the type buckets. Pure: no I/O. */
+  itemTypes: readonly ItemType[] = [],
+): ChartModel {
   const { granularity, drill } = viewState
   const depth = drillDepth(drill)
   const qAxis = periodsAsc(grid)
@@ -1281,7 +1329,7 @@ export function deriveChartModel(grid: DashboardBalanceGridOut, viewState: ViewS
     leafExcluded = li ? (li.item.exclusive || !lensIncludes(drill.lens, li.item)) : false
   }
 
-  const raw = buildRawBuckets(grid, viewState)
+  const raw = buildRawBuckets(grid, viewState, itemTypes)
   if (raw.length === 0) return emptyModel(depth === 3 ? 'leafEmpty' : 'noQualifyingItems')
 
   // "Other" rollup on balances, then re-attach deltas.

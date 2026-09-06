@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financial Tracker — Configurable Item Types — Design Spec (Phase 2) — InvestmentDashboard Docs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e2e8f0; font-size: 14px; line-height: 1.7; padding: 2rem 2.5rem; max-width: 940px; margin: 0 auto }
+h1 { font-size: 1.6rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: .6rem; margin: 0 0 1.5rem }
+h2 { font-size: 1.15rem; font-weight: 600; color: #f0f6fc; margin: 2.2rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid #21262d }
+h3 { font-size: 1rem; font-weight: 600; color: #58a6ff; margin: 1.4rem 0 .4rem }
+h4 { font-size: .85rem; font-weight: 600; color: #8b949e; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .05em }
+p { color: #c9d1d9; margin-bottom: .7rem }
+ul, ol { color: #c9d1d9; padding-left: 1.5rem; margin-bottom: .7rem }
+li { margin-bottom: .25rem }
+code { background: #161b22; border: 1px solid #30363d; color: #79c0ff; padding: .1em .4em; border-radius: 4px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: .83em }
+pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: .6rem 0 }
+pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: .81em; line-height: 1.5 }
+table { width: 100%; border-collapse: collapse; margin: .6rem 0; font-size: 12.5px }
+th { background: #161b22; color: #8b949e; font-weight: 600; padding: .45rem .7rem; text-align: left; border: 1px solid #30363d; vertical-align: top }
+td { padding: .4rem .7rem; border: 1px solid #21262d; color: #c9d1d9; vertical-align: top }
+tr:nth-child(even) td { background: #0d1117 }
+.badge { display: inline-block; padding: .1em .5em; border-radius: 4px; font-size: 11px; font-weight: 600 }
+.blue { background: #1f3d6b; color: #58a6ff } .green { background: #1a3a2a; color: #3fb950 } .yellow { background: #3a2e0a; color: #d29922 } .red { background: #3a0f0f; color: #f85149 } .grey { background: #21262d; color: #8b949e }
+.callout { border-left: 3px solid #58a6ff; background: rgba(31,61,107,.15); padding: .5rem 1rem; border-radius: 0 6px 6px 0; margin: .6rem 0; font-size: 13px; color: #c9d1d9 }
+.callout.warn { border-color: #d29922; background: rgba(58,46,10,.15) }
+.callout.tip { border-color: #3fb950; background: rgba(26,58,42,.15) }
+.callout.rec { border-color: #a371f7; background: rgba(56,32,90,.18) }
+hr { border: none; border-top: 1px solid #30363d; margin: 1.6rem 0 }
+.mono { font-family: 'Cascadia Code','Fira Code',monospace; font-size: .82em }
+</style>
+</head>
+<body>
+<h1>Financial Tracker — Configurable Item Types — Solution Design (Phase 2)</h1>
+
+<p><strong>Status:</strong> <span class="badge yellow">DESIGN ONLY — SDLC Phase 2</span> &nbsp;|&nbsp; <strong>Author:</strong> solution-architect &nbsp;|&nbsp; <strong>Date:</strong> 2026-09-06 &nbsp;|&nbsp; <strong>Bounded context:</strong> <code>tracking-backend</code> &nbsp;|&nbsp; <strong>ADR:</strong> ADR-027 (proposed, see §H) &nbsp;|&nbsp; <strong>Migration chains from head:</strong> <code>b1c2d3e4f5a6</code></p>
+
+<div class="callout warn"><strong>This document is a design deliverable only.</strong> No application source, tests, Alembic migrations, or configuration have been written or changed. It is written for the user to review and approve before any build engagement (Phases 3–8). Every place that needs a user decision is captured in <strong>§Open Questions</strong> with a recommendation — the build must not start until those are answered.</div>
+
+<h2>Phase 1 recap (approved for design)</h2>
+<ul>
+<li><strong>Goal:</strong> make the tracking-item type list <em>configurable at the system level</em> — an admin can add / rename / reorder / archive types through an admin UI — while the type-specific <em>behaviours</em> certain types carry today are preserved.</li>
+<li><strong>User decision:</strong> "full config with a capability registry", not "just more free-text labels".</li>
+<li><strong>North-star (hard constraint):</strong> <em>Labels are data; capabilities are code.</em> The label list is admin-managed and free to change. The capability set is a fixed, code-owned registry; system types' capabilities are locked; a user can never invent a capability.</li>
+<li><strong>Backward compatibility is an acceptance criterion:</strong> after migration every existing item, the Property lens, and the bond register must behave <em>identically</em>. Renaming <code>BOND</code> &rarr; <code>Government Bond</code> must not change any behaviour.</li>
+</ul>
+
+<h2>Verified current state (read from the codebase, 2026-09-06)</h2>
+<table>
+<thead><tr><th>Fact</th><th>Location</th></tr></thead>
+<tbody>
+<tr><td>Type is a <strong>closed 7-value set</strong>: <code>Bank account</code>, <code>Property</code>, <code>Investment Account</code>, <code>TaxSaving</code>, <code>Materials</code>, <code>Insurance</code>, <code>BOND</code> — in that display order.</td><td><code>tracking-backend/app/models/tracking_item.py</code> L26–34 (<code>TRACKING_ITEM_TYPES</code>); frontend <code>services/tracking.ts</code> L37–55</td></tr>
+<tr><td>Enforced at 3 layers: (1) Pydantic <code>_validate_type</code> + <code>TRACKING_ITEM_TYPES</code>; (2) DB CHECK <code>ck_ft_tracking_item_type</code> on <code>ft_tracking_item.type</code> (column is <code>VARCHAR(30)</code>, <code>String(30)</code> in the model); (3) frontend array + two <code>&lt;select&gt;</code>s.</td><td><code>schemas/tracking_item.py</code> L12–17, L30, L43–48; <code>models/tracking_item.py</code> L41–47, L60; <code>CreateItemModal.tsx</code> L64–73; <code>items/[itemId]/page.tsx</code> L522–531</td></tr>
+<tr><td><strong><code>type == "Property"</code></strong> drives the dashboard property / non-property split (server) and the Analysis lens (<code>Grand&nbsp;Total</code> / <code>Property</code> / <code>No&nbsp;Property</code>).</td><td>server <code>services/dashboard_balance_grid.py</code> L437–438; schema <code>schemas/dashboard.py</code> L65–67; frontend <code>lib/tracking-analysis.ts</code> L199–201, L983–985, L1217–1223</td></tr>
+<tr><td><strong><code>type == "BOND"</code></strong> gates the bond register: <code>ft_bond</code> table, 5 routes (<code>GET/POST /items/{id}/bonds</code>, <code>GET/PUT/DELETE /bonds/{id}</code>), a <code>400</code> when the item is not <code>BOND</code> — raised <em>after</em> the ownership check — and the <code>&lt;BondsSection&gt;</code> mounts only when the persisted <code>item.type === 'BOND'</code>.</td><td><code>app/api/v1/endpoints/bonds.py</code> L43, L70–76, L101–102, L118–119; <code>app/models/bond.py</code>; frontend <code>items/[itemId]/page.tsx</code> L624</td></tr>
+<tr><td><strong>Per-item capability flags already decoupled from <code>type</code></strong>: <code>initial_investment_tracking</code> (unlocks the original-investment ledger) and <code>exclusive</code> (rollup exclusion). Both are plain per-item booleans.</td><td><code>models/tracking_item.py</code> L61–64; ledger gate in <code>tracking_items.py</code> L107–112, L146–150</td></tr>
+<tr><td><code>tracking-backend</code> is a bounded context with <strong>no FK to and no query access against</strong> the main backend's <code>users</code> table. Its auth dependency returns only the JWT <code>sub</code> as an opaque string and does <em>not</em> implement any role check.</td><td><code>tracking-backend/app/auth/dependencies.py</code> (whole file)</td></tr>
+<tr><td>BUT the JWT the main backend issues <strong>already carries a <code>role</code> claim</strong> (<code>admin</code> / <code>analyst</code> / <code>viewer</code>) and an <code>email</code> claim, in the signed payload.</td><td>main backend <code>app/api/v1/endpoints/auth.py</code> L58–59, L87–88 (<code>extra={"role": user.role, "email": user.email}</code>); <code>tracking-backend/app/auth/jwt.py</code> verifies the same signature with the shared <code>APP_SECRET_KEY</code></td></tr>
+<tr><td>The in-app <strong>Backup / Restore</strong> feature uses <em>fully dynamic table discovery</em> from the live PostgreSQL catalogue with an FK-safe topological insert order. Any new table (including <code>ft_*</code>) is covered automatically, no code change.</td><td>main backend <code>app/api/v1/endpoints/backup.py</code> L1–9, <code>_discover_tables</code> L191–211, <code>_fk_edges</code> L169–188; <code>app/services/backup/__init__.py</code> <code>toposort</code></td></tr>
+<tr><td>The tracker's own <strong>per-set export</strong> (<code>GET /sets/{id}/export</code>) is a hand-written typed snapshot — it emits <code>TrackingItemExport</code> with a <code>type</code> string and does <em>not</em> include <code>ft_bond</code>.</td><td><code>app/api/v1/endpoints/export.py</code>; <code>app/schemas/export.py</code></td></tr>
+<tr><td>Highest existing ADR in the Financial Tracker technical doc is <strong>ADR-026</strong>.</td><td><code>docs/18-financial-tracker/TECHNICAL.html</code></td></tr>
+</tbody>
+</table>
+
+<div class="callout tip"><strong>Two Phase-1 assumptions are now confirmed by code:</strong> (1) backup already covers a new type table with zero changes — <em>no backup work is in scope</em>; (2) an admin boundary can be introduced <em>without</em> breaking bounded-context isolation, by reading the <code>role</code> claim that is already in the signed token. See §E and §Open Questions OQ-3.</div>
+
+<hr>
+
+<h2 id="A">A. Solution Design overview</h2>
+
+<h3>A.1 Approach in one paragraph</h3>
+<p>Introduce a new <strong><code>item-type-config</code></strong> capability inside the existing <code>tracking-backend</code> bounded context: one new aggregate <code>ItemType</code> with its own model, Pydantic schemas, service, and router — layered exactly like the existing resources (<code>endpoint &rarr; service/helper &rarr; model</code>, business logic never in the handler). <code>ft_tracking_item.type</code> (a validated <code>VARCHAR</code>) is replaced as the source of truth by a foreign key <code>ft_tracking_item.type_id &rarr; ft_item_type.id</code>. The <em>label / sort order / archived</em> attributes of a type are admin-managed rows; the <em>capabilities</em> a type carries are a small fixed set defined in code and attached to types through a join table that the service writes only within code-enforced rules. Every runtime check that today compares the literal string (<code>== "Property"</code>, <code>== "BOND"</code>) is replaced by a capability test against a <em>resolved item-type object</em> — <code>item_type.has_capability("counts_as_property")</code> / <code>has_capability("bond_register")</code> on the server, and the equivalent check against a <code>capabilities[]</code> array that the item payload now carries on the client, so the frontend never hard-codes a label again.</p>
+
+<h3>A.2 What changes conceptually vs. what stays the same</h3>
+<table>
+<thead><tr><th>Stays the same</th><th>Changes</th></tr></thead>
+<tbody>
+<tr><td>The <em>hierarchy</em>: <code>TrackingSet &rarr; Category &rarr; SubCategory &rarr; TrackingItem</code>. No change to any of those tables except one new FK column on <code>ft_tracking_item</code>.</td><td>An item's type is now a row reference, not a string literal, and is created/updated by <code>typeId</code>.</td></tr>
+<tr><td>The dashboard balance-grid algorithm, the Analysis derivations, delta math, positional-alignment contract, the property / non-property <em>lens names</em> and the <code>propertyBreakdown</code> response shape.</td><td>The <em>predicate</em> that decides which items are "property" moves from <code>it.type == "Property"</code> to <code>it.type.has_capability("counts_as_property")</code>. Output is byte-identical for the seeded data.</td></tr>
+<tr><td>The bond register: <code>ft_bond</code>, its 5 routes, the derived <code>status</code>/<code>years</code>, the <code>400</code>-after-ownership contract, the <code>&lt;BondsSection&gt;</code> UI.</td><td>The gate <code>_require_bond_item</code> tests the resolved type's <code>bond_register</code> capability instead of the literal <code>"BOND"</code>. Message no longer names <code>'BOND'</code>.</td></tr>
+<tr><td><code>initial_investment_tracking</code> and <code>exclusive</code> stay per-item booleans (see §B.4).</td><td>Nothing.</td></tr>
+<tr><td>Backup / restore (dynamic discovery) — the new tables are picked up automatically.</td><td>Nothing (verified).</td></tr>
+<tr><td>Auth for existing tracker endpoints — <code>get_current_user_id</code> unchanged.</td><td>A <em>new</em> admin-only dependency is added for the type-config write endpoints (§E.6).</td></tr>
+</tbody>
+</table>
+
+<h3>A.3 Module layout (proposed)</h3>
+<pre><code>tracking-backend/app/
+  models/item_type.py              # ItemType, ItemTypeCapability (SQLAlchemy)
+  schemas/item_type.py             # ItemTypeOut, ItemTypeCreate, ItemTypeUpdate, ReorderRequest reuse
+  services/item_type_capabilities.py  # Capability enum + ADMIN_ASSIGNABLE / SYSTEM_ONLY sets + resolver/cache
+  api/v1/endpoints/item_types.py   # GET (all authed) + admin CRUD/reorder/archive
+  auth/dependencies.py             # + require_admin (reads the JWT 'role' claim; no users-table access)
+  api/v1/router.py                 # + include_router(item_types_router)
+frontend/src/
+  services/tracking.ts             # ItemType interface + listItemTypes() + admin methods; TrackingItem gains typeId + itemType
+  hooks/useItemTypes.ts            # React-Query hook, cached
+  app/(dashboard)/tracking/settings/item-types/page.tsx   # admin screen (RoleGuard roles={['admin']})
+  components/tracking/itemtypes/*  # list row, add/rename modal, archive confirm
+</code></pre>
+
+<hr>
+
+<h2 id="B">B. Data model</h2>
+
+<h3>B.1 New table — <code>ft_item_type</code></h3>
+<table>
+<thead><tr><th>Column</th><th>Type</th><th>Constraints / notes</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><code>UUID</code></td><td>PK, <code>server_default uuid_generate_v4()</code>. Immutable. This is what <code>ft_tracking_item.type_id</code> references.</td></tr>
+<tr><td><code>slug</code></td><td><code>VARCHAR(50)</code></td><td><code>NOT NULL</code>, <code>UNIQUE</code>. <strong>Immutable stable key that CODE uses to name system types</strong> (<code>property</code>, <code>bond</code>, <code>bank_account</code>, …). Set at seed for system rows; generated once at create for custom rows (slugify(label), lowercase, <code>[a-z0-9_]</code>, collisions get a <code>_2</code>, <code>_3</code>… suffix). CHECK <code>slug ~ '^[a-z0-9_]+$'</code>. Never editable via any endpoint.</td></tr>
+<tr><td><code>label</code></td><td><code>VARCHAR(100)</code></td><td><code>NOT NULL</code>. The human-facing name shown in every picker / badge / report. Full Unicode incl. Thai (100 chars is generous for Thai display strings; the existing item <code>name</code> uses <code>String(255)</code> and entry labels use 100 — 100 is consistent). Admin-editable for <em>every</em> row, system rows included (that is how "rename <code>BOND</code>" works). Uniqueness: <span class="badge yellow">OQ-6</span> — recommend <code>UNIQUE</code> on <code>lower(label)</code> via a functional unique index, so <code>Property</code> and <code>property</code> cannot both exist; leading/trailing whitespace trimmed on write, interior preserved.</td></tr>
+<tr><td><code>sort_order</code></td><td><code>INTEGER</code></td><td><code>NOT NULL</code>, <code>server_default 0</code>. Ascending. Seeded to the current frontend array index (0..6). Reordering rewrites this for the whole set (§E.5).</td></tr>
+<tr><td><code>is_system</code></td><td><code>BOOLEAN</code></td><td><code>NOT NULL</code>, <code>server_default false</code>. <code>true</code> for the 7 seeded rows. Locks: (a) delete is forbidden — archive only; (b) the capability set is read-only through the API. Label + sort_order remain editable.</td></tr>
+<tr><td><code>is_archived</code></td><td><code>BOOLEAN</code></td><td><code>NOT NULL</code>, <code>server_default false</code>. <strong>Single boolean chosen over an <code>is_active</code> pair</strong> — see B.2. Archived = hidden from the picker for <em>new</em> assignments; still valid on existing items; still carries its capabilities. Partial index <code>WHERE is_archived = false</code> for the hot "active picker" query.</td></tr>
+<tr><td><code>created_at</code> / <code>updated_at</code></td><td><code>TIMESTAMPTZ</code></td><td><code>NOT NULL</code>, <code>server_default now()</code>, <code>updated_at</code> <code>onupdate now()</code> — same convention as every other <code>ft_*</code> table.</td></tr>
+<tr><td><code>created_by</code></td><td><code>UUID</code></td><td><code>NULL</code>. The JWT <code>sub</code> of the admin who created a custom type. <code>NULL</code> for the 7 seeds. No FK (bounded-context isolation — same reason <code>ft_bond</code> has no <code>user_id</code> FK). Advisory / audit only.</td></tr>
+</tbody>
+</table>
+
+<p><strong>Indexes:</strong> PK on <code>id</code>; unique on <code>slug</code>; functional unique on <code>lower(label)</code> (pending OQ-6); partial index <code>ix_ft_item_type_active (sort_order) WHERE is_archived = false</code> — justification: <code>GET /tracking/item-types</code> for a picker is the highest-frequency query and always filters archived out and orders by <code>sort_order</code>.</p>
+
+<h3>B.2 Why one <code>is_archived</code> boolean, not an <code>is_active</code> / status pair</h3>
+<p>A type has exactly three lifecycle states in Phase 1: <em>created</em>, <em>archived</em>, <em>deleted</em> (custom only). "Archived" is the only reversible transition and it is a pure visibility toggle — capabilities and existing-item validity are unaffected. A second <code>is_active</code> column would always be the logical negation of <code>is_archived</code> and invites the two to drift. A wider <code>status</code> enum would be premature — there is no third non-terminal state. One boolean, one meaning.</p>
+
+<h3>B.3 Capability storage — join table vs. array column</h3>
+<table>
+<thead><tr><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+<tbody>
+<tr><td><strong>(a) Join table <code>ft_item_type_capability</code></strong> &nbsp;<span class="badge green">RECOMMENDED</span></td><td>Queryable both ways ("which types grant <code>bond_register</code>?" is an indexed lookup, not a JSON scan); clean referential semantics with <code>ON DELETE CASCADE</code> so deleting a custom type drops its rows automatically; adding/removing one capability is a single-row <code>INSERT</code>/<code>DELETE</code> with no read-modify-write race; the whole table is tiny (&lt; ~20 rows ever) so it is loaded once per request and cached (§B.5).</td><td>One extra table and a join. Neutralised by the cache.</td></tr>
+<tr><td>(b) <code>capabilities TEXT[]</code> or <code>JSONB</code> on <code>ft_item_type</code></td><td>One row read; migration is one <code>ADD COLUMN</code>.</td><td>Concurrent capability edits are a lost-update hazard (read array, append, write); "types with capability X" needs a GIN index and array containment; no FK-style integrity; harder to reason about in the backup/restore round-trip.</td></tr>
+</tbody>
+</table>
+
+<h4>Recommended shape</h4>
+<pre><code>ft_item_type_capability
+  item_type_id    UUID  NOT NULL  REFERENCES ft_item_type(id) ON DELETE CASCADE
+  capability_key  VARCHAR(50) NOT NULL
+  PRIMARY KEY (item_type_id, capability_key)
+  -- capability_key values are validated against the code enum at the service
+  -- layer on every write; a DB CHECK is intentionally NOT used so adding a
+  -- new capability in a future release is a code-only change, not a migration.
+</code></pre>
+
+<h3>B.4 Capability registry (code-owned, fixed)</h3>
+<pre><code># tracking-backend/app/services/item_type_capabilities.py
+class Capability(str, Enum):
+    COUNTS_AS_PROPERTY = "counts_as_property"   # aggregation flag only, no schema behind it
+    BOND_REGISTER      = "bond_register"        # needs ft_bond + routes + screens
+
+ADMIN_ASSIGNABLE = {Capability.COUNTS_AS_PROPERTY}   # may be toggled on ANY non-system type
+SYSTEM_ONLY      = {Capability.BOND_REGISTER}        # code-bound; never grantable via the API
+</code></pre>
+<table>
+<thead><tr><th>Capability</th><th>Effect today</th><th>Assignable to a custom type?</th></tr></thead>
+<tbody>
+<tr><td><code>counts_as_property</code></td><td>Item is counted in <code>propertyBreakdown.propertyTotal</code> (server) and included by the <code>Property</code> lens / excluded by <code>No&nbsp;Property</code> (client).</td><td><span class="badge green">RECOMMEND YES</span> — it is a pure partition predicate over data the grid already has; nothing structural sits behind it. <span class="badge yellow">OQ-1</span> keeps the final call open.</td></tr>
+<tr><td><code>bond_register</code></td><td>Unlocks the <code>ft_bond</code> CRUD register + the <code>&lt;BondsSection&gt;</code> screen for the item.</td><td><span class="badge red">NO — system-only.</span> The register needs the <code>ft_bond</code> table, 5 endpoints and a UI section that only engineering can deliver. The API rejects any attempt to set it on any type (even a system type that does not already have it).</td></tr>
+<tr><td><code>initial_investment_ledger</code> <span class="badge grey">not a capability</span></td><td>The original-investment ledger is unlocked by the per-item <code>initial_investment_tracking</code> boolean.</td><td><strong>RECOMMEND: leave it exactly as it is — a per-item boolean, not a type capability and not a type default.</strong> Rationale: it is already fully decoupled from <code>type</code>; per-item granularity is correct (two <code>Investment Account</code> items where only one has a cost-basis ledger is a normal case); making it a type capability would be a behavioural change to existing data and a migration risk for zero user-visible benefit. A future, optional <code>default_initial_investment_tracking</code> column on <code>ft_item_type</code> (applied only at item-create time, still per-item thereafter) is noted as a <em>possible later enhancement</em>, explicitly out of this scope. <span class="badge yellow">OQ-2</span></td></tr>
+</tbody>
+</table>
+
+<h3>B.5 Resolution &amp; caching</h3>
+<p>A helper <code>ItemTypeRegistry</code> (request-scoped, or a 60&nbsp;s TTL cache in the service) loads all <code>ft_item_type</code> rows + their capability rows in <strong>one query pair</strong> and exposes <code>by_id[uuid] -&gt; ResolvedItemType(slug, label, is_archived, capabilities: frozenset[str])</code> with <code>has_capability(key) -&gt; bool</code>. The balance-grid service, the bonds gate, and the item router all read from this instead of touching the string. Because the table is a handful of rows the cache removes any per-request latency concern (Risk R-3).</p>
+
+<h3>B.6 FK on <code>ft_tracking_item</code></h3>
+<pre><code>ALTER TABLE ft_tracking_item
+  ADD COLUMN type_id UUID REFERENCES ft_item_type(id) ON DELETE RESTRICT;   -- nullable first, see §C
+-- after backfill:
+ALTER TABLE ft_tracking_item ALTER COLUMN type_id SET NOT NULL;
+CREATE INDEX ix_ft_tracking_item_type_id ON ft_tracking_item (type_id);
+</code></pre>
+<p><code>ON DELETE RESTRICT</code> makes "a type in use cannot be deleted" a database guarantee as well as an API rule.</p>
+
+<h3>B.7 Global list vs. per-<code>tracking_set</code></h3>
+<p><span class="badge green">RECOMMEND global</span> — one system-wide list — because the requirement is explicitly "system level" and every consumer today (dashboard split, Analysis lens, bond gate) is global. If it ever needed to be per-set: add a nullable <code>tracking_set_id</code> FK to <code>ft_item_type</code> (<code>NULL</code> = global), change the label/slug uniqueness to be scoped <code>(tracking_set_id, slug)</code> / <code>(tracking_set_id, lower(label))</code>, and give the resolver a precedence rule (set-specific shadows global). Not designed further here. <span class="badge yellow">OQ-4</span></p>
+
+<h3>B.8 ERD</h3>
+<pre><code>ft_item_type ||--o{ ft_item_type_capability : "has 0..n"
+ft_item_type ||--o{ ft_tracking_item        : "classifies 0..n (via type_id, ON DELETE RESTRICT)"
+
+ft_item_type            ( id PK, slug UQ, label, sort_order, is_system,
+                          is_archived, created_at, updated_at, created_by )
+ft_item_type_capability ( item_type_id PK/FK -> ft_item_type.id ON DELETE CASCADE,
+                          capability_key PK )
+ft_tracking_item        ( ... , type_id FK -> ft_item_type.id ON DELETE RESTRICT ,
+                          type  VARCHAR(30)  -- denormalised, kept in sync during the
+                                             -- transition window, dropped later (§C.6) )
+</code></pre>
+
+<hr>
+
+<h2 id="C">C. FK cutover + backfill migration (design only)</h2>
+
+<p>One new Alembic revision, <code>down_revision = "b1c2d3e4f5a6"</code> (suggested id/slug <code>c2d3e4f5a6b7_item_type_config</code>, file <code>20260910_1200_c2d3e4f5a6b7_item_type_config.py</code> — the exact date/hash is chosen at build time). It is safe to run against a populated, <em>running</em> pre-deploy app because every step is additive until the very end and the old <code>type</code> string stays authoritative for old code.</p>
+
+<h3>Ordered upgrade steps</h3>
+<ol>
+<li><strong>Create <code>ft_item_type</code></strong> and <strong><code>ft_item_type_capability</code></strong> (shapes in §B).</li>
+<li><strong>Seed the 7 system rows</strong> (<code>is_system = true</code>), <code>sort_order</code> = the current frontend array index, and attach the two capability rows. Label &rarr; slug &rarr; sort_order &rarr; capability map (label is verbatim the current enum string):
+<table>
+<thead><tr><th>#</th><th><code>label</code> (= old <code>type</code> string, verbatim)</th><th><code>slug</code></th><th><code>sort_order</code></th><th>capability rows</th></tr></thead>
+<tbody>
+<tr><td>0</td><td><code>Bank account</code></td><td><code>bank_account</code></td><td>0</td><td>—</td></tr>
+<tr><td>1</td><td><code>Property</code></td><td><code>property</code></td><td>1</td><td><code>counts_as_property</code></td></tr>
+<tr><td>2</td><td><code>Investment Account</code></td><td><code>investment_account</code></td><td>2</td><td>—</td></tr>
+<tr><td>3</td><td><code>TaxSaving</code></td><td><code>tax_saving</code></td><td>3</td><td>—</td></tr>
+<tr><td>4</td><td><code>Materials</code></td><td><code>materials</code></td><td>4</td><td>—</td></tr>
+<tr><td>5</td><td><code>Insurance</code></td><td><code>insurance</code></td><td>5</td><td>—</td></tr>
+<tr><td>6</td><td><code>BOND</code></td><td><code>bond</code></td><td>6</td><td><code>bond_register</code></td></tr>
+</tbody>
+</table>
+Seeds are written with explicit literal UUIDs in the migration (not <code>uuid_generate_v4()</code>) so the same ids exist in every environment and a golden-fixture parity test can pin them.</li>
+<li><strong>Add the FK column</strong> <code>ft_tracking_item.type_id UUID NULL REFERENCES ft_item_type(id) ON DELETE RESTRICT</code>. Nullable at this point so the running old app (which does not set it) keeps inserting.</li>
+<li><strong>Backfill</strong>:
+<pre><code>UPDATE ft_tracking_item t
+   SET type_id = it.id
+  FROM ft_item_type it
+ WHERE it.is_system = true
+   AND it.label = t.type;      -- old string == seed label, exact match
+
+-- guard: fail the migration loudly if anything did not map
+SELECT count(*) FROM ft_tracking_item WHERE type_id IS NULL;  -- must be 0
+</code></pre>
+If the guard is non-zero the migration raises (mirrors the <code>ea8407e31992</code> downgrade guard style) — it means a row holds a <code>type</code> outside the known 7, which must be investigated, not silently defaulted.</li>
+<li><strong>Enforce</strong> <code>ALTER COLUMN type_id SET NOT NULL</code> and create <code>ix_ft_tracking_item_type_id</code>.</li>
+<li><strong>Fate of the old <code>ft_tracking_item.type</code> <code>VARCHAR</code> column</strong> — <span class="badge green">RECOMMEND: keep it, populated, for one release (dual-write), then drop it in a follow-up migration.</span>
+<ul>
+<li>Keep it as a <em>denormalised read-through</em> of <code>ft_item_type.label</code>. Add a <code>BEFORE INSERT OR UPDATE</code> trigger <code>ft_tracking_item_sync_type</code>: <em>if <code>NEW.type_id IS NOT NULL</code> then <code>NEW.type := (SELECT label FROM ft_item_type WHERE id = NEW.type_id)</code>; else leave <code>NEW.type</code> as supplied.</em> The <code>else</code> branch keeps the still-running old app working during the deploy.</li>
+<li>A type <strong>rename</strong> in the new admin service must, in the same transaction, <code>UPDATE ft_tracking_item SET type = :new_label WHERE type_id = :id</code> so the denormalised column and every consumer that still reads it (per-set export, the <code>DashboardItemRow.type</code> field, the analysis <code>itemType</code> label) stay correct. This write cost is exactly why the column is temporary — see Risk R-7.</li>
+<li><strong>Why not an atomic cutover in this one migration?</strong> Dropping <code>type</code> now would require the new backend <em>and</em> the new frontend to be already deployed and every read path switched in lock-step; a failed deploy would strand the DB in a state neither app version can read, and rollback would need a data-restore. The dual-write window keeps <em>both</em> app versions functional, keeps the backup files and the per-set export valid, and makes rollback a schema-only operation right up until the follow-up migration.</li>
+</ul>
+</li>
+<li><strong>Drop <code>ck_ft_tracking_item_type</code></strong> in this same migration. Once <code>type_id</code> is <code>NOT NULL</code> and the FK is the integrity guarantee, the 7-value CHECK on the string column would actively <em>break</em> the first custom type (its label is not in the CHECK list) the moment the sync trigger writes it. The FK + <code>ON DELETE RESTRICT</code> is the replacement guarantee.</li>
+</ol>
+
+<h3>C.6 Follow-up migration (a later release)</h3>
+<p><code>DROP TRIGGER ft_tracking_item_sync_type</code>; <code>ALTER TABLE ft_tracking_item DROP COLUMN type</code>. Precondition: the deployed backend reads <code>type_id</code> everywhere, the per-set export emits <code>typeLabel</code>/<code>typeSlug</code> from the FK (§D), and no consumer reads <code>ft_tracking_item.type</code>.</p>
+
+<h3>C.7 Rollback story</h3>
+<table>
+<thead><tr><th>Situation</th><th>Downgrade</th><th>Data loss?</th></tr></thead>
+<tbody>
+<tr><td><strong>No custom type created and no system label renamed</strong> (the "safe window").</td><td><code>DROP TRIGGER</code>; <code>DROP INDEX ix_ft_tracking_item_type_id</code>; <code>ALTER TABLE ft_tracking_item DROP COLUMN type_id</code>; recreate <code>ck_ft_tracking_item_type</code> with the original 7-value list; <code>DROP TABLE ft_item_type_capability</code>; <code>DROP TABLE ft_item_type</code>. The <code>type</code> string column was never touched, so every item keeps its original type.</td><td><span class="badge green">None.</span></td></tr>
+<tr><td><strong>Point of no return</strong> — any <code>ft_item_type</code> row with <code>is_system = false</code> exists, OR any system row's <code>label</code> differs from its seed value.</td><td>The <code>type</code> string column now contains values outside the 7-value CHECK (a custom label, or a renamed system label). The downgrade <strong>refuses</strong> — it raises with a message listing the offending rows, exactly like the <code>ea8407e31992</code> "still have <code>type='BOND'</code>" guard. To proceed the operator must first re-point those items to one of the 7 original types (or delete them) and revert renames.</td><td><span class="badge red">Lossy by definition</span> — custom types and rename history cannot survive a return to a closed 7-value enum.</td></tr>
+</tbody>
+</table>
+
+<h3>C.8 Ordering constraints vs. a running app</h3>
+<ul>
+<li>Backfill must complete <em>before</em> <code>SET NOT NULL</code> (step 4 before 5).</li>
+<li>The migration (steps 1–7) can run while the <em>old</em> app is live: <code>type_id</code> is nullable during the old app's writes and the sync trigger's <code>else</code> branch preserves the old string path.</li>
+<li>Deploy order for the build engagement: <strong>migrate &rarr; deploy backend that always sets <code>type_id</code> and reads capabilities &rarr; deploy frontend that sends <code>typeId</code> and reads <code>itemType</code> &rarr; (later release) follow-up migration to drop the <code>type</code> column.</strong></li>
+<li>The follow-up column drop must not run until zero code paths read <code>ft_tracking_item.type</code>.</li>
+</ul>
+
+<hr>
+
+<h2 id="D">D. Refactor-site inventory</h2>
+<p>The replacement model everywhere: a <strong>resolved item-type object</strong> carrying <code>{ id, slug, label, isArchived, capabilities[] }</code>. Server checks <code>item_type.has_capability("counts_as_property" | "bond_register")</code>. The item payload (API response, and the <code>DashboardItemRow</code> in the balance grid) carries <code>typeId</code>, <code>typeSlug</code> and either <code>capabilities[]</code> or the single derived boolean <code>countsAsProperty</code>, so the client checks a flag, never a label.</p>
+
+<h3>D.1 Backend</h3>
+<table>
+<thead><tr><th>File : line</th><th>Current construct</th><th>Becomes</th></tr></thead>
+<tbody>
+<tr><td><code>models/tracking_item.py</code> : 26–34</td><td><code>TRACKING_ITEM_TYPES</code> tuple</td><td>Deleted. No literal type list in code.</td></tr>
+<tr><td><code>models/tracking_item.py</code> : 41–47</td><td><code>CheckConstraint("type IN (...)", name="ck_ft_tracking_item_type")</code></td><td>Removed (migration drops it). Integrity now = FK <code>type_id</code>.</td></tr>
+<tr><td><code>models/tracking_item.py</code> : 60</td><td><code>type: Mapped[str] = mapped_column(String(30), nullable=False)</code></td><td>Add <code>type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ft_item_type.id"), nullable=False, index=True)</code> + relationship. <code>type</code> kept as a plain column (denormalised) for the transition window, then removed.</td></tr>
+<tr><td><code>schemas/tracking_item.py</code> : 8, 12–17, 30, 43–48</td><td><code>_validate_type</code> against <code>TRACKING_ITEM_TYPES</code>; <code>field_validator("type")</code> on create &amp; update</td><td>Replaced by <code>type_id: uuid.UUID</code> on <code>TrackingItemCreate</code> (required) and <code>type_id: uuid.UUID | None</code> on <code>TrackingItemUpdate</code>. Existence + not-archived validation moves to the service/endpoint (needs a DB lookup, so not a pure field validator). See §E.7.</td></tr>
+<tr><td><code>schemas/tracking_item.py</code> : 55</td><td><code>TrackingItemOut.type: str</code></td><td><code>type_id: uuid.UUID</code> + <code>item_type: ItemTypeOut</code> (embedded). During transition also keep <code>type: str</code> (= label) for back-compat.</td></tr>
+<tr><td><code>api/v1/endpoints/sub_categories.py</code> : 74–107</td><td><code>create_tracking_item</code>: <code>type=body.type</code></td><td>Resolve <code>body.type_id</code> via the registry; <code>404</code>/<code>400</code> if unknown or archived; set <code>type_id=...</code>. (Trigger fills the denormalised <code>type</code>.)</td></tr>
+<tr><td><code>api/v1/endpoints/tracking_items.py</code> : 69–70</td><td><code>update_tracking_item</code>: <code>if body.type is not None: item.type = body.type</code></td><td><code>if body.type_id is not None:</code> resolve &amp; validate (allow keeping an already-assigned archived type; reject <em>switching to</em> an archived type — Phase-1 BR); <code>item.type_id = ...</code>.</td></tr>
+<tr><td><code>services/dashboard_balance_grid.py</code> : 437–438</td><td><code>property_items = [it for it in ... if it.type == "Property"]</code> / <code>!= "Property"</code></td><td><code>reg = ItemTypeRegistry(db)</code> once; <code>property_items = [it for it in ... if reg.by_id[it.type_id].has_capability("counts_as_property")]</code>; non-property = the complement.</td></tr>
+<tr><td><code>services/dashboard_balance_grid.py</code> : 187–194, 372–384</td><td><code>@dataclass ItemRow: type: str</code>; built with <code>type=it.type</code></td><td>Add <code>type_slug: str</code> and <code>counts_as_property: bool</code> (from the registry). Keep <code>type</code> (label) for the response's back-compat field.</td></tr>
+<tr><td><code>schemas/dashboard.py</code> : 40–46</td><td><code>DashboardItemRow.type: str</code></td><td>Add <code>type_id</code>, <code>type_slug</code>, <code>counts_as_property: bool</code>. Keep <code>type</code> (label) during transition. <strong>Response field names <code>propertyTotal</code> / <code>nonPropertyTotal</code> on <code>DashboardPropertyBreakdown</code> stay unchanged</strong> — API stability; only the docstring at L65–67 changes ("items whose type has the <code>counts_as_property</code> capability").</td></tr>
+<tr><td><code>schemas/dashboard.py</code> : 65–67</td><td>Docstring: <em>"type == 'Property'"</em> / <em>"type != 'Property'"</em></td><td>Reworded to the capability wording. No field change.</td></tr>
+<tr><td><code>api/v1/endpoints/bonds.py</code> : 43</td><td><code>_BOND_TYPE = "BOND"</code></td><td>Deleted.</td></tr>
+<tr><td><code>api/v1/endpoints/bonds.py</code> : 70–76</td><td><code>_require_bond_item</code>: <code>if item.type != _BOND_TYPE: raise HTTPException(400, ...)</code></td><td><code>if not reg.by_id[item.type_id].has_capability("bond_register"): raise HTTPException(400, "Tracking item's type does not provide a bond register; ...")</code>. Still raised <strong>after</strong> <code>_get_item_or_404</code>. Same <code>400</code> status &amp; <code>{"detail": ...}</code> contract.</td></tr>
+<tr><td><code>api/v1/endpoints/bonds.py</code> : 101–102, 118–119</td><td><code>_require_bond_item(item)</code> call sites in <code>list_bonds</code> / <code>create_bond</code></td><td>Unchanged call; the helper now needs the registry (pass <code>db</code> or the resolved type).</td></tr>
+<tr><td><code>api/v1/endpoints/export.py</code> + <code>schemas/export.py</code> (<code>TrackingItemExport</code>)</td><td>Emits <code>type</code> (string) per item; no bond data.</td><td>During transition: still emit <code>type</code> (label) from the denormalised column. Target shape: emit <code>typeSlug</code> + <code>typeLabel</code> (from the FK) so a re-import can resolve by slug; keep <code>type</code> as a deprecated alias until the column drop. <code>ft_bond</code> stays out of this export (unchanged).</td></tr>
+<tr><td><code>api/v1/router.py</code> : 23–34</td><td>router assembly</td><td><code>+ v1_router.include_router(item_types_router)</code>.</td></tr>
+<tr><td><code>auth/dependencies.py</code></td><td><code>get_current_user_id</code> only</td><td><code>+ require_admin</code> — decodes/verifies the token (same as <code>get_current_user_id</code>), then <code>if payload.get("role") != "admin": raise HTTPException(403, "Admin role required")</code>. No users-table access. See §E.6 &amp; OQ-3.</td></tr>
+<tr><td><code>alembic/versions/…ea8407e31992…</code> : 48–50</td><td><code>_TYPES_7</code> / <code>_TYPES_6</code> literals in the bond migration</td><td>No edit — historical. The new migration supersedes the CHECK entirely.</td></tr>
+<tr><td><code>schemas/initial_investment_entry.py</code></td><td>(listed in the brief as a read site)</td><td><strong>No change.</strong> It is referenced only because <code>schemas/bond.py</code> imports <code>_coerce_blank</code> from it; it has nothing type-related.</td></tr>
+</tbody>
+</table>
+
+<h3>D.2 Frontend</h3>
+<table>
+<thead><tr><th>File : line</th><th>Current construct</th><th>Becomes</th></tr></thead>
+<tbody>
+<tr><td><code>services/tracking.ts</code> : 37–55</td><td><code>type TrackingItemType = 'Bank account' | ...</code> union + <code>export const TRACKING_ITEM_TYPES: TrackingItemType[] = [...]</code></td><td>Deleted. New <code>interface ItemType { id; slug; label; sortOrder; isSystem; isArchived; capabilities: string[] }</code> + <code>trackingService.listItemTypes()</code> and the admin CRUD methods (§E).</td></tr>
+<tr><td><code>services/tracking.ts</code> : 109–122</td><td><code>TrackingItem.type: TrackingItemType</code></td><td><code>typeId: string</code> + <code>itemType: ItemType</code>. Keep <code>type: string</code> (label) as a transition-period read-only field.</td></tr>
+<tr><td><code>services/tracking.ts</code> : 250–258</td><td><code>DashboardItemRow.type: string</code></td><td><code>typeId: string; typeSlug: string; countsAsProperty: boolean</code> (+ transition <code>type</code>).</td></tr>
+<tr><td><code>services/tracking.ts</code> : 338–346</td><td><code>TrackingItemInput.type: TrackingItemType</code></td><td><code>typeId: string</code>.</td></tr>
+<tr><td><code>services/tracking.ts</code> : 571–578</td><td><code>createItem</code> / <code>updateItem</code> pass <code>{ type }</code></td><td>Pass <code>{ typeId }</code>.</td></tr>
+<tr><td><code>lib/tracking-analysis.ts</code> : 22</td><td><code>import { TRACKING_ITEM_TYPES } from '@/services/tracking'</code></td><td>Removed. The ordered item-type list is passed into <code>deriveChartModel</code> / <code>buildScopedGrid</code> as a parameter (from the <code>useItemTypes()</code> hook) — these functions stay pure / no-I/O.</td></tr>
+<tr><td><code>lib/tracking-analysis.ts</code> : 190–201</td><td><code>lensIncludes</code>: <code>item.type === 'Property'</code> / <code>!== 'Property'</code>; <code>LensItemLike { type: string }</code></td><td><code>LensItemLike { countsAsProperty: boolean; exclusive: boolean }</code>; <code>lens === 'property' ? item.countsAsProperty : !item.countsAsProperty</code>.</td></tr>
+<tr><td><code>lib/tracking-analysis.ts</code> : 203–205</td><td><code>lensLabel</code> returns <code>'Grand Total' | 'Property' | 'No Property'</code></td><td><strong>Unchanged</strong> — these are lens names, not type labels.</td></tr>
+<tr><td><code>lib/tracking-analysis.ts</code> : 717–738</td><td><code>itemRow(...)</code>: <code>itemType: item.type</code> on <code>ScopedRow</code></td><td><code>itemType: item.type</code> stays as the <em>display label</em> (server keeps sending the label during transition; after the column drop it comes from the embedded type). Add <code>typeSlug</code> if any logic needs a stable key.</td></tr>
+<tr><td><code>lib/tracking-analysis.ts</code> : 982–990</td><td><code>propItems = nonExclusiveItems.filter(i =&gt; i.type === 'Property')</code> / <code>!==</code></td><td><code>i.countsAsProperty</code> / <code>!i.countsAsProperty</code>. Split-row labels <code>'Property portion'</code> / <code>'Non-Property portion'</code> unchanged.</td></tr>
+<tr><td><code>lib/tracking-analysis.ts</code> : 985, 995</td><td><code>distinctTypes = new Set(nonExclusiveItems.map(i =&gt; i.type))</code></td><td>Key on <code>i.typeSlug</code> (stable) for the <em>count</em>; the <code>splitNote</code> copy <em>"All items in this sub-category are type: X"</em> shows the current <strong>label</strong> looked up from the item-type list — so a rename is reflected, not frozen.</td></tr>
+<tr><td><code>lib/tracking-analysis.ts</code> : 1217–1223</td><td><code>buildRawBuckets</code> groupBy <code>itemType</code>: iterates <code>TRACKING_ITEM_TYPES</code>, buckets by <code>it.type === type</code>, label = the literal</td><td>Iterate the fetched item-type list ordered by <code>sortOrder</code>; bucket by <code>it.typeSlug === t.slug</code>; bucket label = <code>t.label</code>; bucket id = <code>type:${'{'}t.slug{'}'}</code>. Archived types with 0 items simply produce no bucket (already filtered by <code>g.items.length &gt; 0</code>).</td></tr>
+<tr><td><code>app/(dashboard)/tracking/items/[itemId]/page.tsx</code> : 16</td><td><code>import { ..., TRACKING_ITEM_TYPES } from '@/services/tracking'</code></td><td>Replace with <code>useItemTypes()</code>.</td></tr>
+<tr><td><code>… items/[itemId]/page.tsx</code> : 428–451, 522–531</td><td><code>form.type: TrackingItemType</code>; <code>&lt;select&gt;{TRACKING_ITEM_TYPES.map(...)}</code></td><td><code>form.typeId: string</code>; options = <code>useItemTypes()</code> filtered <code>!isArchived</code> <strong>plus</strong> the item's own current type even if archived (so an existing archived assignment stays selectable / visible); sorted by <code>sortOrder</code>.</td></tr>
+<tr><td><code>… items/[itemId]/page.tsx</code> : 601–624</td><td><code>{item.type === 'BOND' && &lt;BondsSection .../&gt;}</code></td><td><code>{item.itemType.capabilities.includes('bond_register') && &lt;BondsSection .../&gt;}</code>. Still gated on the <em>persisted</em> item (query cache), not the pending form value — the existing rationale comment stays valid.</td></tr>
+<tr><td><code>components/tracking/CreateItemModal.tsx</code> : 6, 25, 64–73</td><td><code>TRACKING_ITEM_TYPES[0]</code> default; <code>&lt;select&gt;</code> over the literal array; <code>onConfirm(name, type: TrackingItemType)</code></td><td>Options from <code>useItemTypes()</code> (<code>!isArchived</code>, by <code>sortOrder</code>); default = first active; <code>onConfirm(name, typeId: string)</code>. Loading/empty guard: if the type list is still loading, disable Create.</td></tr>
+<tr><td><code>components/tracking/CategoryTree.tsx</code> : 15, 54–56, 118, 140</td><td><code>TrackingItemType</code> in <code>handleCreateItem</code> signature; <code>{item.type}</code> rendered as a badge; <code>createItem(..., { name, type, ... })</code></td><td>Signature takes <code>typeId: string</code>; badge renders <code>item.itemType.label</code> (or the transition <code>item.type</code>); create call passes <code>typeId</code>.</td></tr>
+<tr><td><code>app/(dashboard)/tracking/analysis/components/ScopedDashboardSection.tsx</code> : 75</td><td><code>{scoped.itemType && &lt;span className="badge-neutral"&gt;{scoped.itemType}&lt;/span&gt;}</code></td><td>Unchanged logic — ensure <code>scoped.itemType</code> is the <strong>label</strong> (it is a string already; the analysis layer must feed it the label, not the slug).</td></tr>
+<tr><td><code>… ScopedDashboardSection.tsx</code> : 144–149</td><td>Copy: <em>"This item (type: {es.itemType}) is not a {lensLabel} item…"</em></td><td>Unchanged — <code>es.itemType</code> is a display label; wording is lens-relative, not tied to a specific type name. <span class="badge yellow">Flag</span>: this is a user-visible string that interpolates the label — after a rename it shows the new label, which is correct.</td></tr>
+<tr><td><code>components/tracking/BondsSection.tsx</code></td><td>No type literal — it is only mounted by the parent gate.</td><td><strong>No change.</strong></td></tr>
+<tr><td><code>app/(dashboard)/tracking/dashboard/page.tsx</code></td><td>Reads <code>grid.propertyBreakdown.propertyTotal</code> / <code>nonPropertyTotal</code>; "Property" / "Non-Property Total" appear only as static UI copy.</td><td><strong>No logic change.</strong> The server still returns <code>propertyBreakdown</code>; the labels are captions, not type comparisons.</td></tr>
+</tbody>
+</table>
+
+<h3>D.3 Tests</h3>
+<table>
+<thead><tr><th>File</th><th>What it asserts today</th><th>Update</th></tr></thead>
+<tbody>
+<tr><td><code>tracking-backend/tests/test_tracking_items.py</code> (L9, L25 parametrize over <code>TRACKING_ITEM_TYPES</code>, L50/69/136/141/160 create with <code>"type": "Property" | "Bank account"</code>)</td><td>Every enum value is accepted; bad value &rarr; 400.</td><td>Parametrize over the seeded slugs/ids from a fixture; create payloads send <code>typeId</code>; add: unknown <code>typeId</code> &rarr; 404/400; archived <code>typeId</code> on create &rarr; 400; changing to archived on update &rarr; 400; keeping an already-archived type on update &rarr; OK.</td></tr>
+<tr><td><code>tracking-backend/tests/test_export.py</code> (L39/46/116/123/163/172 — asserts <code>items_by_id[...]["type"] == "Property"</code> / <code>"Bank account"</code>)</td><td>Export echoes the type string.</td><td>During transition: unchanged (denormalised <code>type</code> still emitted). Target: assert <code>typeSlug == "property"</code> / <code>typeLabel == "Property"</code>.</td></tr>
+<tr><td>new <code>tracking-backend/tests/test_item_types.py</code></td><td>—</td><td>GET list (all authed); admin CRUD; non-admin &rarr; 403; cannot delete system; cannot delete in-use; cannot edit system capabilities; cannot grant <code>bond_register</code>; cannot archive the last active type; reorder.</td></tr>
+<tr><td>new <code>tracking-backend/tests/test_item_type_migration.py</code></td><td>—</td><td>Seeded fixture DB &rarr; run migration &rarr; assert all 7 rows, correct slugs/order/capabilities, every item back-filled, <code>type_id</code> NOT NULL, CHECK gone, downgrade in the safe window restores exactly.</td></tr>
+<tr><td>new <code>tracking-backend/tests/test_bond_gate_capability.py</code></td><td>—</td><td>Bond routes 400 for a non-<code>bond_register</code> type, 200/201 for one that has it, still after ownership (cross-user &rarr; 404 not 400).</td></tr>
+<tr><td>new parity test (golden fixture)</td><td>—</td><td>Balance-grid + Analysis output for the seed data is <strong>byte-identical</strong> before/after the refactor, and unchanged after renaming <code>Property</code> &rarr; <code>Real Estate</code> and <code>BOND</code> &rarr; <code>Government Bond</code>.</td></tr>
+<tr><td><code>frontend/src/services/__tests__/tracking.test.ts</code></td><td>Normalisers; type union.</td><td>Drop the union assertions; add <code>listItemTypes()</code> + <code>ItemType</code> normalisation (capabilities array, booleans).</td></tr>
+<tr><td><code>frontend/…/tracking/items/[itemId]/__tests__/page.test.tsx</code></td><td><code>&lt;select&gt;</code> lists the 7 literals; BondsSection shows when <code>type === 'BOND'</code>.</td><td>Mock <code>useItemTypes()</code>; assert options come from the mock (archived excluded, current kept); BondsSection shows when <code>capabilities</code> includes <code>bond_register</code>.</td></tr>
+<tr><td><code>frontend/…/tracking/analysis/__tests__/page.test.tsx</code></td><td>Property lens filtering; <code>itemType</code> group-by buckets keyed by the literals.</td><td>Feed a mock item-type list; assert filtering keys on <code>countsAsProperty</code>; buckets keyed by slug, labelled by label, ordered by <code>sortOrder</code>.</td></tr>
+<tr><td><code>frontend/…/tracking/category/__tests__/page.test.tsx</code></td><td>Create-item flow sends <code>type</code>; badge shows the literal.</td><td>Sends <code>typeId</code>; badge shows <code>itemType.label</code>.</td></tr>
+<tr><td>new <code>frontend/…/tracking/settings/item-types/__tests__/page.test.tsx</code></td><td>—</td><td>List renders system vs custom; add / rename / reorder / archive / delete flows; capability checkboxes disabled for system rows; delete disabled with tooltip when in use; keyboard reorder; RoleGuard blocks non-admins; cache invalidation after a mutation.</td></tr>
+</tbody>
+</table>
+
+<h3>D.4 Docs to update (technical-writer — not edited here)</h3>
+<ul>
+<li><code>docs/02-infrastructure/DATABASE.html</code> + <code>DATABASE.md</code> — new tables <code>ft_item_type</code>, <code>ft_item_type_capability</code>; <code>ft_tracking_item.type_id</code> FK; removal of <code>ck_ft_tracking_item_type</code>.</li>
+<li><code>docs/02-infrastructure/API-FINANCIAL-TRACKER.html</code> — regenerate: new <code>/tracking/item-types</code> endpoints; item create/update switch to <code>typeId</code>; new <code>itemType</code> in item &amp; dashboard responses.</li>
+<li><code>docs/18-financial-tracker/TECHNICAL.html</code> — embed ADR-027; capability-registry section; refactor-site notes.</li>
+<li><code>docs/18-financial-tracker/FUNCTIONAL.html</code> — admin "Item Types" screen; archive / delete rules.</li>
+<li><code>docs/18-financial-tracker/ANALYSIS.html</code> + <code>ANALYSIS-DESIGN.html</code> — the Property lens / <code>itemType</code> group-by is now capability-driven; label vs slug note.</li>
+<li><code>docs/14-migrations/TECHNICAL.html</code> — the two-step (add-FK &rarr; later drop-string) migration pattern and its rollback point-of-no-return.</li>
+<li><code>docs/app-guide.html</code> — new admin capability entry.</li>
+<li><code>docs/manifest.json</code> — one new node (snippet in the return message; not applied here).</li>
+</ul>
+
+<hr>
+
+<h2 id="E">E. API design</h2>
+<p>Base path <code>/api/v1/tracking/item-types</code> (the service mounts <code>/api/v1/tracking</code> in <code>main.py</code>; the router carries <code>/item-types</code>). Error bodies follow the service's existing convention — FastAPI's <code>{"detail": "..."}</code> — since the rest of <code>tracking-backend</code> does not emit RFC-9457 Problem Details; adopting Problem Details service-wide is a separate effort (<span class="badge yellow">OQ-8</span>). Status codes below are the contract regardless of body shape.</p>
+
+<h3>E.1 <code>GET /tracking/item-types</code> — list</h3>
+<ul>
+<li><strong>Auth:</strong> any authenticated tracker user (<code>get_current_user_id</code>). Needed by every item picker.</li>
+<li><strong>Query:</strong> <code>?includeArchived=true</code> — default <code>false</code> returns only <code>is_archived = false</code>; <code>true</code> returns all (used by the admin screen and by the item-detail page to resolve an item's own archived type). No auth distinction on this flag — archived types are not secret.</li>
+<li><strong>Response 200:</strong> array, ordered by <code>sort_order</code> asc, then <code>label</code>:
+<pre><code>[{ "id": "uuid", "slug": "property", "label": "Property",
+   "sortOrder": 1, "isSystem": true, "isArchived": false,
+   "capabilities": ["counts_as_property"] }]</code></pre></li>
+<li><strong>Caching:</strong> <code>Cache-Control: private, max-age=60</code>; the client caches under React-Query key <code>['tracking-item-types']</code> with <code>staleTime</code> ~5&nbsp;min, invalidated on any admin mutation.</li>
+</ul>
+
+<h3>E.2 <code>POST /tracking/item-types</code> — create custom type</h3>
+<ul>
+<li><strong>Auth:</strong> admin only (<code>require_admin</code>).</li>
+<li><strong>Body:</strong> <code>{ "label": string (req, 1..100, trimmed, unique case-insensitively), "sortOrder": int? (default = max+1), "capabilities": string[]? (subset of ADMIN_ASSIGNABLE) }</code>.</li>
+<li><strong>Server sets:</strong> <code>slug</code> = slugify(label) with a numeric suffix on collision; <code>isSystem = false</code>; <code>isArchived = false</code>; <code>createdBy</code> = JWT <code>sub</code>.</li>
+<li><strong>Responses:</strong> <code>201</code> <code>ItemTypeOut</code>; <code>400</code> validation (blank / too long / bad capability key); <code>409</code> duplicate label; <code>403</code> non-admin; <code>422</code> a capability key that is <code>SYSTEM_ONLY</code> or unknown.</li>
+</ul>
+
+<h3>E.3 <code>PUT /tracking/item-types/{id}</code> — edit label / order / capabilities</h3>
+<ul>
+<li><strong>Auth:</strong> admin only. Presence-aware body: <code>{ "label"?, "sortOrder"?, "capabilities"? }</code>. <code>slug</code> is never accepted (ignored or <code>422</code>).</li>
+<li><strong>Rules:</strong> if the row <code>is_system</code>, <code>capabilities</code> in the body &rarr; <code>422</code> ("system type capabilities are locked"); <code>label</code> &amp; <code>sortOrder</code> are allowed on system rows. Any <code>capabilities</code> entry not in <code>ADMIN_ASSIGNABLE</code> &rarr; <code>422</code> (covers <code>bond_register</code> and unknown keys, for every row). Duplicate label &rarr; <code>409</code>.</li>
+<li><strong>Side effect (transition window):</strong> a <code>label</code> change also runs <code>UPDATE ft_tracking_item SET type = :label WHERE type_id = :id</code> in the same transaction (§C.6).</li>
+<li><strong>Responses:</strong> <code>200</code> <code>ItemTypeOut</code>; <code>400</code>/<code>404</code>/<code>409</code>/<code>422</code>/<code>403</code>.</li>
+</ul>
+
+<h3>E.4 Archive / unarchive</h3>
+<ul>
+<li><code>PUT /tracking/item-types/{id}/archive</code> and <code>PUT /tracking/item-types/{id}/unarchive</code>. Admin only. Idempotent.</li>
+<li>Allowed on system rows (a system type can be archived; it stays valid on existing items and keeps its capabilities).</li>
+<li><strong>Guard:</strong> archiving the <em>last</em> non-archived type &rarr; <code>409</code> ("at least one active type must remain"). </li>
+<li><strong>Responses:</strong> <code>200</code> <code>ItemTypeOut</code>; <code>404</code>; <code>409</code>; <code>403</code>.</li>
+</ul>
+
+<h3>E.5 <code>DELETE /tracking/item-types/{id}</code></h3>
+<ul>
+<li>Admin only. <code>409</code> when <code>is_system = true</code> ("system types cannot be deleted; archive instead"). <code>409</code> when any <code>ft_tracking_item.type_id = id</code> ("N items still use this type"); the FK <code>ON DELETE RESTRICT</code> is the backstop. Otherwise <code>204</code> and the capability rows cascade.</li>
+</ul>
+
+<h3>E.6 Reorder</h3>
+<p><span class="badge green">RECOMMEND a bulk endpoint</span>, matching the app's existing reorder convention (<code>ReorderRequest = { items: [{ id, order }] }</code>, used by categories / sub-categories / items and by the frontend <code>toOrderItems</code> helper):</p>
+<pre><code>PUT /tracking/item-types/order
+body: { "items": [ { "id": "uuid", "order": 1 }, ... ] }   # must list every type id
+-&gt; 200 { "status": "ok" }   ;  400 if the id set is not exactly the full set
+</code></pre>
+<p>Server rewrites <code>sort_order</code> from the supplied positions in one transaction. (Per-row <code>sortOrder</code> via <code>PUT /{id}</code> also works for a single nudge, but the bulk form keeps the ordering atomic and consistent with the rest of the app.)</p>
+
+<h3>E.7 Item create / update contract change</h3>
+<ul>
+<li><span class="badge green">RECOMMEND</span> the request field changes from <code>type: string</code> to <code>typeId: uuid</code> on both <code>POST /sub-categories/{id}/items</code> and <code>PUT /items/{id}</code>.</li>
+<li>Validation (in the endpoint/service, not a field validator — it needs a lookup): <code>typeId</code> must resolve to an <code>ft_item_type</code> row. On <strong>create</strong>: the row must not be archived &rarr; else <code>400</code>. On <strong>update</strong>: switching to an archived type &rarr; <code>400</code>; keeping an already-assigned archived type (i.e. <code>typeId</code> unchanged, or omitted) &rarr; allowed (Phase-1 BR).</li>
+<li>Response: <code>TrackingItemOut</code> carries <code>typeId</code> + embedded <code>itemType: ItemTypeOut</code>; also <code>type: string</code> (label) during the transition window for any un-migrated client.</li>
+</ul>
+
+<h3>E.8 Bond routes re-gate</h3>
+<p><code>_require_bond_item</code> resolves the item's type via the registry and checks <code>has_capability("bond_register")</code>. Unchanged: it runs <em>after</em> <code>_get_item_or_404</code> (so a cross-user item id is <code>404</code>, never <code>400</code>); the failure is still <code>400</code> with a <code>{"detail": ...}</code> body; the 5 route paths and their success contracts are untouched. The bond <em>create</em>/<em>update</em> item path itself validates <code>typeId</code> as in E.7.</p>
+
+<h3>E.9 Error types reference</h3>
+<table>
+<thead><tr><th>Type slug</th><th>Status</th><th>Where</th></tr></thead>
+<tbody>
+<tr><td><code>validation-error</code></td><td>400</td><td>blank/too-long label; unknown/archived <code>typeId</code> on create; switch-to-archived on update; incomplete id set in reorder</td></tr>
+<tr><td><code>authentication-error</code></td><td>401</td><td>missing/invalid/revoked token (existing auth dependency)</td></tr>
+<tr><td><code>authorization-error</code></td><td>403</td><td>non-admin calling any write endpoint</td></tr>
+<tr><td><code>not-found-error</code></td><td>404</td><td>unknown type <code>id</code>; unknown item id (incl. cross-user)</td></tr>
+<tr><td><code>conflict-error</code></td><td>409</td><td>duplicate label; delete of a system type or an in-use type; archiving the last active type</td></tr>
+<tr><td><code>unprocessable-entity</code></td><td>422</td><td>editing capabilities of a system type; assigning a <code>SYSTEM_ONLY</code>/unknown capability; sending <code>slug</code></td></tr>
+<tr><td><code>internal-error</code></td><td>500</td><td>unexpected</td></tr>
+</tbody>
+</table>
+
+<h3>E.10 <code>require_admin</code> in <code>tracking-backend</code></h3>
+<pre><code>async def require_admin(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -&gt; str:
+    # identical verify + jti + Redis-blacklist path as get_current_user_id
+    payload = verify_token(credentials.credentials)
+    ... jti / blacklist checks ...
+    if payload.get("role") != "admin":
+        raise HTTPException(403, "Admin role required")
+    return str(payload["sub"])
+</code></pre>
+<p>This reads the <code>role</code> claim that the main backend already signs into the token — <strong>no FK, no query against <code>users</code></strong>, bounded-context isolation intact. It is the recommended answer to the Phase-1 "introduce a real admin boundary" item (<span class="badge yellow">OQ-3</span>).</p>
+
+<hr>
+
+<h2 id="F">F. Admin UX</h2>
+
+<h3>F.1 Where it lives</h3>
+<p><span class="badge green">RECOMMEND</span> a new route <code>/tracking/settings/item-types</code> (a <code>settings</code> subtree under <code>tracking/</code>; the app already has a top-level <code>/settings/*</code> and an <code>/admin/*</code>, but item types are tracker-scoped so they belong under the tracker). Wrap the page in <code>&lt;RoleGuard roles={['admin']} fallback={…}&gt;</code> (the pattern used by <code>/admin/users</code>), and also client-redirect non-admins as that page does. Add a link from the tracker's Category page and/or the tracker settings area. <span class="badge yellow">OQ-9</span> — confirm the route location.</p>
+
+<h3>F.2 Screens &amp; flows</h3>
+<ul>
+<li><strong>List view</strong> — one table, ordered by <code>sortOrder</code>:
+<ul>
+<li>System rows: a lock icon + <span class="badge grey">System</span> badge; label &amp; order editable; capability checkboxes rendered <em>disabled</em> (checked state visible, not changeable); Delete disabled with a tooltip ("System types can't be deleted — archive instead").</li>
+<li>Custom rows: fully editable; Delete enabled only when the row has <strong>0 assigned items</strong> (server returns an <code>itemCount</code> alongside each row, or the screen calls a lightweight count endpoint) — otherwise Delete is disabled with a tooltip ("Used by N items — archive instead").</li>
+<li>Archived rows: shown muted with an <span class="badge grey">Archived</span> badge, behind a "Show archived" toggle (default off).</li>
+<li>Each row shows: drag-handle + up/down buttons, label (inline edit), slug (read-only mono, small), capability checkboxes / badges, status, actions.</li>
+</ul>
+</li>
+<li><strong>Add custom type</strong> — modal: label (required, live-validated for blank / length / duplicate), optional capability checkboxes (only <code>counts_as_property</code>, with helper text "Include items of this type in the Property total / Property lens"), a read-only preview of the generated slug. <code>bond_register</code> is <em>not</em> offered.</li>
+<li><strong>Rename</strong> — inline edit on the label cell (Enter = save, Esc = cancel), or a small modal; works for system rows too. A confirm hint if the type is assigned to many items ("This renames the type everywhere it appears, including past reports").</li>
+<li><strong>Reorder</strong> — drag handle <em>and</em> up/down buttons (mirrors <code>CategoryTree</code>'s <code>ArrowUp</code>/<code>ArrowDown</code> pattern so keyboard users are covered — each is a real <code>&lt;button&gt;</code> with an <code>aria-label</code>); persists via <code>PUT /tracking/item-types/order</code>; optimistic update with rollback on error.</li>
+<li><strong>Archive / unarchive</strong> — confirm dialog showing the assigned-item count: "<em>Property</em> is used by 12 items. Archiving hides it when creating or reassigning items; the 12 existing items keep it and all Property totals are unaffected." Unarchive is a one-click restore.</li>
+<li><strong>Delete</strong> — confirm dialog, only reachable for zero-item custom types: "Delete <em>Crypto</em>? This can't be undone." </li>
+</ul>
+
+<h3>F.3 Capability presentation</h3>
+<table>
+<thead><tr><th>Capability</th><th>Control</th><th>Helper text</th></tr></thead>
+<tbody>
+<tr><td><code>counts_as_property</code></td><td>Checkbox (enabled on custom rows; disabled-but-checked on the system <code>Property</code> row)</td><td>"Items of this type are included in the dashboard Property total and the Analysis Property lens."</td></tr>
+<tr><td><code>bond_register</code></td><td>Read-only <span class="badge blue">Bond register</span> badge on the <code>BOND</code> row; not shown as an option anywhere else</td><td>"Provided by the built-in Bond type. Can't be added to other types."</td></tr>
+</tbody>
+</table>
+
+<h3>F.4 States &amp; a11y</h3>
+<ul>
+<li><strong>Loading:</strong> skeleton rows. <strong>Error:</strong> inline retry (matches the tracker's existing <code>AlertCircle</code> pattern). <strong>Empty:</strong> impossible in practice (7 seeds) but render "No types" defensively.</li>
+<li><strong>a11y:</strong> keyboard-operable reorder (arrow buttons), <code>aria-sort</code>-free simple table, every icon-button has an <code>aria-label</code>, inline-edit inputs are labelled, the archived toggle is a labelled control, focus returns to the triggering row after a modal closes.</li>
+<li><strong>Cache invalidation after a mutation:</strong> <code>queryClient.invalidateQueries(['tracking-item-types'])</code>; also invalidate <code>['tracking-item', *]</code>, <code>['tracking-items', *]</code>, <code>['tracking-balance-grid', *]</code> and the analysis grid query so embedded <code>itemType</code> / labels refresh. A rename or capability change is thereby reflected across open tabs on the next refetch (Risk R-9).</li>
+</ul>
+
+<hr>
+
+<h2 id="G">G. Frontend impact summary</h2>
+<ul>
+<li><code>services/tracking.ts</code>: remove the <code>TrackingItemType</code> union + <code>TRACKING_ITEM_TYPES</code> const; add <code>ItemType</code>, <code>listItemTypes()</code>, and the admin CRUD/reorder/archive methods; <code>TrackingItem</code> gains <code>typeId</code> + <code>itemType</code> (keeps <code>type</code> string during transition); <code>TrackingItemInput.type</code> &rarr; <code>typeId</code>; <code>DashboardItemRow</code> gains <code>typeSlug</code> + <code>countsAsProperty</code>.</li>
+<li>New <code>useItemTypes()</code> React-Query hook (cached, <code>staleTime</code> ~5&nbsp;min).</li>
+<li>Both <code>&lt;select&gt;</code>s (create modal, item detail) source their options from the hook: archived excluded, but an item's <em>current</em> archived type stays selectable.</li>
+<li>Every literal <code>'Property'</code> / <code>'BOND'</code> in analysis <em>logic</em> &rarr; a <code>countsAsProperty</code> / <code>capabilities.includes('bond_register')</code> check; <code>distinctTypes</code> keys on <code>typeSlug</code>; the <code>itemType</code> group-by iterates the fetched list by <code>sortOrder</code>.</li>
+<li>Every literal type name in <em>UI copy</em> (badges, the <code>splitNote</code>, the Scoped-Dashboard lens-mismatch line) &rarr; the current <code>label</code> from the fetched list, so a rename propagates.</li>
+<li>New admin screen + components under <code>tracking/settings/item-types/</code>.</li>
+<li>Typing: <code>lensIncludes</code>'s <code>LensItemLike</code> changes from <code>{ type: string }</code> to <code>{ countsAsProperty: boolean; exclusive: boolean }</code>; <code>deriveChartModel</code> / <code>buildScopedGrid</code> take the ordered item-type list as a parameter to stay pure.</li>
+</ul>
+
+<hr>
+
+<h2 id="H">H. ADR-027 — Configurable tracking-item types with a code-owned capability registry</h2>
+<p><em>(Draft for the technical-writer to embed into <code>docs/18-financial-tracker/TECHNICAL.html</code>. Status: Proposed.)</em></p>
+
+<h4>Context</h4>
+<p>Tracking-item type is a closed 7-value enum enforced at three layers. Two types carry hard-wired behaviour: <code>Property</code> drives the dashboard property/non-property split and the Analysis lens; <code>BOND</code> gates a whole CRUD register (<code>ft_bond</code> + 5 routes + a UI section). The business wants admins to add / rename / reorder / archive types without an engineering release, while keeping those behaviours intact and never letting a user invent a behaviour that has no implementation behind it.</p>
+
+<h4>Decision</h4>
+<p>Split the concept in two. (1) <strong>A type is a row</strong> in a new <code>ft_item_type</code> table with an admin-managed <code>label</code>, <code>sort_order</code> and <code>is_archived</code>, and an immutable code-facing <code>slug</code>. <code>ft_tracking_item.type</code> (validated string) is replaced by an FK <code>type_id</code>. (2) <strong>Behaviours are capabilities</strong> — a fixed enum defined in code (<code>counts_as_property</code>, <code>bond_register</code>), attached to types through a join table that the service writes only under code rules: system types' capabilities are locked; <code>bond_register</code> is system-only and never grantable; <code>counts_as_property</code> is admin-assignable to custom types. Every runtime <code>== "Property"</code> / <code>== "BOND"</code> check becomes a capability test on a resolved type object; the item payload carries the type's slug + capabilities so the client checks a flag, not a label. The original-investment ledger stays a per-item boolean, unchanged.</p>
+
+<h4>Alternatives considered</h4>
+<table>
+<thead><tr><th>Option</th><th>Why not</th></tr></thead>
+<tbody>
+<tr><td><strong>Keep the closed enum</strong>, just add more values by migration each time.</td><td>Fails the requirement — every change is an engineering release; no admin self-service.</td></tr>
+<tr><td><strong>Free-text labels only</strong> — make <code>type</code> an arbitrary string, drop the CHECK, no capability model.</td><td>Breaks <code>Property</code> and <code>BOND</code> behaviour immediately (the string checks no longer have a stable target); a user renaming <code>Property</code> silently disables the split; no way to give a new type the property behaviour on purpose.</td></tr>
+<tr><td><strong>Full config with a capability registry</strong> (chosen).</td><td>Meets the requirement, preserves behaviour byte-for-byte, keeps "capabilities are code" as a hard boundary, and the join table stays queryable and cache-cheap.</td></tr>
+<tr><td>Capabilities as a <code>JSONB</code>/array column instead of a join table.</td><td>Lost-update races on concurrent edits; weak queryability; messier in backup/restore. Join table chosen.</td></tr>
+<tr><td>Atomic string-to-FK cutover in one migration.</td><td>Requires new backend + frontend deployed in lock-step; a failed deploy strands the DB. Dual-write transition column chosen instead.</td></tr>
+<tr><td>Give <code>tracking-backend</code> real RBAC by adding a <code>users</code> FK.</td><td>Violates the service's bounded-context isolation. The signed JWT already carries a <code>role</code> claim — read that instead.</td></tr>
+</tbody>
+</table>
+
+<h4>Consequences</h4>
+<ul>
+<li>Adding/renaming/reordering/archiving a type is an admin action, no deploy.</li>
+<li>One new FK column, two new tables; the <code>type</code> string lingers as a denormalised column for one release, then is dropped.</li>
+<li>A new admin boundary exists in <code>tracking-backend</code>, enforced from the token's <code>role</code> claim.</li>
+<li>Renaming a type touches every item row that references it (to keep the denormalised column correct) during the transition window.</li>
+<li>The Property lens and bond register are now capability-driven and survive any rename.</li>
+</ul>
+
+<h4>Risks</h4>
+<p>See §J. Principal ones: a missed string-comparison site diverging after cutover; backfill mis-map; lossy rollback once custom types exist; stale client cache after an admin edit.</p>
+
+<h4>Rollback</h4>
+<p>Schema-only and lossless while no custom type exists and no system label was renamed (drop FK + trigger, restore the CHECK, drop the two tables). Past that point the downgrade refuses (guarded), matching the <code>ea8407e31992</code> precedent.</p>
+
+<hr>
+
+<h2 id="I">I. Diagrams</h2>
+
+<h3>I.1 Component diagram</h3>
+<pre><code>flowchart TB
+  subgraph FE[Frontend]
+    useIT[useItemTypes hook - React Query cache]
+    AdminUI[/tracking/settings/item-types - RoleGuard admin/]
+    CreateModal[CreateItemModal select]
+    ItemDetail[items/[itemId] select + BondsSection gate]
+    Analysis[lib/tracking-analysis - lens / itemType buckets]
+  end
+  subgraph TB2[tracking-backend bounded context]
+    R[api/v1/router]
+    ITR[item_types.py router]
+    ITS[item_type service + ItemTypeRegistry cache]
+    CAP[item_type_capabilities.py - Capability enum, ADMIN_ASSIGNABLE, SYSTEM_ONLY]
+    ITEMR[tracking_items / sub_categories routers]
+    BONDS[bonds.py router]
+    GRID[dashboard_balance_grid.py service]
+    AUTH[auth/dependencies - get_current_user_id + require_admin - reads JWT role claim]
+    M1[(ft_item_type)]
+    M2[(ft_item_type_capability)]
+    M3[(ft_tracking_item.type_id FK)]
+    M4[(ft_bond)]
+  end
+  useIT -->|GET /tracking/item-types| ITR
+  AdminUI -->|POST/PUT/DELETE + /order + /archive| ITR
+  CreateModal --> useIT
+  ItemDetail --> useIT
+  Analysis --> useIT
+  ITR --> AUTH
+  ITR --> ITS
+  ITS --> CAP
+  ITS --> M1
+  ITS --> M2
+  ITEMR -->|resolve typeId, validate not archived| ITS
+  ITEMR --> M3
+  BONDS -->|has_capability bond_register| ITS
+  BONDS --> M4
+  GRID -->|has_capability counts_as_property| ITS
+  GRID --> M3
+  M3 -->|type_id -> id, ON DELETE RESTRICT| M1
+  M2 -->|item_type_id -> id, ON DELETE CASCADE| M1
+</code></pre>
+
+<h3>I.2 Sequence — runtime capability check (item load &rarr; consumers)</h3>
+<pre><code>sequenceDiagram
+  participant C as Client
+  participant IR as tracking_items router
+  participant REG as ItemTypeRegistry (cache)
+  participant DB as investment_db
+  participant GR as balance_grid service
+  participant BG as bonds gate
+
+  C->>IR: GET /tracking/items/{id}
+  IR->>DB: select ft_tracking_item where id, user_id
+  IR->>REG: resolve(type_id)
+  REG->>DB: (once) select ft_item_type + ft_item_type_capability
+  REG-->>IR: ResolvedItemType{slug, label, capabilities}
+  IR-->>C: TrackingItemOut { typeId, itemType{slug,label,capabilities[]}, type(label, transitional) }
+
+  Note over C,GR: later - dashboard balance grid
+  C->>GR: GET /sets/{id}/dashboard/balance-grid
+  GR->>REG: resolve(each item.type_id)
+  GR->>GR: property_items = items where has_capability("counts_as_property")
+  GR-->>C: DashboardBalanceGridOut { propertyBreakdown{propertyTotal,nonPropertyTotal}, items[].{typeSlug,countsAsProperty} }
+
+  Note over C,BG: later - bond route
+  C->>BG: POST /items/{id}/bonds
+  BG->>DB: _get_item_or_404 (ownership FIRST)
+  BG->>REG: resolve(item.type_id)
+  alt has_capability("bond_register")
+    BG-->>C: 201 BondOut
+  else
+    BG-->>C: 400 {"detail": "type does not provide a bond register"}
+  end
+</code></pre>
+
+<h3>I.3 Sequence — the migration</h3>
+<pre><code>sequenceDiagram
+  participant M as Alembic (rev c2d3e4f5a6b7)
+  participant DB as investment_db
+  participant APP as running OLD app
+
+  M->>DB: CREATE TABLE ft_item_type, ft_item_type_capability
+  M->>DB: INSERT 7 system rows (fixed UUIDs) + capability rows (property->counts_as_property, bond->bond_register)
+  M->>DB: ALTER ft_tracking_item ADD COLUMN type_id UUID NULL REFERENCES ft_item_type(id) ON DELETE RESTRICT
+  Note over APP,DB: OLD app keeps inserting rows with type string only; type_id stays NULL for those - fine
+  M->>DB: UPDATE ft_tracking_item SET type_id = it.id FROM ft_item_type it WHERE it.label = type
+  M->>DB: guard: SELECT count(*) WHERE type_id IS NULL  -> must be 0 else RAISE
+  M->>DB: ALTER COLUMN type_id SET NOT NULL ; CREATE INDEX ix_ft_tracking_item_type_id
+  M->>DB: CREATE TRIGGER ft_tracking_item_sync_type BEFORE INSERT/UPDATE (type := label when type_id set, else keep)
+  M->>DB: DROP CONSTRAINT ck_ft_tracking_item_type
+  Note over M,DB: --- deploy NEW backend (always sets type_id, reads capabilities) then NEW frontend ---
+  Note over M,DB: --- LATER release: follow-up migration DROP TRIGGER ; ALTER ft_tracking_item DROP COLUMN type ---
+</code></pre>
+
+<h3>I.4 Data-flow / ERD</h3>
+<pre><code>erDiagram
+  ft_item_type ||--o{ ft_item_type_capability : "grants"
+  ft_item_type ||--o{ ft_tracking_item : "classifies (type_id, RESTRICT)"
+  ft_item_type {
+    uuid id PK
+    varchar slug UK "immutable, code key"
+    varchar label "admin-editable, Unicode"
+    int sort_order
+    bool is_system
+    bool is_archived
+    timestamptz created_at
+    timestamptz updated_at
+    uuid created_by "nullable, no FK"
+  }
+  ft_item_type_capability {
+    uuid item_type_id PK,FK "-> ft_item_type.id, CASCADE"
+    varchar capability_key PK "validated vs code enum"
+  }
+  ft_tracking_item {
+    uuid id PK
+    uuid type_id FK "-> ft_item_type.id"
+    varchar type "denormalised, transitional, dropped later"
+    bool initial_investment_tracking "unchanged, per-item"
+    bool exclusive "unchanged, per-item"
+  }
+</code></pre>
+
+<hr>
+
+<h2 id="J">J. Risks &amp; trade-offs</h2>
+<table>
+<thead><tr><th>#</th><th>Risk</th><th>L</th><th>I</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr><td>R-1</td><td>Backfill mis-maps an item (a <code>type</code> string that does not exactly equal a seed label — trailing space, casing, an unexpected legacy value).</td><td>L</td><td>H</td><td>Seed labels are copied verbatim from the current enum; the migration runs a hard guard (<code>count(*) WHERE type_id IS NULL</code> must be 0) and raises otherwise; a pre-migration SELECT of <code>DISTINCT type</code> is part of the build runbook.</td></tr>
+<tr><td>R-2</td><td>A string-comparison site is missed and silently diverges after the CHECK is dropped and a rename happens.</td><td>M</td><td>H</td><td>The §D inventory is exhaustive and grep-derived; a CI grep-guard forbids new <code>== "Property"</code> / <code>== "BOND"</code> / <code>'Property'</code> / <code>'BOND'</code> literals in the tracker code; the golden-fixture parity test asserts byte-identical grid/analysis output before/after and after a rename.</td></tr>
+<tr><td>R-3</td><td>Capability lookup adds a query per request / per item on hot read paths (balance grid iterates every item).</td><td>M</td><td>M</td><td><code>ItemTypeRegistry</code> loads the whole (tiny) type + capability set in one query pair per request and serves <code>has_capability</code> from memory; optional 60&nbsp;s process cache. No per-item query.</td></tr>
+<tr><td>R-4</td><td>Dual-write window inconsistency — the denormalised <code>type</code> string drifts from <code>ft_item_type.label</code>.</td><td>M</td><td>M</td><td>A <code>BEFORE INSERT/UPDATE</code> trigger derives <code>type</code> from <code>type_id</code>; renames run <code>UPDATE ft_tracking_item SET type = :label</code> in the same transaction; a reconciliation query is in the runbook; the window is closed by the follow-up drop-column migration.</td></tr>
+<tr><td>R-5</td><td>Rollback is lossy once a custom type exists or a system label was renamed.</td><td>M</td><td>H</td><td>Documented explicitly (§C.7); the downgrade is <em>guarded</em> and refuses rather than corrupting data; operators are told the safe window ends at first custom-type creation / first rename; take a backup before the migration (backup covers the new tables automatically).</td></tr>
+<tr><td>R-6</td><td>An admin archives a heavily-used type, confusing users who can no longer pick it.</td><td>M</td><td>L</td><td>Archive confirm dialog shows the assigned-item count and states existing items and all totals are unaffected; archived types still resolve on existing items; unarchive is one click; cannot archive the last active type.</td></tr>
+<tr><td>R-7</td><td>Renaming a type rewrites N item rows (denormalised column) — a big type could mean thousands of row updates in one request.</td><td>L</td><td>M</td><td>Single indexed <code>UPDATE ... WHERE type_id = :id</code>, one statement, inside the rename transaction; this cost exists only during the transition window and vanishes when <code>type</code> is dropped; for very large data the rename can be a background job (noted, not needed at this app's scale).</td></tr>
+<tr><td>R-8</td><td>A type label leaks into an external export / past report and a later rename makes historical documents inconsistent.</td><td>M</td><td>L</td><td>Per-set export carries <code>typeSlug</code> (stable) alongside <code>typeLabel</code>; reports render the <em>current</em> label from the type list; slug is the join key on re-import. Users are warned in the rename dialog that the change is retroactive across reports.</td></tr>
+<tr><td>R-9</td><td>Slug collision when two custom types slugify to the same value (e.g. "Crypto Assets" and "Crypto-Assets").</td><td>L</td><td>L</td><td>Slug generation appends <code>_2</code>, <code>_3</code>… on collision, checked against the unique index inside the create transaction; slug is never shown as primary UI, only the label is.</td></tr>
+<tr><td>R-10</td><td>Frontend cache goes stale after an admin edit — other users keep seeing the old label / options until refetch.</td><td>M</td><td>L</td><td><code>staleTime</code> ~5&nbsp;min + explicit <code>invalidateQueries</code> on every mutation in the admin screen; balance-grid / analysis queries invalidated too; acceptable eventual consistency for a low-churn config list (no realtime requirement).</td></tr>
+<tr><td>R-11</td><td>The new admin boundary rejects a legitimate user because the app currently treats everyone as admin / tokens predate the <code>role</code> claim.</td><td>M</td><td>M</td><td>Verified: the main backend already signs <code>role</code> into every access token today. Build task must confirm all environments issue such tokens and that at least one <code>admin</code> user exists; fallback plan (temporary allow-all) captured in OQ-3.</td></tr>
+<tr><td>R-12</td><td>Item create/update contract change (<code>type</code> &rarr; <code>typeId</code>) breaks an un-migrated client or an external caller.</td><td>L</td><td>M</td><td>Response keeps the <code>type</code> label field during the transition; if any external caller sends <code>type</code>, the endpoint can accept both (resolve <code>type</code> label &rarr; id) for one release — flag in OQ-10.</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2 id="K">K. Definition of Done for the future build engagement</h2>
+
+<h4>Backend</h4>
+<ul>
+<li><code>ft_item_type</code> + <code>ft_item_type_capability</code> models; <code>Capability</code> enum + <code>ADMIN_ASSIGNABLE</code>/<code>SYSTEM_ONLY</code>; <code>ItemTypeRegistry</code> resolver/cache.</li>
+<li><code>item_types.py</code> router: <code>GET</code> (all authed) + admin <code>POST</code> / <code>PUT</code> / <code>PUT /order</code> / <code>PUT /{id}/archive</code> + <code>/unarchive</code> / <code>DELETE</code>.</li>
+<li><code>require_admin</code> dependency reading the JWT <code>role</code> claim.</li>
+<li>Item create/update switched to <code>typeId</code> with existence + not-archived validation; <code>TrackingItemOut</code> embeds <code>itemType</code>.</li>
+<li>Balance-grid service + bond gate switched to <code>has_capability(...)</code>; <code>DashboardItemRow</code> schema gains <code>typeSlug</code> + <code>countsAsProperty</code>; <code>propertyTotal</code>/<code>nonPropertyTotal</code> names unchanged.</li>
+<li>Alembic migration (chains from <code>b1c2d3e4f5a6</code>): create + seed + FK + backfill + NOT NULL + sync trigger + drop CHECK, with the backfill guard and a guarded, lossless-in-the-safe-window downgrade. Separate later migration to drop <code>ft_tracking_item.type</code>.</li>
+<li>Structured logging on every admin mutation (actor = JWT <code>sub</code>, action, type id, before/after label &amp; capabilities). Whether a persistent audit table is required is <span class="badge yellow">OQ-5</span>.</li>
+</ul>
+
+<h4>Frontend</h4>
+<ul>
+<li><code>ItemType</code> type + <code>listItemTypes()</code> + admin methods in <code>services/tracking.ts</code>; <code>useItemTypes()</code> hook.</li>
+<li>Both <code>&lt;select&gt;</code>s and every analysis logic/copy site migrated per §D.2.</li>
+<li>Admin screen at <code>/tracking/settings/item-types</code> with list / add / rename / reorder / archive / delete, capability controls, states, a11y, cache invalidation.</li>
+</ul>
+
+<h4>Tests (per project standard: business-logic &ge; 90%, overall &ge; 80%)</h4>
+<ul>
+<li>Backend unit: capability resolution; every admin rule (non-admin 403; no delete system; no delete in-use; no edit system capabilities; no grant <code>bond_register</code>; no archive last active; reorder completeness).</li>
+<li>Migration test with a seeded-fixture DB: all rows/slugs/order/capabilities, full backfill, NOT NULL, CHECK gone, safe-window downgrade round-trips.</li>
+<li>Bond-gate re-test: capability-gated 400/201, still after ownership (cross-user &rarr; 404).</li>
+<li>Golden-fixture parity: balance-grid + Analysis output byte-identical before/after and after renaming <code>Property</code> and <code>BOND</code>.</li>
+<li>Frontend: <code>useItemTypes()</code> / service normalisation; both selects (archived excluded, current kept); BondsSection capability gate; analysis filtering on <code>countsAsProperty</code> + <code>itemType</code> buckets by slug/label/order; admin CRUD + a11y (keyboard reorder) + RoleGuard.</li>
+<li>Contract test: item create/update accepts <code>typeId</code>; response carries <code>itemType</code>.</li>
+</ul>
+
+<h4>Docs</h4>
+<ul>
+<li>Update: <code>docs/02-infrastructure/DATABASE.html</code> + <code>DATABASE.md</code>; <code>docs/02-infrastructure/API-FINANCIAL-TRACKER.html</code>; <code>docs/18-financial-tracker/TECHNICAL.html</code> (embed ADR-027) + <code>FUNCTIONAL.html</code> + <code>ANALYSIS.html</code> + <code>ANALYSIS-DESIGN.html</code>; <code>docs/14-migrations/TECHNICAL.html</code>; <code>docs/app-guide.html</code>.</li>
+<li>Add one node to <code>docs/manifest.json</code> (snippet below — not applied by this design task).</li>
+</ul>
+
+<h4>Deployment / migration ordering</h4>
+<ol>
+<li>Take a backup (covers the new tables automatically).</li>
+<li>Run the migration (create + seed + FK + backfill + NOT NULL + trigger + drop CHECK).</li>
+<li>Deploy the backend that always sets <code>type_id</code> and reads capabilities.</li>
+<li>Deploy the frontend that sends <code>typeId</code> and reads <code>itemType</code>.</li>
+<li>Bake for one release; reconcile the denormalised <code>type</code> column.</li>
+<li>Later release: follow-up migration to drop <code>ft_tracking_item.type</code> and the sync trigger; switch the per-set export to <code>typeSlug</code>/<code>typeLabel</code>.</li>
+</ol>
+
+<h4>Rollback checkpoint</h4>
+<p>Lossless schema-only downgrade is available <strong>only</strong> until the first custom type is created or the first system label is renamed. Past that, the downgrade is guarded and refuses. The build's deployment plan must state this explicitly and require a fresh backup immediately before step 2.</p>
+
+<hr>
+
+<h2>Open Questions (consolidated — need a user decision before build)</h2>
+<table>
+<thead><tr><th>#</th><th>Question</th><th>Recommendation</th></tr></thead>
+<tbody>
+<tr><td>OQ-1</td><td>Is <code>counts_as_property</code> admin-assignable to custom types, or reserved to the system <code>Property</code> row only?</td><td><strong>Admin-assignable</strong> — it is a pure aggregation predicate with nothing structural behind it.</td></tr>
+<tr><td>OQ-2</td><td>Does <code>initial_investment_tracking</code> stay a per-item boolean, become a type capability, or become a type-level default applied at item creation?</td><td><strong>Stay a per-item boolean, unchanged.</strong> Least disruptive; per-item granularity is correct. A <code>default_initial_investment_tracking</code> column is a possible later enhancement, out of scope.</td></tr>
+<tr><td>OQ-3</td><td>Admin boundary in <code>tracking-backend</code>: enforce <code>role == "admin"</code> from the JWT claim now, or temporarily treat every authenticated user as admin?</td><td><strong>Enforce from the JWT <code>role</code> claim now.</strong> The claim already exists in every issued token; no users-table access needed; matches the Phase-1 "introduce a real boundary now" recommendation. Confirm at least one <code>admin</code> user exists per environment.</td></tr>
+<tr><td>OQ-4</td><td>Global type list, or per-<code>tracking_set</code>?</td><td><strong>Global</strong> — matches "system level" and every current consumer.</td></tr>
+<tr><td>OQ-5</td><td>Is a persistent audit log of type-config changes required, or is structured application logging (actor / action / before-after) enough?</td><td><strong>Structured logging is enough for v1</strong>; a dedicated <code>ft_item_type_audit</code> table can follow if compliance asks.</td></tr>
+<tr><td>OQ-6</td><td>Label constraints: case-insensitive uniqueness? max length? trim rules? emoji / arbitrary Unicode allowed?</td><td><strong>Unique on <code>lower(trim(label))</code>; max 100; trim leading/trailing whitespace, preserve interior; allow any Unicode incl. Thai and emoji</strong> (slug is the machine key, so the label can be anything printable).</td></tr>
+<tr><td>OQ-7</td><td>Transition approach for the string column: keep it dual-written for one release then drop, or atomic cutover in the single migration?</td><td><strong>Dual-write transition column</strong> (keep + sync trigger, drop in a follow-up migration) — keeps both app versions and the export/backup valid, makes rollback schema-only in the safe window.</td></tr>
+<tr><td>OQ-8</td><td>Should the new endpoints emit RFC-9457 Problem Details, or follow the tracker's existing <code>{"detail": ...}</code> convention?</td><td><strong>Follow the existing <code>{"detail": ...}</code> convention</strong> for consistency; a service-wide Problem Details migration is a separate effort.</td></tr>
+<tr><td>OQ-9</td><td>Admin screen route — <code>/tracking/settings/item-types</code> (tracker-scoped), or under the app-wide <code>/admin/*</code> or <code>/settings/*</code>?</td><td><strong><code>/tracking/settings/item-types</code></strong>, gated by <code>RoleGuard roles={['admin']}</code>, linked from the tracker.</td></tr>
+<tr><td>OQ-10</td><td>Item create/update: hard switch request field <code>type</code> &rarr; <code>typeId</code>, or accept both (<code>type</code> label resolved to id) for one release?</td><td><strong>Switch to <code>typeId</code></strong>; optionally accept a legacy <code>type</code> label for one release if any external caller is known. Response keeps a <code>type</code> label field during transition regardless.</td></tr>
+<tr><td>OQ-11</td><td>When a custom type has zero items, is hard delete allowed, or archive-only for every type?</td><td><strong>Hard delete allowed for zero-item custom types</strong> (system types are always archive-only) — matches Phase-1.</td></tr>
+<tr><td>OQ-12</td><td>Capability set for v1 — exactly <code>counts_as_property</code> + <code>bond_register</code>, or seed any additional latent ones now (e.g. a future <code>materials</code>-style behaviour)?</td><td><strong>Exactly those two.</strong> The registry is a code-only extension point; add capabilities when a real behaviour ships.</td></tr>
+</tbody>
+</table>
+
+<div class="callout"><strong>Proposed <code>docs/manifest.json</code> node</strong> (add as a child of the <code>financial-tracker</code> section, after <code>ft-api</code>; NOT applied by this design task):
+<pre><code>{
+  "id": "ft-item-type-config",
+  "label": "Configurable Item Types — Design",
+  "file": "20-item-type-config/DESIGN.html"
+}</code></pre></div>
+
+<hr>
+<p style="color:#8b949e;font-size:12px">End of Phase 2 design. No source, tests, migrations, or configuration were created or modified. No git operations were performed. The only file written is this document.</p>
+
+</body>
+</html>

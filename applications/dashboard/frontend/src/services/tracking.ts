@@ -34,25 +34,42 @@ export interface SubCategory {
   updatedAt: string
 }
 
-export type TrackingItemType =
-  | 'Bank account'
-  | 'Property'
-  | 'Investment Account'
-  | 'TaxSaving'
-  | 'Materials'
-  | 'Insurance'
-  | 'BOND'
+// ── Configurable item types (Financial Tracker — Configurable Item Types) ─────
+// The closed 7-value `type` enum is gone. An item's type is now a row in the
+// admin-managed `ft_item_type` table, referenced by `typeId`. `label` / sort
+// order / archived state are data an admin edits; `capabilities` are a fixed,
+// code-owned registry (`counts_as_property`, `bond_register`) the client only
+// ever *reads* as a flag — it never hard-codes a label again.
 
-/** All valid item type values, in display order — used to populate the type <select>. */
-export const TRACKING_ITEM_TYPES: TrackingItemType[] = [
-  'Bank account',
-  'Property',
-  'Investment Account',
-  'TaxSaving',
-  'Materials',
-  'Insurance',
-  'BOND',
-]
+/** A single configurable tracking-item type. `itemCount` is populated ONLY on
+ *  the admin list route (`GET /tracking/item-types`); it is absent elsewhere. */
+export interface ItemType {
+  id: string
+  slug: string
+  label: string
+  sortOrder: number
+  isSystem: boolean
+  isArchived: boolean
+  /** Fixed code-owned capability keys, e.g. `counts_as_property`, `bond_register`. */
+  capabilities: string[]
+  /** Number of tracking items currently assigned this type — admin list route only. */
+  itemCount?: number
+}
+
+/** Create payload for a custom item type (admin only). */
+export interface ItemTypeCreateInput {
+  label: string
+  sortOrder?: number
+  /** Subset of the admin-assignable capability set (currently only `counts_as_property`). */
+  capabilities?: string[]
+}
+
+/** Presence-aware update payload for an item type (admin only). `slug` is never accepted. */
+export interface ItemTypeUpdateInput {
+  label?: string
+  sortOrder?: number
+  capabilities?: string[]
+}
 
 // ── Bond register ───────────────────────────────────────────────────────────
 // A `BOND`-typed tracking item owns a standalone bond register: rows recording
@@ -110,7 +127,16 @@ export interface TrackingItem {
   id: string
   subCategoryId: string
   name: string
-  type: TrackingItemType
+  /** FK to the configurable item type — what create/update now send. */
+  typeId: string
+  /** Embedded resolved type (label + capabilities). Read `itemType.capabilities` for behaviour gates. */
+  itemType: ItemType
+  /**
+   * Transition-period read-only field: the type's `label`, kept on the payload
+   * for un-migrated clients. Prefer `itemType.label`. Dropped after the backend
+   * `ft_tracking_item.type` column is removed.
+   */
+  type: string
   initialInvestmentTracking: boolean
   exclusive: boolean
   order: number
@@ -250,6 +276,13 @@ export interface DashboardYearColumn {
 export interface DashboardItemRow {
   id: string
   name: string
+  /** FK to the item's configurable type. */
+  typeId: string
+  /** Immutable stable key for the item's type — safe to key derivations on across renames. */
+  typeSlug: string
+  /** True when the type carries the `counts_as_property` capability — drives the Property lens / split. */
+  countsAsProperty: boolean
+  /** Transition-period read-only display label (the type's `label`). Prefer `typeSlug` for logic. */
   type: string
   orderIndex: number
   exclusive: boolean
@@ -337,7 +370,8 @@ export interface SubCategoryInput {
 
 export interface TrackingItemInput {
   name: string
-  type: TrackingItemType
+  /** FK to a non-archived `ft_item_type` row (hard switch from the old `type` label). */
+  typeId: string
   initialInvestmentTracking: boolean
   exclusive: boolean
   description?: string | null
@@ -500,6 +534,30 @@ const normalizeBond = (w: Wire): Bond => ({
   updatedAt: String(w.updatedAt ?? ''),
 })
 
+/**
+ * Coerce a raw item-type wire object to the `ItemType` shape: `capabilities`
+ * forced to a real `string[]`, the four flags to real booleans, `sortOrder` to
+ * a number. `itemCount` is preserved only when the route actually sent it (the
+ * admin list route) — `null`/absent collapses to `undefined`.
+ */
+const normalizeItemType = (w: Wire): ItemType => {
+  const rawCaps = w.capabilities
+  const capabilities = Array.isArray(rawCaps) ? (rawCaps as unknown[]).map(String) : []
+  const out: ItemType = {
+    id: String(w.id ?? ''),
+    slug: String(w.slug ?? ''),
+    label: String(w.label ?? ''),
+    sortOrder: num(w.sortOrder),
+    isSystem: Boolean(w.isSystem),
+    isArchived: Boolean(w.isArchived),
+    capabilities,
+  }
+  if (w.itemCount !== null && w.itemCount !== undefined && w.itemCount !== '') {
+    out.itemCount = num(w.itemCount)
+  }
+  return out
+}
+
 export const trackingService = {
   // Tracking Sets ────────────────────────────────────────────────────────────
   async listSets(): Promise<TrackingSet[]> {
@@ -581,6 +639,54 @@ export const trackingService = {
   },
   async reorderItems(subCategoryId: string, orderedIds: string[]): Promise<void> {
     await apiClient.put(p(`/sub-categories/${subCategoryId}/items/reorder`), { items: toOrderItems(orderedIds) })
+  },
+
+  // Configurable item types ───────────────────────────────────────────────────
+  // `GET` is open to any authed tracker user (every item picker needs it);
+  // every write is admin-only (403 for non-admins). Error bodies follow the
+  // service's `{ detail: "..." }` convention — use `extractApiError`.
+
+  /**
+   * Lists item types ordered by `sortOrder` asc then `label`. `includeArchived`
+   * defaults to `false` (picker view); pass `true` for the admin screen and to
+   * resolve an item's own archived type on the item-detail page.
+   */
+  async listItemTypes(includeArchived = false): Promise<ItemType[]> {
+    const { data } = await apiClient.get(p('/item-types'), {
+      params: { includeArchived },
+    })
+    return ((data as Wire[] | undefined) ?? []).map(normalizeItemType)
+  },
+  /** Creates a custom type (admin). 409 duplicate label, 422 bad/SYSTEM_ONLY capability. */
+  async createItemType(input: ItemTypeCreateInput): Promise<ItemType> {
+    const { data } = await apiClient.post(p('/item-types'), input)
+    return normalizeItemType(data as Wire)
+  },
+  /** Presence-aware edit of label / sortOrder / capabilities (admin). `slug` is rejected server-side. */
+  async updateItemType(id: string, input: ItemTypeUpdateInput): Promise<ItemType> {
+    const { data } = await apiClient.put(p(`/item-types/${id}`), input)
+    return normalizeItemType(data as Wire)
+  },
+  /**
+   * Persists a full reorder (admin). `orderedIds` MUST be the complete set of
+   * type ids in their new order — the backend 400s an incomplete set.
+   */
+  async reorderItemTypes(orderedIds: string[]): Promise<void> {
+    await apiClient.put(p('/item-types/order'), { items: toOrderItems(orderedIds) })
+  },
+  /** Archives a type (admin, idempotent). 409 when it is the last non-archived type. */
+  async archiveItemType(id: string): Promise<ItemType> {
+    const { data } = await apiClient.put(p(`/item-types/${id}/archive`), {})
+    return normalizeItemType(data as Wire)
+  },
+  /** Un-archives a type (admin, idempotent). */
+  async unarchiveItemType(id: string): Promise<ItemType> {
+    const { data } = await apiClient.put(p(`/item-types/${id}/unarchive`), {})
+    return normalizeItemType(data as Wire)
+  },
+  /** Hard-deletes a zero-item custom type (admin). 409 for a system type or one still in use. */
+  async deleteItemType(id: string): Promise<void> {
+    await apiClient.delete(p(`/item-types/${id}`))
   },
 
   // Ledger entries (Initial Investment Tracking) ──────────────────────────

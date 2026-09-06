@@ -40,7 +40,10 @@ class DashboardYearColumn(CamelModel):
 class DashboardItemRow(CamelModel):
     id: uuid.UUID
     name: str
-    type: str
+    type: str  # denormalised label — transition-window back-compat field
+    type_id: uuid.UUID
+    type_slug: str
+    counts_as_property: bool  # = its type has the `counts_as_property` capability
     order_index: int
     exclusive: bool
     cells: list[BalanceCell]  # positionally aligned to the flattened years/quarters order
@@ -63,8 +66,12 @@ class DashboardCategoryRow(CamelModel):
 
 
 class DashboardPropertyBreakdown(CamelModel):
-    property_total: list[BalanceCell]  # non-exclusive items with type == "Property"
-    non_property_total: list[BalanceCell]  # non-exclusive items with type != "Property"
+    # `propertyTotal` / `nonPropertyTotal` field names are unchanged for API
+    # stability. Partition predicate is now capability-driven: an item counts
+    # as property iff its type has the `counts_as_property` capability
+    # (ADR-027) — byte-identical to the old `type == "Property"` for seed data.
+    property_total: list[BalanceCell]  # non-exclusive items whose type has `counts_as_property`
+    non_property_total: list[BalanceCell]  # non-exclusive items whose type lacks it
 
 
 class DashboardBalanceGridOut(CamelModel):

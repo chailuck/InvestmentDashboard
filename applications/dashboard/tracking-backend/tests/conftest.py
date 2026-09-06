@@ -109,6 +109,12 @@ from app.database.session import Base, get_db  # noqa: E402
 from app.models.bond import Bond  # noqa: F401,E402
 from app.models.category import Category  # noqa: F401,E402
 from app.models.initial_investment_entry import InitialInvestmentEntry  # noqa: F401,E402
+from app.models.item_type import (  # noqa: F401,E402
+    SYSTEM_ITEM_TYPE_IDS,
+    SYSTEM_ITEM_TYPE_SEED,
+    ItemType,
+    ItemTypeCapability,
+)
 from app.models.sub_category import SubCategory  # noqa: F401,E402
 from app.models.tracking_item import TrackingItem  # noqa: F401,E402
 from app.models.tracking_set import TrackingSet  # noqa: F401,E402
@@ -141,6 +147,31 @@ async def engine():
         # the same physical database.
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+        # ── Seed the 7 system item types (ADR-027) ────────────────────────
+        # The test schema is built via create_all, NOT the Alembic migration,
+        # so the seed rows the `c2d3e4f5a6b7` migration would insert must be
+        # planted here. Fixed UUID constants are reused from the model module
+        # (the same ids the migration hard-codes) so golden-fixture / parity
+        # tests can pin them.
+        import sqlalchemy as _sa
+
+        for _row in SYSTEM_ITEM_TYPE_SEED:
+            await conn.execute(
+                _sa.insert(ItemType.__table__).values(
+                    id=_row["id"],
+                    slug=_row["slug"],
+                    label=_row["label"],
+                    sort_order=_row["sort_order"],
+                    is_system=True,
+                    is_archived=False,
+                )
+            )
+            for _key in _row["capabilities"]:
+                await conn.execute(
+                    _sa.insert(ItemTypeCapability.__table__).values(
+                        item_type_id=_row["id"], capability_key=_key
+                    )
+                )
     yield eng
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -199,9 +230,15 @@ def make_token(
     expired: bool = False,
     token_type: str = "access",
     secret: str = TEST_SECRET_KEY,
+    role: str | None = None,
 ) -> tuple[str, str]:
     """Mint a JWT with the exact claim shape the main backend produces.
-    Returns (token, jti) so tests can blacklist a specific jti afterward."""
+    Returns (token, jti) so tests can blacklist a specific jti afterward.
+
+    `role` mirrors the main backend's signed `role` claim (admin/analyst/
+    viewer). It is only included when non-None so the default token stays
+    byte-identical to the pre-ADR-027 shape (and thus exercises the
+    "no role claim -> 403" path on admin endpoints)."""
     jti = jti or str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     exp = now - timedelta(minutes=5) if expired else now + timedelta(minutes=30)
@@ -212,6 +249,8 @@ def make_token(
         "jti": jti,
         "type": token_type,
     }
+    if role is not None:
+        payload["role"] = role
     token = jose_jwt.encode(payload, secret, algorithm="HS256")
     return token, jti
 
@@ -266,3 +305,35 @@ async def auth_client_b(engine, user_b_id) -> AsyncIterator[AsyncClient]:
     ) as c:
         yield c
     fastapi_app.dependency_overrides.clear()
+
+
+# ── Admin authenticated client (ADR-027 item-type-config write endpoints) ───
+
+@pytest.fixture
+def admin_user_id() -> str:
+    return str(uuid.uuid4())
+
+
+@pytest_asyncio.fixture
+async def admin_client(engine, admin_user_id) -> AsyncIterator[AsyncClient]:
+    token, _ = make_token(admin_user_id, role="admin")
+    fastapi_app.dependency_overrides[get_db] = _make_db_override(engine)
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as c:
+        yield c
+    fastapi_app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def system_item_type_ids() -> dict[str, str]:
+    """label -> fixed seed UUID string, for building `typeId` create payloads."""
+    return dict(SYSTEM_ITEM_TYPE_IDS)
+
+
+@pytest.fixture
+def seeded_item_types() -> tuple[dict, ...]:
+    """The 7 seeded system types (id / slug / label / sort_order / capabilities)."""
+    return SYSTEM_ITEM_TYPE_SEED

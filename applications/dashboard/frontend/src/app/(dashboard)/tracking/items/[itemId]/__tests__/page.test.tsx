@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { render } from '@/test/test-utils'
 import TrackingItemDetailPage from '../page'
 import { trackingService } from '@/services/tracking'
-import type { TrackingItem, RunningTotal, ProfitVsOriginal, Bond } from '@/services/tracking'
+import type { TrackingItem, RunningTotal, ProfitVsOriginal, Bond, ItemType } from '@/services/tracking'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -31,15 +31,32 @@ vi.mock('@/services/tracking', () => ({
     createBond: vi.fn(),
     updateBond: vi.fn(),
     deleteBond: vi.fn(),
+    listItemTypes: vi.fn(),
   },
-  TRACKING_ITEM_TYPES: [
-    'Bank account', 'Property', 'Investment Account', 'TaxSaving', 'Materials', 'Insurance', 'BOND',
-  ],
 }))
+
+// The Type <select> is now sourced from useItemTypes(). Mock the hook with a
+// fixed list: one archived type ("Old Type") that must NOT appear as an option
+// unless it is the item's own current type, and a bond-register type.
+vi.mock('@/hooks/useItemTypes', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/useItemTypes')>()
+  const TYPES = [
+    { id: 'it-bank', slug: 'bank_account', label: 'Bank account', sortOrder: 0, isSystem: true, isArchived: false, capabilities: [] },
+    { id: 'it-prop', slug: 'property', label: 'Property', sortOrder: 1, isSystem: true, isArchived: false, capabilities: ['counts_as_property'] },
+    { id: 'it-inv', slug: 'investment_account', label: 'Investment Account', sortOrder: 2, isSystem: true, isArchived: false, capabilities: [] },
+    { id: 'it-arch', slug: 'old_type', label: 'Old Type', sortOrder: 5, isSystem: false, isArchived: true, capabilities: [] },
+    { id: 'it-bond', slug: 'bond', label: 'BOND', sortOrder: 6, isSystem: true, isArchived: false, capabilities: ['bond_register'] },
+  ]
+  return { ...actual, useItemTypes: () => ({ data: TYPES, isLoading: false, isError: false }) }
+})
 
 vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
+
+const BANK_TYPE: ItemType = { id: 'it-bank', slug: 'bank_account', label: 'Bank account', sortOrder: 0, isSystem: true, isArchived: false, capabilities: [] }
+const BOND_TYPE: ItemType = { id: 'it-bond', slug: 'bond', label: 'BOND', sortOrder: 6, isSystem: true, isArchived: false, capabilities: ['bond_register'] }
+const ARCHIVED_TYPE: ItemType = { id: 'it-arch', slug: 'old_type', label: 'Old Type', sortOrder: 5, isSystem: false, isArchived: true, capabilities: [] }
 
 const mocked = vi.mocked(trackingService)
 
@@ -48,7 +65,8 @@ const mocked = vi.mocked(trackingService)
 // ---------------------------------------------------------------------------
 
 const ITEM_NO_TRACKING: TrackingItem = {
-  id: 'item-1', subCategoryId: 'sub-1', name: 'Cash Account', type: 'Bank account',
+  id: 'item-1', subCategoryId: 'sub-1', name: 'Cash Account',
+  typeId: 'it-bank', itemType: BANK_TYPE, type: 'Bank account',
   initialInvestmentTracking: false, exclusive: false, order: 0,
   description: null, accountName: 'xxx-123', remark: null,
   createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
@@ -62,8 +80,13 @@ const ITEM_WITH_TRACKING: TrackingItem = {
 const ITEM_BOND: TrackingItem = {
   ...ITEM_NO_TRACKING,
   name: 'Government Bonds',
-  type: 'BOND',
+  typeId: 'it-bond', itemType: BOND_TYPE, type: 'BOND',
   initialInvestmentTracking: false,
+}
+
+const ITEM_ARCHIVED_TYPE: TrackingItem = {
+  ...ITEM_NO_TRACKING,
+  typeId: 'it-arch', itemType: ARCHIVED_TYPE, type: 'Old Type',
 }
 
 const BONDS: Bond[] = [
@@ -465,10 +488,42 @@ describe('TrackingItemDetailPage — bond register section', () => {
     await screen.findByDisplayValue('Cash Account')
 
     await user.selectOptions(screen.getByLabelText('Type'), 'BOND')
-    expect(screen.getByLabelText('Type')).toHaveValue('BOND') // pending edit is reflected
+    expect(screen.getByLabelText('Type')).toHaveValue('it-bond') // pending edit is a typeId now
 
     expect(screen.queryByRole('heading', { name: 'Bonds' })).not.toBeInTheDocument()
     expect(mocked.listBonds).not.toHaveBeenCalled()
+  })
+
+  it('sources the Type options from useItemTypes() — archived types excluded', async () => {
+    mocked.getItem.mockResolvedValue(ITEM_NO_TRACKING)
+
+    render(<TrackingItemDetailPage />)
+    await screen.findByDisplayValue('Cash Account')
+
+    const options = Array.from(
+      (screen.getByLabelText('Type') as HTMLSelectElement).options,
+    ).map(o => o.textContent)
+    expect(options).toEqual(['Bank account', 'Property', 'Investment Account', 'BOND'])
+    expect(options).not.toContain('Old Type')
+  })
+
+  it('keeps the item’s own archived type selectable when it is currently assigned', async () => {
+    mocked.getItem.mockResolvedValue(ITEM_ARCHIVED_TYPE)
+
+    render(<TrackingItemDetailPage />)
+    await screen.findByDisplayValue('Cash Account')
+
+    const select = screen.getByLabelText('Type') as HTMLSelectElement
+    expect(Array.from(select.options).map(o => o.textContent)).toContain('Old Type (archived)')
+    expect(select).toHaveValue('it-arch')
+  })
+
+  it('gates the Bonds section on the persisted type’s bond_register capability', async () => {
+    mocked.getItem.mockResolvedValue(ITEM_BOND)
+    mocked.listBonds.mockResolvedValue([])
+
+    render(<TrackingItemDetailPage />)
+    expect(await screen.findByRole('heading', { name: 'Bonds' })).toBeInTheDocument()
   })
 
   it('renders the Bonds section, one row per bond, with the correct status badge text', async () => {

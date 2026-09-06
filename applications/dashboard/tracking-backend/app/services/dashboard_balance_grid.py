@@ -38,6 +38,8 @@ from app.models.sub_category import SubCategory
 from app.models.tracking_item import TrackingItem
 from app.models.update_tracking_list import UpdateTrackingList
 from app.models.update_tracking_list_balance import UpdateTrackingListBalance
+from app.services.item_type_capabilities import Capability
+from app.services.item_type_registry import ItemTypeRegistry
 
 # A "slot" is a (year, quarter) pair — the atomic column of the grid.
 Slot = tuple[int, int]
@@ -188,7 +190,10 @@ def _materialize(series: dict[Slot, CellMath], display_slots: list[Slot]) -> lis
 class ItemRow:
     id: uuid.UUID
     name: str
-    type: str
+    type: str  # denormalised label — transition-window back-compat field
+    type_id: uuid.UUID
+    type_slug: str
+    counts_as_property: bool
     order_index: int
     exclusive: bool
     cells: list[Cell] = field(default_factory=list)
@@ -348,6 +353,18 @@ async def get_balance_grid(db: AsyncSession, *, tracking_set_id: uuid.UUID) -> B
         )
         items = list(item_result.scalars().all())
 
+    # One query pair for the whole (tiny) type + capability set — the property
+    # partition and every ItemRow's type_slug/counts_as_property read from
+    # this, never a per-item query (ADR-027, Risk R-3).
+    registry = await ItemTypeRegistry.create(db)
+
+    def _resolved(it: TrackingItem):
+        return registry.get(it.type_id)
+
+    def _counts_as_property(it: TrackingItem) -> bool:
+        rt = registry.get(it.type_id)
+        return rt is not None and rt.has_capability(Capability.COUNTS_AS_PROPERTY.value)
+
     # ── In-memory assembly (zero further queries below this line) ──────────
 
     ascending_slots = sorted(winner_by_slot.keys(), key=_slot_sort_key)
@@ -372,11 +389,15 @@ async def get_balance_grid(db: AsyncSession, *, tracking_set_id: uuid.UUID) -> B
     item_rows_by_sub: dict[uuid.UUID, list[ItemRow]] = {}
     for it in items:
         series = compute_series_deltas(item_values_by_id[it.id], ascending_slots)
+        rt = _resolved(it)
         item_rows_by_sub.setdefault(it.sub_category_id, []).append(
             ItemRow(
                 id=it.id,
                 name=it.name,
-                type=it.type,
+                type=(rt.label if rt is not None else it.type),
+                type_id=it.type_id,
+                type_slug=(rt.slug if rt is not None else ""),
+                counts_as_property=_counts_as_property(it),
                 order_index=it.order_index,
                 exclusive=it.exclusive,
                 cells=_materialize(series, display_slots),
@@ -434,8 +455,8 @@ async def get_balance_grid(db: AsyncSession, *, tracking_set_id: uuid.UUID) -> B
     grand_values = _rollup_values(all_non_exclusive_items, ascending_slots, item_values_by_id)
     grand_total = _materialize(compute_series_deltas(grand_values, ascending_slots), display_slots)
 
-    property_items = [it for it in all_non_exclusive_items if it.type == "Property"]
-    non_property_items = [it for it in all_non_exclusive_items if it.type != "Property"]
+    property_items = [it for it in all_non_exclusive_items if _counts_as_property(it)]
+    non_property_items = [it for it in all_non_exclusive_items if not _counts_as_property(it)]
 
     property_values = _rollup_values(property_items, ascending_slots, item_values_by_id)
     non_property_values = _rollup_values(non_property_items, ascending_slots, item_values_by_id)

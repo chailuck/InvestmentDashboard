@@ -388,13 +388,14 @@ type ViewState = {
 <li>Changing lens resets <code>drill</code> to <code>{ lens }</code>, keeps other fields, resets <code>snapshotPeriod</code>.</li>
 <li>Clicking breadcrumb crumb <em>k</em> drops deeper keys, resets group-by to that depth's default, resets <code>snapshotPeriod</code>.</li>
 <li>Clicking a series / band / bar drills down one level (unless leaf) and advances group-by to the new default.</li>
-<li><code>itemType</code> is orthogonal to the hierarchy: at any depth it buckets the current node's descendant items by <code>TrackingItem.type</code>, ignoring category structure. Item-type buckets are <strong>not drillable</strong>. Most meaningful under the Grand Total lens.</li>
+<li><code>itemType</code> is orthogonal to the hierarchy: at any depth it buckets the current node's descendant items by their type, ignoring category structure. Item-type buckets are <strong>not drillable</strong>. Most meaningful under the Grand Total lens.</li>
 </ul>
+<div class="callout"><strong>Update — Configurable Item Types (ADR-027, implemented 2026-09-06).</strong> Since the item-type list became admin-managed, the lens and the <code>itemType</code> grouping are keyed by a type's <strong>capability</strong> and its stable <strong>slug</strong>, not its label. Property = the item's type has the <code>counts_as_property</code> capability (the balance-grid response now carries a per-item <code>countsAsProperty</code> boolean and a <code>typeSlug</code>); <code>itemType</code> buckets key on <code>typeSlug</code>, order by the type's <code>sortOrder</code>, and take their displayed name from the type's current <code>label</code>. A rename re-labels a bucket but never changes its membership or any total; behaviour is unchanged for the seven built-in types. See <a href="TECHNICAL.html">TECHNICAL.html</a> §17.</div>
 <h4>Lens → series membership</h4>
 <pre><code>lensIncludes(lens, item):
   grandTotal  -> !item.exclusive
-  property    -> !item.exclusive && item.type === 'Property'
-  nonProperty -> !item.exclusive && item.type !== 'Property'</code></pre>
+  property    -> !item.exclusive && item.countsAsProperty      // ADR-027: was item.type === 'Property'
+  nonProperty -> !item.exclusive && !item.countsAsProperty     // ADR-027: was item.type !== 'Property'</code></pre>
 <p>A group-by bucket produces a series only if ≥ 1 descendant item passes <code>lensIncludes</code> — otherwise the bucket is omitted entirely (no zero line). The lens aggregate overlay is the server-computed array for that lens (<code>grandTotal</code> / <code>propertyTotal</code> / <code>nonPropertyTotal</code>). Exclusive items never form a bucket and never enter a total; they remain individually selectable as an explicit leaf drill target, where the overlay is greyed and annotated "excluded from totals".</p>
 
 <h3>4.5 Full chart inventory</h3>

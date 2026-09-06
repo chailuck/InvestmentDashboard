@@ -53,7 +53,7 @@ function makeGrid(): DashboardBalanceGridOut {
               {
                 id: 'item-1',
                 name: 'Kasikorn "Savings"',
-                type: 'Bank account',
+                typeId: 'it-bank_account', typeSlug: 'bank_account', countsAsProperty: false, type: 'Bank account',
                 orderIndex: 0,
                 exclusive: false,
                 cells: [
@@ -64,7 +64,7 @@ function makeGrid(): DashboardBalanceGridOut {
               {
                 id: 'item-2',
                 name: 'Excluded Item',
-                type: 'Bank account',
+                typeId: 'it-bank_account', typeSlug: 'bank_account', countsAsProperty: false, type: 'Bank account',
                 orderIndex: 1,
                 exclusive: true,
                 cells: [

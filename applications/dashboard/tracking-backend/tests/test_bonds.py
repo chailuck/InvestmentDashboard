@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.models.bond import Bond
+from app.models.item_type import SYSTEM_ITEM_TYPE_IDS
 from app.services.bond_status import bangkok_today
 
 PREFIX = "/api/v1/tracking"
@@ -23,7 +24,7 @@ PREFIX = "/api/v1/tracking"
 
 async def _make_item(client, *, item_type: str = "BOND", name: str = "Bonds") -> str:
     """Create set -> category -> sub-category -> tracking item, return item id.
-    `item_type` defaults to BOND; pass another type to test the type-gate."""
+    `item_type` defaults to BOND; pass another type to test the capability gate."""
     set_id = (await client.post(f"{PREFIX}/sets", json={"name": f"Set-{uuid.uuid4()}"})).json()["id"]
     cat_id = (
         await client.post(f"{PREFIX}/sets/{set_id}/categories", json={"name": "Cat"})
@@ -34,7 +35,7 @@ async def _make_item(client, *, item_type: str = "BOND", name: str = "Bonds") ->
     item = (
         await client.post(
             f"{PREFIX}/sub-categories/{sub_id}/items",
-            json={"name": name, "type": item_type},
+            json={"name": name, "typeId": SYSTEM_ITEM_TYPE_IDS[item_type]},
         )
     ).json()
     return item["id"]

@@ -3,12 +3,14 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence } from 'framer-motion'
-import { Wallet, Plus, Loader2, AlertCircle } from 'lucide-react'
+import Link from 'next/link'
+import { Wallet, Plus, Loader2, AlertCircle, Settings2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { trackingService, type TrackingSet } from '@/services/tracking'
 import { extractApiError } from '@/services/api'
 import { NameDescriptionModal } from '@/components/tracking/NameDescriptionModal'
 import { CategoryTree } from '@/components/tracking/CategoryTree'
+import { RoleGuard } from '@/components/ui/RoleGuard'
 
 export default function TrackingCategoryPage() {
   const queryClient = useQueryClient()
@@ -51,14 +53,24 @@ export default function TrackingCategoryPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-ink-primary flex items-center gap-2">
-          <Wallet className="w-5 h-5 text-brand-400" />
-          Tracking — Category
-        </h1>
-        <p className="text-xs text-ink-muted mt-0.5">
-          Manage your financial tracking sets, categories, sub-categories, and tracking items.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-ink-primary flex items-center gap-2">
+            <Wallet className="w-5 h-5 text-brand-400" />
+            Tracking — Category
+          </h1>
+          <p className="text-xs text-ink-muted mt-0.5">
+            Manage your financial tracking sets, categories, sub-categories, and tracking items.
+          </p>
+        </div>
+        <RoleGuard roles={['admin']}>
+          <Link
+            href="/tracking/settings/item-types"
+            className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5 shrink-0"
+          >
+            <Settings2 className="w-3.5 h-3.5" /> Item Types
+          </Link>
+        </RoleGuard>
       </div>
 
       {/* Tracking Set selector */}

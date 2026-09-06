@@ -68,6 +68,11 @@ class TrackingItemExport(CamelModel):
     id: uuid.UUID
     sub_category_id: uuid.UUID
     name: str
+    # ADR-027 / OQ-13: emit BOTH the stable machine key and the current
+    # label so a re-import can resolve by slug. `type` stays as a deprecated
+    # alias (= label) for the transition window, dropped with the column.
+    type_slug: str
+    type_label: str
     type: str
     initial_investment_tracking: bool
     exclusive: bool

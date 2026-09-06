@@ -3,6 +3,7 @@ import type {
   BalanceCell,
   DashboardBalanceGridOut,
   DashboardCategoryRow,
+  ItemType,
 } from '@/services/tracking'
 import type { ViewState } from '@/app/(dashboard)/tracking/analysis/types'
 import {
@@ -70,6 +71,18 @@ function makeCells(yearsDesc: number[], ascValues: (number | null)[]): BalanceCe
   return out
 }
 
+/** Item-type fixture list (seed order); `property` counts as property. */
+const ITEM_TYPES: ItemType[] = [
+  { id: 'it-bank_account', slug: 'bank_account', label: 'Bank account', sortOrder: 0, isSystem: true, isArchived: false, capabilities: [] },
+  { id: 'it-property', slug: 'property', label: 'Property', sortOrder: 1, isSystem: true, isArchived: false, capabilities: ['counts_as_property'] },
+  { id: 'it-investment_account', slug: 'investment_account', label: 'Investment Account', sortOrder: 2, isSystem: true, isArchived: false, capabilities: [] },
+  { id: 'it-materials', slug: 'materials', label: 'Materials', sortOrder: 4, isSystem: true, isArchived: false, capabilities: [] },
+]
+
+const itemFields = (slug: string, label: string, countsAsProperty: boolean) => ({
+  typeId: `it-${slug}`, typeSlug: slug, type: label, countsAsProperty,
+})
+
 function sumAsc(...lists: (number | null)[][]): (number | null)[] {
   const len = lists[0].length
   const out: (number | null)[] = []
@@ -109,14 +122,14 @@ function richGrid(): DashboardBalanceGridOut {
       {
         id: 's1', name: 'Bank', orderIndex: 0, subtotal: makeCells(yearsDesc, A_S1),
         items: [
-          { id: 'i1', name: 'Checking', type: 'Bank account', orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_CHECK) },
-          { id: 'i2', name: 'Savings', type: 'Bank account', orderIndex: 1, exclusive: false, cells: makeCells(yearsDesc, A_SAVE) },
+          { id: 'i1', name: 'Checking', ...itemFields('bank_account', 'Bank account', false), orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_CHECK) },
+          { id: 'i2', name: 'Savings', ...itemFields('bank_account', 'Bank account', false), orderIndex: 1, exclusive: false, cells: makeCells(yearsDesc, A_SAVE) },
         ],
       },
       {
         id: 's2', name: 'Realty', orderIndex: 1, subtotal: makeCells(yearsDesc, A_S2),
         items: [
-          { id: 'i3', name: 'House', type: 'Property', orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_HOUSE) },
+          { id: 'i3', name: 'House', ...itemFields('property', 'Property', true), orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_HOUSE) },
         ],
       },
     ],
@@ -128,8 +141,8 @@ function richGrid(): DashboardBalanceGridOut {
       {
         id: 's3', name: 'Other', orderIndex: 0, subtotal: makeCells(yearsDesc, A_S3),
         items: [
-          { id: 'i4', name: 'Gold', type: 'Materials', orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_GOLD) },
-          { id: 'i5', name: 'SideBet', type: 'Investment Account', orderIndex: 1, exclusive: true, cells: makeCells(yearsDesc, A_SIDEBET) },
+          { id: 'i4', name: 'Gold', ...itemFields('materials', 'Materials', false), orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_GOLD) },
+          { id: 'i5', name: 'SideBet', ...itemFields('investment_account', 'Investment Account', false), orderIndex: 1, exclusive: true, cells: makeCells(yearsDesc, A_SIDEBET) },
         ],
       },
     ],
@@ -234,7 +247,7 @@ function parityGrid(): DashboardBalanceGridOut {
       id: 'c1', name: 'All', orderIndex: 0, subtotal: gt,
       subCategories: [{
         id: 's1', name: 'All', orderIndex: 0, subtotal: gt,
-        items: [{ id: 'i1', name: 'All', type: 'Bank account', orderIndex: 0, exclusive: false, cells: gt }],
+        items: [{ id: 'i1', name: 'All', ...itemFields('bank_account', 'Bank account', false), orderIndex: 0, exclusive: false, cells: gt }],
       }],
     }],
     grandTotal: gt,
@@ -292,17 +305,17 @@ describe('rollupBalances', () => {
 
 // ── lensIncludes ─────────────────────────────────────────────────────────
 
-describe('lensIncludes', () => {
+describe('lensIncludes — capability-driven, not label-driven', () => {
   it('excludes exclusive items from every lens', () => {
-    expect(lensIncludes('grandTotal', { type: 'Property', exclusive: true })).toBe(false)
+    expect(lensIncludes('grandTotal', { countsAsProperty: true, exclusive: true })).toBe(false)
   })
-  it('property lens keeps only type Property', () => {
-    expect(lensIncludes('property', { type: 'Property', exclusive: false })).toBe(true)
-    expect(lensIncludes('property', { type: 'Bank account', exclusive: false })).toBe(false)
+  it('property lens keeps only items whose type counts as property', () => {
+    expect(lensIncludes('property', { countsAsProperty: true, exclusive: false })).toBe(true)
+    expect(lensIncludes('property', { countsAsProperty: false, exclusive: false })).toBe(false)
   })
-  it('nonProperty lens keeps the other five types', () => {
-    expect(lensIncludes('nonProperty', { type: 'Property', exclusive: false })).toBe(false)
-    expect(lensIncludes('nonProperty', { type: 'Insurance', exclusive: false })).toBe(true)
+  it('nonProperty lens keeps everything that does NOT count as property', () => {
+    expect(lensIncludes('nonProperty', { countsAsProperty: true, exclusive: false })).toBe(false)
+    expect(lensIncludes('nonProperty', { countsAsProperty: false, exclusive: false })).toBe(true)
   })
 })
 
@@ -447,7 +460,16 @@ describe('deriveChartModel', () => {
     expect(m.aggregate.balance[m.aggregate.balance.length - 1]).toBe(1100)
   })
 
-  it('groupBy = itemType buckets the current node descendants by type', () => {
+  it('groupBy = itemType buckets by slug, labels from the type list, ordered by sortOrder', () => {
+    const g = richGrid()
+    const m = deriveChartModel(g, vs({ groupBy: 'itemType' }), ITEM_TYPES)
+    // ITEM_TYPES order: bank_account(0), property(1), investment_account(2), materials(4).
+    // Present non-exclusive descendants at depth 0: bank_account, property, materials.
+    expect(m.buckets.map(b => b.label)).toEqual(['Bank account', 'Property', 'Materials'])
+    expect(m.buckets.map(b => b.id)).toEqual(['type:bank_account', 'type:property', 'type:materials'])
+  })
+
+  it('groupBy = itemType falls back to the items own types when no type list is supplied', () => {
     const g = richGrid()
     const m = deriveChartModel(g, vs({ groupBy: 'itemType' }))
     expect(m.buckets.map(b => b.label).sort()).toEqual(['Bank account', 'Materials', 'Property'])

@@ -103,15 +103,15 @@ const GRID: DashboardBalanceGridOut = {
           id: 'sub-1', name: 'Bank', orderIndex: 0,
           subtotal: filledRow(1500),
           items: [
-            { id: 'item-1', name: 'Kbank', type: 'Bank account', orderIndex: 0, exclusive: false, cells: KBANK_CELLS },
-            { id: 'item-2', name: 'SpecialFund', type: 'Investment Account', orderIndex: 1, exclusive: true, cells: SPECIAL_FUND_CELLS },
+            { id: 'item-1', name: 'Kbank', typeId: 'it-bank', typeSlug: 'bank_account', countsAsProperty: false, type: 'Bank account', orderIndex: 0, exclusive: false, cells: KBANK_CELLS },
+            { id: 'item-2', name: 'SpecialFund', typeId: 'it-inv', typeSlug: 'investment_account', countsAsProperty: false, type: 'Investment Account', orderIndex: 1, exclusive: true, cells: SPECIAL_FUND_CELLS },
           ],
         },
         {
           id: 'sub-2', name: 'Savings', orderIndex: 1,
           subtotal: filledRow(700),
           items: [
-            { id: 'item-3', name: 'SavingsAccount', type: 'Bank account', orderIndex: 0, exclusive: false, cells: filledRow(700) },
+            { id: 'item-3', name: 'SavingsAccount', typeId: 'it-bank', typeSlug: 'bank_account', countsAsProperty: false, type: 'Bank account', orderIndex: 0, exclusive: false, cells: filledRow(700) },
           ],
         },
       ],

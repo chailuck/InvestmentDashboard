@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   trackingService,
-  TRACKING_ITEM_TYPES,
-  type TrackingSet, type Category, type SubCategory, type TrackingItem,
+  type TrackingSet, type Category, type SubCategory, type TrackingItem, type ItemType,
   type Entry, type RunningTotal, type DashboardBalanceGridOut, type TrackingSetExport,
   type OriginalInvestmentRollup, type Bond,
 } from '@/services/tracking'
@@ -37,14 +36,90 @@ beforeEach(() => {
 })
 
 // ---------------------------------------------------------------------------
-// TRACKING_ITEM_TYPES
+// Configurable item types
 // ---------------------------------------------------------------------------
 
-describe('TRACKING_ITEM_TYPES', () => {
-  it('contains exactly the 7 required enum values, with BOND appended last', () => {
-    expect(TRACKING_ITEM_TYPES).toEqual([
-      'Bank account', 'Property', 'Investment Account', 'TaxSaving', 'Materials', 'Insurance', 'BOND',
-    ])
+describe('trackingService — configurable item types', () => {
+  const WIRE = {
+    id: 'it-1', slug: 'property', label: 'Property', sortOrder: 1,
+    isSystem: true, isArchived: false, capabilities: ['counts_as_property'], itemCount: 12,
+  }
+
+  it('listItemTypes calls GET /tracking/item-types with includeArchived=false by default', async () => {
+    mockedGet.mockResolvedValueOnce({ data: [WIRE] })
+    const result = await trackingService.listItemTypes()
+    expect(mockedGet).toHaveBeenCalledWith('/tracking/item-types', { params: { includeArchived: false } })
+    expect(result).toHaveLength(1)
+    expect(result[0].label).toBe('Property')
+  })
+
+  it('listItemTypes forwards includeArchived=true for the admin screen', async () => {
+    mockedGet.mockResolvedValueOnce({ data: [] })
+    await trackingService.listItemTypes(true)
+    expect(mockedGet).toHaveBeenCalledWith('/tracking/item-types', { params: { includeArchived: true } })
+  })
+
+  it('normalises each row: capabilities to a real string[], the four flags to booleans, sortOrder to a number', async () => {
+    mockedGet.mockResolvedValueOnce({
+      data: [{
+        id: 'it-2', slug: 'bond', label: 'BOND', sortOrder: '6',
+        isSystem: 1, isArchived: 0, capabilities: null,
+      }],
+    })
+    const [t] = await trackingService.listItemTypes(true)
+    expect(t.capabilities).toEqual([])
+    expect(t.sortOrder).toBe(6)
+    expect(t.isSystem).toBe(true)
+    expect(t.isArchived).toBe(false)
+    expect(Array.isArray(t.capabilities)).toBe(true)
+  })
+
+  it('keeps itemCount only when the route sent it (admin list); absent otherwise', async () => {
+    mockedGet.mockResolvedValueOnce({ data: [WIRE, { ...WIRE, id: 'it-x', itemCount: undefined }] })
+    const [withCount, withoutCount] = await trackingService.listItemTypes(true)
+    expect(withCount.itemCount).toBe(12)
+    expect(withoutCount.itemCount).toBeUndefined()
+  })
+
+  it('createItemType POSTs /tracking/item-types and normalises the result', async () => {
+    mockedPost.mockResolvedValueOnce({ data: { ...WIRE, itemCount: undefined } })
+    const created: ItemType = await trackingService.createItemType({ label: 'Crypto', capabilities: [] })
+    expect(mockedPost).toHaveBeenCalledWith('/tracking/item-types', { label: 'Crypto', capabilities: [] })
+    expect(created.slug).toBe('property')
+  })
+
+  it('updateItemType PUTs /tracking/item-types/{id} with the presence-aware body', async () => {
+    mockedPut.mockResolvedValueOnce({ data: WIRE })
+    await trackingService.updateItemType('it-1', { label: 'Real Estate' })
+    expect(mockedPut).toHaveBeenCalledWith('/tracking/item-types/it-1', { label: 'Real Estate' })
+  })
+
+  it('reorderItemTypes PUTs /tracking/item-types/order with the full { items:[{id,order}] } set', async () => {
+    mockedPut.mockResolvedValueOnce({ data: { status: 'ok' } })
+    await trackingService.reorderItemTypes(['it-3', 'it-1', 'it-2'])
+    expect(mockedPut).toHaveBeenCalledWith('/tracking/item-types/order', {
+      items: [{ id: 'it-3', order: 1 }, { id: 'it-1', order: 2 }, { id: 'it-2', order: 3 }],
+    })
+  })
+
+  it('archiveItemType / unarchiveItemType PUT the idempotent sub-routes', async () => {
+    mockedPut.mockResolvedValue({ data: WIRE })
+    await trackingService.archiveItemType('it-1')
+    expect(mockedPut).toHaveBeenCalledWith('/tracking/item-types/it-1/archive', {})
+    await trackingService.unarchiveItemType('it-1')
+    expect(mockedPut).toHaveBeenCalledWith('/tracking/item-types/it-1/unarchive', {})
+  })
+
+  it('deleteItemType DELETEs /tracking/item-types/{id}', async () => {
+    mockedDelete.mockResolvedValueOnce({ data: undefined })
+    await trackingService.deleteItemType('it-1')
+    expect(mockedDelete).toHaveBeenCalledWith('/tracking/item-types/it-1')
+  })
+
+  it('propagates the backend 403 for a non-admin write', async () => {
+    const err = { isAxiosError: true, response: { status: 403, data: { detail: 'Admin role required' } } }
+    mockedPost.mockRejectedValueOnce(err)
+    await expect(trackingService.createItemType({ label: 'X' })).rejects.toEqual(err)
   })
 })
 
@@ -188,8 +263,13 @@ describe('trackingService — Sub-categories', () => {
 // ---------------------------------------------------------------------------
 
 describe('trackingService — Tracking Items', () => {
+  const BANK_TYPE: ItemType = {
+    id: 'it-bank', slug: 'bank_account', label: 'Bank account', sortOrder: 0,
+    isSystem: true, isArchived: false, capabilities: [],
+  }
   const ITEM: TrackingItem = {
-    id: 'i1', subCategoryId: 'sc1', name: 'Kasikorn Savings', type: 'Bank account',
+    id: 'i1', subCategoryId: 'sc1', name: 'Kasikorn Savings',
+    typeId: 'it-bank', itemType: BANK_TYPE, type: 'Bank account',
     initialInvestmentTracking: true, exclusive: false, order: 0,
     description: null, accountName: 'xxx-1', remark: null, createdAt: '', updatedAt: '',
   }
@@ -208,10 +288,10 @@ describe('trackingService — Tracking Items', () => {
     expect(result).toEqual(ITEM)
   })
 
-  it('createItem calls POST /tracking/sub-categories/{subCategoryId}/items with full input', async () => {
+  it('createItem calls POST /tracking/sub-categories/{subCategoryId}/items with a typeId (not a label)', async () => {
     mockedPost.mockResolvedValueOnce({ data: ITEM })
     const input = {
-      name: 'Kasikorn Savings', type: 'Bank account' as const,
+      name: 'Kasikorn Savings', typeId: 'it-bank',
       initialInvestmentTracking: false, exclusive: false,
     }
     await trackingService.createItem('sc1', input)

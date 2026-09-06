@@ -1,14 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { X, Loader2 } from 'lucide-react'
-import { TRACKING_ITEM_TYPES, type TrackingItemType } from '@/services/tracking'
+import { useItemTypes, bySortOrder } from '@/hooks/useItemTypes'
 
 /**
  * Minimal item-creation modal: only Name + Type are required up front.
  * The remaining fields (Initial Investment Tracking, Exclusive, description,
  * account name, remark) are edited afterwards on the item detail page.
+ *
+ * The Type <select> is sourced from `useItemTypes()` — active (non-archived)
+ * types only, ordered by `sortOrder`. Create is disabled until the type list
+ * has loaded so we never submit an empty `typeId`.
  */
 export function CreateItemModal({
   loading,
@@ -18,18 +22,30 @@ export function CreateItemModal({
 }: {
   loading: boolean
   error?: string | null
-  onConfirm: (name: string, type: TrackingItemType) => void
+  onConfirm: (name: string, typeId: string) => void
   onClose: () => void
 }) {
+  const { data: itemTypes, isLoading: typesLoading } = useItemTypes()
+
+  const activeTypes = useMemo(
+    () => (itemTypes ?? []).filter(t => !t.isArchived).sort(bySortOrder),
+    [itemTypes],
+  )
+
   const [name, setName] = useState('')
-  const [type, setType] = useState<TrackingItemType>(TRACKING_ITEM_TYPES[0])
+  const [typeId, setTypeId] = useState('')
+
+  // Default the picker to the first active type once the list resolves.
+  useEffect(() => {
+    if (!typeId && activeTypes.length > 0) setTypeId(activeTypes[0].id)
+  }, [activeTypes, typeId])
 
   const trimmed = name.trim()
-  const canConfirm = trimmed.length > 0 && !loading
+  const canConfirm = trimmed.length > 0 && !loading && !typesLoading && !!typeId
 
   const submit = () => {
     if (!canConfirm) return
-    onConfirm(trimmed, type)
+    onConfirm(trimmed, typeId)
   }
 
   return (
@@ -63,12 +79,14 @@ export function CreateItemModal({
             <label htmlFor="create-item-type" className="block text-xs text-ink-muted mb-1.5">Type</label>
             <select
               id="create-item-type"
-              value={type}
-              onChange={e => setType(e.target.value as TrackingItemType)}
+              value={typeId}
+              onChange={e => setTypeId(e.target.value)}
+              disabled={typesLoading || activeTypes.length === 0}
               className="input w-full text-sm"
             >
-              {TRACKING_ITEM_TYPES.map(t => (
-                <option key={t} value={t}>{t}</option>
+              {typesLoading && <option value="">Loading types…</option>}
+              {activeTypes.map(t => (
+                <option key={t.id} value={t.id}>{t.label}</option>
               ))}
             </select>
           </div>

@@ -15,6 +15,7 @@ from app.api.v1.endpoints.dashboard import router as dashboard_router
 from app.api.v1.endpoints.entries import router as entries_router
 from app.api.v1.endpoints.export import router as export_router
 from app.api.v1.endpoints.health import router as health_router
+from app.api.v1.endpoints.item_types import router as item_types_router
 from app.api.v1.endpoints.sub_categories import router as sub_categories_router
 from app.api.v1.endpoints.tracking_items import router as tracking_items_router
 from app.api.v1.endpoints.tracking_sets import router as tracking_sets_router
@@ -23,6 +24,7 @@ from app.api.v1.endpoints.update_tracking_lists import router as update_tracking
 v1_router = APIRouter()
 
 v1_router.include_router(health_router)
+v1_router.include_router(item_types_router)
 v1_router.include_router(tracking_sets_router)
 v1_router.include_router(categories_router)
 v1_router.include_router(sub_categories_router)

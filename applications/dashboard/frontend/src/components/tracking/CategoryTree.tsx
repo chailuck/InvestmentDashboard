@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 import {
   trackingService,
-  type Category, type SubCategory, type TrackingItem, type TrackingItemType,
+  type Category, type SubCategory, type TrackingItem,
 } from '@/services/tracking'
 import { extractApiError } from '@/services/api'
 import { NameDescriptionModal } from './NameDescriptionModal'
@@ -52,7 +52,7 @@ function ItemRow({
       >
         <span className="truncate font-medium">{item.name}</span>
         <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface-elevated border border-border/50 text-ink-secondary shrink-0">
-          {item.type}
+          {item.itemType?.label ?? item.type}
         </span>
         <ExternalLink className="w-3 h-3 text-ink-disabled shrink-0" />
       </Link>
@@ -115,12 +115,12 @@ function SubCategoryNode({
 
   const invalidateItems = () => queryClient.invalidateQueries({ queryKey: ['tracking-items', subCategory.id] })
 
-  const handleCreateItem = async (name: string, type: TrackingItemType) => {
+  const handleCreateItem = async (name: string, typeId: string) => {
     setBusy(true)
     setError(null)
     try {
       await trackingService.createItem(subCategory.id, {
-        name, type, initialInvestmentTracking: false, exclusive: false,
+        name, typeId, initialInvestmentTracking: false, exclusive: false,
       })
       setShowCreateItem(false)
       await invalidateItems()

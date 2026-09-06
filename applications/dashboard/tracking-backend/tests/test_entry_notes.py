@@ -13,6 +13,7 @@ import uuid
 from sqlalchemy import select
 
 from app.models.initial_investment_entry import InitialInvestmentEntry
+from app.models.item_type import SYSTEM_ITEM_TYPE_IDS
 
 PREFIX = "/api/v1/tracking"
 
@@ -32,7 +33,7 @@ async def _make_item(client, *, tracking_enabled: bool = True, name="Item") -> s
             f"{PREFIX}/sub-categories/{sub_id}/items",
             json={
                 "name": name,
-                "type": "Investment Account",
+                "typeId": SYSTEM_ITEM_TYPE_IDS["Investment Account"],
                 "initialInvestmentTracking": tracking_enabled,
             },
         )

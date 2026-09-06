@@ -33,14 +33,14 @@ from app.models.bond import Bond
 from app.models.tracking_item import TrackingItem
 from app.schemas.bond import BondCreate, BondOut, BondUpdate
 from app.services.bond_status import bangkok_today, compute_bond_status, compute_bond_years
+from app.services.item_type_capabilities import Capability
+from app.services.item_type_registry import ItemTypeRegistry
 
 router = APIRouter(tags=["Bonds"])
 _log = get_logger("api.bonds")
 
 UserId = Annotated[str, Depends(get_current_user_id)]
 DB = Annotated[AsyncSession, Depends(get_db)]
-
-_BOND_TYPE = "BOND"
 
 
 async def _get_item_or_404(item_id: uuid.UUID, user_id: str, db: AsyncSession) -> TrackingItem:
@@ -67,12 +67,19 @@ async def _get_bond_or_404(bond_id: uuid.UUID, user_id: str, db: AsyncSession) -
     return obj
 
 
-def _require_bond_item(item: TrackingItem) -> None:
-    if item.type != _BOND_TYPE:
+async def _require_bond_item(item: TrackingItem, db: AsyncSession) -> None:
+    """Capability gate — the item's type must carry `bond_register` (ADR-027).
+    Raised AFTER `_get_item_or_404`, so a cross-user id is still 404 not 400;
+    same 400 + `{"detail": ...}` contract as before. Message no longer names
+    'BOND' — a renamed bond type still works."""
+    registry = await ItemTypeRegistry.create(db)
+    resolved = registry.get(item.type_id)
+    if resolved is None or not resolved.has_capability(Capability.BOND_REGISTER.value):
         raise HTTPException(
             400,
-            f"Tracking item is of type {item.type!r}; bonds can only be registered "
-            f"against an item of type {_BOND_TYPE!r}",
+            "This tracking item's type does not provide a bond register; "
+            "bonds can only be registered against an item whose type has the "
+            "bond-register capability",
         )
 
 
@@ -99,7 +106,7 @@ def _to_out(b: Bond, today: date) -> BondOut:
 @router.get("/items/{item_id}/bonds", response_model=list[BondOut])
 async def list_bonds(item_id: uuid.UUID, user_id: UserId, db: DB) -> list[BondOut]:
     item = await _get_item_or_404(item_id, user_id, db)
-    _require_bond_item(item)
+    await _require_bond_item(item, db)
     result = await db.execute(
         select(Bond)
         .where(Bond.tracking_item_id == item_id)
@@ -116,7 +123,7 @@ async def create_bond(
     item_id: uuid.UUID, body: BondCreate, user_id: UserId, db: DB
 ) -> BondOut:
     item = await _get_item_or_404(item_id, user_id, db)
-    _require_bond_item(item)
+    await _require_bond_item(item, db)
     bond = Bond(
         tracking_item_id=item.id,
         code=body.code,

@@ -32,9 +32,9 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Financial Tracker — Functional Specification</h1>
 
-<p><strong>Version:</strong> 3.9 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + Phase 7 — Phase 5 (ADR-018) adds an optional Note on each Initial Investment Ledger entry, a per-item "Profit vs Original" panel, and an "Original Investment vs Profit" section on the Dashboard; Phase 6 (ADR-019) adds the read-only "Analysis" view — see §14; Phase 7 (ADR-020–ADR-025) adds the <code>BOND</code> tracking-item type and its standalone bond register with a computed 4-state status (§6.2, §15), plus optional <code>CODE</code> &amp; <code>NAME</code> fields on each Initial Investment Ledger entry (§7.1); Phase 7 enhancement (ADR-026) adds an optional per-bond <code>INTEREST RATE</code> field, a computed <code>YEARS</code> term-length field, and client-side column sorting on the bonds table — see §16) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-09-02 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code>, <code>/tracking/dashboard</code>, <code>/tracking/analysis</code></p>
+<p><strong>Version:</strong> 3.10 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + Phase 7 + Configurable Item Types — Phase 5 (ADR-018) adds an optional Note on each Initial Investment Ledger entry, a per-item "Profit vs Original" panel, and an "Original Investment vs Profit" section on the Dashboard; Phase 6 (ADR-019) adds the read-only "Analysis" view — see §14; Phase 7 (ADR-020–ADR-025) adds the <code>BOND</code> tracking-item type and its standalone bond register with a computed 4-state status (§6.2, §15), plus optional <code>CODE</code> &amp; <code>NAME</code> fields on each Initial Investment Ledger entry (§7.1); Phase 7 enhancement (ADR-026) adds an optional per-bond <code>INTEREST RATE</code> field, a computed <code>YEARS</code> term-length field, and client-side column sorting on the bonds table — see §16; Configurable Item Types (ADR-027) makes the item-type list admin-managed — an admin-only "Item Types" screen at <code>/tracking/settings/item-types</code> to add / rename / reorder / archive types, with type <em>behaviours</em> (Property total, Bond register) kept fixed in code as "capabilities" — see §17) &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-09-06 &nbsp;|&nbsp; <strong>Routes:</strong> <code>/tracking/category</code>, <code>/tracking/updates</code>, <code>/tracking/updates/[listId]</code>, <code>/tracking/dashboard</code>, <code>/tracking/analysis</code>, <code>/tracking/settings/item-types</code></p>
 
-<!-- Changelog: 3.9 (2026-09-02) — ADR-026: optional per-bond INTEREST RATE (stored, display-only), computed YEARS term-length field (never stored, like status), and client-side sortable columns on the bonds table (§16). 3.8 (2026-08-31) — Phase 7 BOND type + bond register + ledger CODE/NAME. -->
+<!-- Changelog: 3.10 (2026-09-06) — ADR-027 Configurable Item Types: admin-managed item-type list (add/rename/reorder/archive/delete) at /tracking/settings/item-types; behaviours are fixed code "capabilities" (counts_as_property, bond_register); renaming a type is retroactive across all reports; archive vs delete rules; Property lens / item-type grouping now keyed by capability + stable slug, not the label (§6.2, §10, §14, §17). 3.9 (2026-09-02) — ADR-026: optional per-bond INTEREST RATE (stored, display-only), computed YEARS term-length field (never stored, like status), and client-side sortable columns on the bonds table (§16). 3.8 (2026-08-31) — Phase 7 BOND type + bond register + ledger CODE/NAME. -->
 
 <hr>
 
@@ -113,7 +113,7 @@ Liabilities
   <thead><tr><th>Field</th><th>Description</th></tr></thead>
   <tbody>
     <tr><td>Name</td><td>Required, free text</td></tr>
-    <tr><td>Type</td><td>One of: Bank account, Property, Investment Account, TaxSaving, Materials, Insurance, BOND. Fixed list — see §6.2. <em>(Phase 7)</em> Saving an item as type BOND enables the bond register on its detail page — see §15.</td></tr>
+    <tr><td>Type</td><td>Chosen from the current item-type list. Ships with seven built-in types — Bank account, Property, Investment Account, TaxSaving, Materials, Insurance, BOND — and, since Configurable Item Types (ADR-027), an admin can add / rename / reorder / archive types from the <strong>Item Types</strong> screen (§17). The picker offers every non-archived type; an item that already has an archived type keeps it. <em>(Phase 7)</em> An item whose type carries the bond-register behaviour (the built-in BOND type) enables the bond register on its detail page — see §15.</td></tr>
     <tr><td>Initial Investment Tracking</td><td>Yes / No toggle. When Yes, the Initial Investment Ledger becomes available on the item's detail page (§7). Default: No.</td></tr>
     <tr><td>Exclusive</td><td>Yes / No toggle. Default: No. See §8 — has no visible effect in this phase.</td></tr>
     <tr><td>Order</td><td>Numeric display order among sibling items; changed via the up/down arrow buttons on the Category page, not on the item detail page.</td></tr>
@@ -123,8 +123,8 @@ Liabilities
   </tbody>
 </table>
 
-<h3>6.2 Fixed type list</h3>
-<p>The seven item types are a closed list — an item cannot be given a type outside this set, and the constraint is enforced consistently whether the request comes from the UI, a script, or a direct API call:</p>
+<h3>6.2 The item-type list (admin-configurable — ADR-027)</h3>
+<p>An item's type must be one that currently exists in the item-type list. The list ships with these seven <strong>built-in ("system") types</strong>, in this default order:</p>
 <ul>
   <li>Bank account</li>
   <li>Property</li>
@@ -134,6 +134,7 @@ Liabilities
   <li>Insurance</li>
   <li>BOND <em>(Phase 7 — ADR-020–ADR-025)</em> — an item of this type gains a "Bonds" register on its detail page (§15). In every other respect it behaves like any other tracking item.</li>
 </ul>
+<p>Since <strong>Configurable Item Types (ADR-027)</strong> the list is no longer closed: an <strong>admin</strong> can add custom types, rename any type (built-in ones included), reorder the list, and archive or delete types from the <strong>Item Types</strong> screen at <code>/tracking/settings/item-types</code> — see §17. What a type <em>does</em> (count towards the Property total, or provide a bond register) is a fixed set of "capabilities" defined in code, not something an admin can invent (§17.2). Whatever the list, the chosen type is still enforced identically whether the request comes from the UI, a script, or a direct API call — an item cannot be given a type id that does not exist, and a new item cannot be created against an archived type.</p>
 
 <h3>6.3 Item detail page</h3>
 <p>Clicking a tracking item navigates to its own page where every field except Order can be edited and saved with a single "Save Changes" action. The page shows a breadcrumb back to the Category page and the item's current Order (informational — reordering itself is done from the Category page).</p>
@@ -199,7 +200,7 @@ Liabilities
   <tbody>
     <tr><td>Tracking set name uniqueness</td><td>Unique per user; duplicate name on create/rename is rejected</td></tr>
     <tr><td>Cascade delete</td><td>Deleting a set/category/sub-category/item deletes everything beneath it</td></tr>
-    <tr><td>Item type</td><td>Must be one of the 6 fixed values</td></tr>
+    <tr><td>Item type</td><td>Must be a type that exists in the current item-type list (§6.2). Since ADR-027 the list is admin-configurable, not a closed set; the chosen type is still validated identically from the UI, a script, or the API — an unknown type is rejected, and a <em>new</em> item cannot be created against an archived type (§17)</td></tr>
     <tr><td>Ledger entry amount</td><td>Must be non-zero; positive = increase, negative = decrease</td></tr>
     <tr><td>Ledger availability</td><td>Only available on items with Initial Investment Tracking = Yes (persisted, not a pending edit)</td></tr>
     <tr><td>Exclusive flag</td><td>Stored only; no functional effect yet</td></tr>
@@ -236,8 +237,12 @@ Liabilities
     <tr><td>Profit vs Original panel visibility (Phase 5)</td><td>Item-detail panel appears only once the item has at least one ledger entry; collapses to a "no snapshot yet" line when there is no current balance (§7.4)</td></tr>
     <tr><td>Dashboard "Original Investment vs Profit" scope (Phase 5)</td><td>In scope = non-Exclusive items with Initial Investment Tracking = Yes. Covered = in-scope AND at least one entry AND a current balance exists (does not require positive cost basis). Set-level totals aggregate covered items only; untracked and Exclusive items never affect totals (§12.13)</td></tr>
     <tr><td>Profit-vs-original recompute (Phase 5)</td><td>All profit figures recomputed at read time on every page load; nothing cached or stored (§7.4, §12.13)</td></tr>
-    <tr><td>Item type (Phase 7)</td><td>Fixed list is now <strong>7</strong> values — <code>BOND</code> added; enforced identically whether the request comes from the UI, a script, or the API (§6.2, §15.1)</td></tr>
-    <tr><td>Bond register availability (Phase 7)</td><td>The "Bonds" section appears only on an item whose <em>saved</em> type is <code>BOND</code>; creating or listing bonds against an item of any other type is rejected (§15.2, §15.4)</td></tr>
+    <tr><td>Item type (Phase 7)</td><td>The built-in list is <strong>7</strong> values — <code>BOND</code> added in Phase 7; since ADR-027 the list is admin-configurable (§6.2, §17). Enforced identically whether the request comes from the UI, a script, or the API</td></tr>
+    <tr><td>Item-type management (ADR-027)</td><td>Admin-only. Add / rename / reorder / archive any type; delete only an unused custom type (built-in types are archive-only). At least one active type must always remain. A rename is <strong>retroactive</strong> — it changes the label everywhere the type appears, including past Dashboard / Analysis / export output (§17)</td></tr>
+    <tr><td>Type behaviours ("capabilities") (ADR-027)</td><td>Fixed in code, not admin-invented. Two exist: <em>counts as Property</em> (admin may switch on for a custom type; locked on the built-in Property type) and <em>bond register</em> (built-in BOND type only, never grantable). A rename never changes a type's behaviour (§17.2)</td></tr>
+    <tr><td>Archive vs delete a type (ADR-027)</td><td>Archiving hides a type from the picker for new / reassigned items; existing items keep it and all totals are unaffected; reversible. Deleting is permanent and only allowed for a custom type with zero items assigned (§17)</td></tr>
+    <tr><td>Property split &amp; item-type grouping (ADR-027)</td><td>The Dashboard Property / Non-Property split and the Analysis Property lens are decided by the <em>counts-as-property</em> capability, not by a label match; the Analysis "Item type" grouping is keyed by a stable per-type slug. Renaming a type changes the bucket <em>labels</em> shown, never which items are in which bucket or any total (§12, §14, §17.2)</td></tr>
+    <tr><td>Bond register availability (Phase 7)</td><td>The "Bonds" section appears only on an item whose <em>saved</em> type carries the bond-register capability (the built-in BOND type); creating or listing bonds against an item of any other type is rejected (§15.2, §15.4, §17.2)</td></tr>
     <tr><td>Bond status (Phase 7)</td><td>Computed on every read from START/EXPIRED vs "today" in Asia/Bangkok; never stored. <code>Unknown</code> if either date is missing; <code>Pre-order</code> if today&nbsp;&lt;&nbsp;START; <code>Active</code> if START&nbsp;≤&nbsp;today&nbsp;≤&nbsp;EXPIRED (both bounds inclusive); <code>Expire</code> if today&nbsp;&gt;&nbsp;EXPIRED. Spelled exactly <code>Pre-order</code> / <code>Active</code> / <code>Expire</code> / <code>Unknown</code>; <code>Unknown</code> renders in the UI as "—" (§15.3)</td></tr>
     <tr><td>Bond amount (Phase 7)</td><td>Required; must be ≥ 0 (zero allowed); excess precision beyond 4 decimal places is rounded, not rejected (§15.2)</td></tr>
     <tr><td>Bond CODE uniqueness (Phase 7)</td><td>None this iteration — two bonds under the same item may share a CODE (§15.2, ADR-022)</td></tr>
@@ -489,7 +494,7 @@ Liabilities
 <h3>14.1 What the user can do</h3>
 <ul>
   <li><strong>Four instruments over one dataset:</strong> a <strong>Trend</strong> chart (values over time), a <strong>Composition</strong> chart (100% stacked share over time) with a companion ranked-bar <strong>Breakdown at a period</strong>, a <strong>Delta-trend</strong> chart (period-over-period change as diverging bars, with a waterfall toggle), and a <strong>Scoped Dashboard</strong> section that reproduces the main Dashboard's numeric table constrained to the current drill scope.</li>
-  <li><strong>Amount-type lens:</strong> Grand Total / Property / No Property. "Property" is item type <code>Property</code>; the other five types are "No Property". Exclusive items are always excluded from every total, series, breakdown and export, exactly as on the Dashboard (§12.7).</li>
+  <li><strong>Amount-type lens:</strong> Grand Total / Property / No Property. "Property" means the item's type carries the <em>counts-as-property</em> capability (the built-in <code>Property</code> type, plus any custom type an admin has switched it on for — §17.2); every other type is "No Property". Renaming a type does not move it between the two sides. Exclusive items are always excluded from every total, series, breakdown and export, exactly as on the Dashboard (§12.7).</li>
   <li><strong>Group by</strong> Category, Sub-category, Item, or Item type; <strong>drill</strong> Lens → Category → Sub-category → Item with a breadcrumb and an "Up" control. Clicking a chart mark, or an item row in the Scoped Dashboard, drills in.</li>
   <li><strong>Granularity</strong> Quarterly or Yearly. Yearly uses an <strong>"as-of year end"</strong> rule: a year's value is the balance of its latest populated quarter, and every yearly label names that quarter (e.g. "2025 (as of Q3)").</li>
   <li><strong>Measure</strong> Balance / Δ Amount / Δ %. As on the Dashboard (§10, §12.6), Δ % is suppressed only when the prior populated value is exactly ฿0 — never shown as a misleading 0% or "∞".</li>
@@ -526,7 +531,7 @@ Liabilities
 
 <h3>15.1 The BOND item type</h3>
 <p><code>BOND</code> is the 7th value in the fixed Tracking Item <strong>Type</strong> list (§6.2). It behaves exactly like any other type for creating, editing, ordering, and deleting an item. Its only special effect is that the <strong>Bonds</strong> section described below is shown on the detail page of an item whose <em>persisted</em> type is <code>BOND</code> — switching the Type field to <code>BOND</code> in the edit form does not reveal the section until "Save Changes" is clicked, the same persisted-not-pending rule the Initial Investment Ledger uses (§7.3).</p>
-<p>Where the rest of the Financial Tracker splits items into Property vs Non-Property (§12.4, §12.7, §14.1), the split matches the exact type <code>Property</code> only, so a <code>BOND</code> item always falls on the Non-Property side with no special handling.</p>
+<p>Where the rest of the Financial Tracker splits items into Property vs Non-Property (§12.4, §12.7, §14.1), the split is decided by the <em>counts-as-property</em> capability (§17.2), which the built-in <code>BOND</code> type does not carry — so a <code>BOND</code> item always falls on the Non-Property side with no special handling.</p>
 
 <h3>15.2 The Bonds section</h3>
 <p>The Bonds section shows one row per registered bond, with these columns:</p>
@@ -577,7 +582,7 @@ Liabilities
   <li>the "Original Investment vs Profit" rollup (§7.4, §12.13);</li>
   <li>the Analysis view (§14);</li>
   <li>the Email Dashboard HTML body and the JSON backup attachment (§13);</li>
-  <li>the Property vs Non-Property split — a <code>BOND</code> item simply falls on the Non-Property side, because that split matches the exact type <code>Property</code> only (no code change was needed for this).</li>
+  <li>the Property vs Non-Property split — a <code>BOND</code> item simply falls on the Non-Property side, because that split is decided by the <em>counts-as-property</em> capability (§17.2), which the built-in <code>BOND</code> type does not carry.</li>
 </ul>
 <p>Surfacing a single "total active bond value" figure somewhere in the Financial Tracker is noted as possible <strong>future</strong> work; it is not built in this phase.</p>
 
@@ -629,6 +634,61 @@ Liabilities
 </ul>
 
 <div class="callout tip">Both new columns are consistent with the rest of the bond register: INTEREST RATE is stored (like AMOUNT), YEARS is recomputed on every read from the dates (like STATUS), and neither affects any total anywhere else in the Financial Tracker.</div>
+
+<hr>
+
+<h2>17. Configurable item types — the "Item Types" admin screen (ADR-027)</h2>
+<p>Before this change the item-type list (§6.2) was a fixed seven values baked into the code and the database. <strong>Configurable Item Types</strong> makes the <em>list</em> something an administrator manages at runtime, while keeping what each type <em>does</em> fixed in code so a user can never create a "type" that promises a behaviour the software does not actually implement.</p>
+
+<h3>17.1 Who can use it, and where it lives</h3>
+<ul>
+  <li><strong>Admins only.</strong> The screen is at <code>/tracking/settings/item-types</code> (reachable from a link on the tracker's Category page). A non-admin who navigates there is denied and redirected — the same guard the <em>Users</em> admin screen uses. All the read views elsewhere (the type picker when creating or editing an item, the type badges) are unchanged for everyone.</li>
+  <li><strong>One system-wide list.</strong> The list is global, not per tracking set — every set, every user sees the same types, matching how the Property split and the bond register have always worked.</li>
+</ul>
+
+<h3>17.2 Built-in types vs. custom types, and "capabilities"</h3>
+<p>The seven types the product shipped with — Bank account, Property, Investment Account, TaxSaving, Materials, Insurance, BOND — are <strong>built-in ("system") types</strong>. They are marked with a lock and cannot be deleted (only archived), and their behaviours cannot be changed. An admin can still rename them and change their order.</p>
+<p>A type's <strong>behaviours</strong> are called <strong>capabilities</strong> and there are exactly two, both fixed in code:</p>
+<table>
+  <thead><tr><th>Capability</th><th>What it does</th><th>Can an admin give it to a type?</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Counts as Property</strong></td><td>Items of this type are added into the Dashboard's <em>Property</em> total (and the <em>Non-Property</em> total excludes them), and the Analysis view's <em>Property</em> / <em>No Property</em> lens follows the same rule.</td><td><strong>Yes, for a custom type.</strong> A checkbox on the row. On the built-in <em>Property</em> type it is shown ticked but locked.</td></tr>
+    <tr><td><strong>Bond register</strong></td><td>Items of this type get the "Bonds" register on their detail page (§15).</td><td><strong>No.</strong> It is shown, read-only, on the built-in <em>BOND</em> type only. It needs a database table, API and a whole screen that only engineering can deliver, so it can never be switched on for another type.</td></tr>
+  </tbody>
+</table>
+<p>Because behaviours are code, <strong>renaming a type never changes what it does</strong>. Renaming <em>BOND</em> to "Government Bond" keeps its bond register; renaming <em>Property</em> to "Real Estate" keeps it in the Property total.</p>
+
+<h3>17.3 What an admin can do</h3>
+<ul>
+  <li><strong>Add a custom type</strong> — give it a label (1–100 characters, any language incl. Thai, must be unique ignoring case and surrounding spaces). Optionally tick <em>Counts as Property</em>. A short machine "slug" is generated from the label automatically and shown read-only; it never changes even if the label is later renamed.</li>
+  <li><strong>Rename</strong> any type, built-in ones included — inline on the row. <strong>A rename is retroactive:</strong> the new label immediately replaces the old one everywhere the type appears, including in the Dashboard, the Analysis view, past exports, and every item's badge. The screen warns about this before saving a heavily-used type.</li>
+  <li><strong>Reorder</strong> the list — drag a row, or use the up / down buttons (keyboard-accessible). The order is the order the type picker shows.</li>
+  <li><strong>Archive / unarchive</strong> a type (built-in ones included). Archiving <strong>hides</strong> the type from the picker when creating a new item or reassigning an existing one; every item that already has that type keeps it, and every total that included it is unchanged. Unarchiving brings it back in one click. You cannot archive the last remaining active type. The confirm dialog shows how many items currently use the type.</li>
+  <li><strong>Delete</strong> a type — only a <em>custom</em> type with <strong>zero</strong> items assigned. Built-in types can never be deleted; a custom type that is in use must be archived instead. Delete is permanent. The row's Delete button is disabled (with a tooltip explaining why) whenever deletion is not allowed.</li>
+</ul>
+
+<h3>17.4 Rules an admin will run into</h3>
+<table>
+  <thead><tr><th>Situation</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>Label already used by another type (case-/space-insensitive)</td><td>Rejected — "An item type named '…' already exists"</td></tr>
+    <tr><td>Blank label, or longer than 100 characters</td><td>Rejected before saving</td></tr>
+    <tr><td>Trying to change a built-in type's capabilities</td><td>Rejected — system type behaviours are locked</td></tr>
+    <tr><td>Trying to grant the <em>bond register</em> capability to any type</td><td>Rejected — it is code-bound to the built-in BOND type</td></tr>
+    <tr><td>Archiving the only remaining active type</td><td>Rejected — at least one active type must remain</td></tr>
+    <tr><td>Deleting a built-in type, or a custom type that has items</td><td>Rejected — archive instead</td></tr>
+    <tr><td>Creating a new item against an archived type</td><td>Rejected — pick an active type</td></tr>
+    <tr><td>Editing an existing item that already has an archived type, without changing the type</td><td>Allowed — the item keeps its type</td></tr>
+    <tr><td>Switching an existing item <em>to</em> an archived type</td><td>Rejected</td></tr>
+  </tbody>
+</table>
+
+<h3>17.5 What does not change</h3>
+<ul>
+  <li>The Dashboard Property / Non-Property totals, the Analysis lens, and the bond register all behave <strong>exactly as before</strong> for the seven built-in types — this change was designed to be invisible until an admin actually edits the list.</li>
+  <li>The Analysis "Item type" grouping still buckets items by their type; a rename changes the bucket's displayed name but not which items are in it or any total.</li>
+  <li>Every admin change to the type list is recorded in the application logs (who, what, before/after). There is no separate on-screen audit history in this version.</li>
+</ul>
 
 </body>
 </html>

@@ -5,14 +5,14 @@ import { render } from '@/test/test-utils'
 import AnalysisPage from '../page'
 import { trackingService } from '@/services/tracking'
 import type { TrackingSet } from '@/services/tracking'
-import { makeGrid } from './fixtures'
+import { makeGrid, makeItemTypes } from './fixtures'
 
 vi.mock('@/services/tracking', () => ({
   trackingService: {
     listSets: vi.fn(),
     getBalanceGrid: vi.fn(),
+    listItemTypes: vi.fn(),
   },
-  TRACKING_ITEM_TYPES: ['Bank account', 'Property', 'Investment Account', 'TaxSaving', 'Materials', 'Insurance'],
 }))
 
 const mocked = vi.mocked(trackingService)
@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocked.listSets.mockResolvedValue(SETS)
   mocked.getBalanceGrid.mockResolvedValue(makeGrid())
+  mocked.listItemTypes.mockResolvedValue(makeItemTypes())
 })
 
 describe('Analysis page', () => {

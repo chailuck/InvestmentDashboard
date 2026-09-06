@@ -13,9 +13,10 @@ import {
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 import {
-  trackingService, TRACKING_ITEM_TYPES,
-  type TrackingItem, type TrackingItemType, type Entry, type ProfitVsOriginal,
+  trackingService,
+  type Entry, type ProfitVsOriginal,
 } from '@/services/tracking'
+import { useItemTypes, bySortOrder } from '@/hooks/useItemTypes'
 import { extractApiError } from '@/services/api'
 import { ConfirmDeleteModal } from '@/components/tracking/ConfirmDeleteModal'
 import { BondsSection } from '@/components/tracking/BondsSection'
@@ -423,10 +424,14 @@ export default function TrackingItemDetailPage() {
     queryFn: () => trackingService.getItem(itemId),
   })
 
+  // Include archived types so an item already assigned an archived type keeps
+  // that option selectable / visible in the picker.
+  const { data: itemTypes = [], isLoading: typesLoading } = useItemTypes(true)
+
   // Editable form state, hydrated once from the loaded item.
   const [form, setForm] = useState<{
     name: string
-    type: TrackingItemType
+    typeId: string
     initialInvestmentTracking: boolean
     exclusive: boolean
     description: string
@@ -440,7 +445,7 @@ export default function TrackingItemDetailPage() {
     if (item && !form) {
       setForm({
         name: item.name,
-        type: item.type,
+        typeId: item.typeId,
         initialInvestmentTracking: item.initialInvestmentTracking,
         exclusive: item.exclusive,
         description: item.description ?? '',
@@ -452,6 +457,16 @@ export default function TrackingItemDetailPage() {
 
   const setField = <K extends keyof NonNullable<typeof form>>(key: K, value: NonNullable<typeof form>[K]) =>
     setForm(prev => (prev ? { ...prev, [key]: value } : prev))
+
+  // Picker options: active (non-archived) types by sort order, PLUS the item's
+  // OWN current type even if it has since been archived — so an existing
+  // archived assignment stays selectable rather than silently vanishing.
+  const typeOptions = (() => {
+    const active = itemTypes.filter(t => !t.isArchived)
+    const own = item?.itemType
+    if (own && !active.some(t => t.id === own.id)) active.push(own)
+    return [...active].sort(bySortOrder)
+  })()
 
   const handleSave = async () => {
     if (!form) return
@@ -465,7 +480,7 @@ export default function TrackingItemDetailPage() {
     try {
       await trackingService.updateItem(itemId, {
         name: trimmedName,
-        type: form.type,
+        typeId: form.typeId,
         initialInvestmentTracking: form.initialInvestmentTracking,
         exclusive: form.exclusive,
         description: form.description.trim() || null,
@@ -522,11 +537,14 @@ export default function TrackingItemDetailPage() {
                 <select
                   id="item-type"
                   className="input w-full text-sm"
-                  value={form.type}
-                  onChange={e => setField('type', e.target.value as TrackingItemType)}
+                  value={form.typeId}
+                  disabled={typesLoading}
+                  onChange={e => setField('typeId', e.target.value)}
                 >
-                  {TRACKING_ITEM_TYPES.map(t => (
-                    <option key={t} value={t}>{t}</option>
+                  {typeOptions.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}{t.isArchived ? ' (archived)' : ''}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -611,17 +629,18 @@ export default function TrackingItemDetailPage() {
           {item.initialInvestmentTracking && <LedgerSection itemId={itemId} />}
 
           {/*
-            Gated on `item.type` — the persisted, server-confirmed value from the
-            query cache — NOT `form.type` (the local, possibly-unsaved pending
-            edit), for the same reason the ledger section above is gated on the
-            persisted `initialInvestmentTracking`: the bond endpoints 400 on a
-            non-BOND item, so mounting this off the pending <select> value would
-            fire a doomed query the instant the user picks "BOND" but before they
-            click Save. The <select> still reflects `form.type` so the user sees
-            their in-progress change — only the register's visibility waits for a
-            successful save + refetch.
+            Gated on the PERSISTED item's type capability — `item.itemType`
+            from the query cache — NOT the local, possibly-unsaved `form.typeId`
+            edit, for the same reason the ledger section above is gated on the
+            persisted `initialInvestmentTracking`: the bond endpoints 400 unless
+            the item's type provides a bond register, so mounting this off the
+            pending <select> value would fire a doomed query the instant the user
+            picks a bond-register type but before they click Save. The <select>
+            still reflects `form.typeId` so the user sees their in-progress
+            change — only the register's visibility waits for a successful
+            save + refetch.
           */}
-          {item.type === 'BOND' && <BondsSection itemId={itemId} />}
+          {item.itemType?.capabilities?.includes('bond_register') && <BondsSection itemId={itemId} />}
         </>
       )}
     </div>

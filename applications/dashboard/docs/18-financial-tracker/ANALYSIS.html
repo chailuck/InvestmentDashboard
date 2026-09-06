@@ -90,9 +90,10 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <p>A 3-way selector: <strong>Grand Total</strong> / <strong>Property</strong> / <strong>No Property</strong>. The mapping is exactly the server's:</p>
 <ul>
 <li><strong>Grand Total</strong> — every non-exclusive tracking item.</li>
-<li><strong>Property</strong> — items of type <code>Property</code> only.</li>
-<li><strong>No Property</strong> — the other five types (<code>Bank account</code>, <code>Investment Account</code>, <code>TaxSaving</code>, <code>Materials</code>, <code>Insurance</code>).</li>
+<li><strong>Property</strong> — items whose type carries the <code>counts_as_property</code> capability.</li>
+<li><strong>No Property</strong> — every other type.</li>
 </ul>
+<div class="callout"><strong>Configurable Item Types (ADR-027).</strong> The lens is decided by a <em>capability</em> the item's type carries, not by a literal <code>type === 'Property'</code> match. Out of the box only the built-in <code>Property</code> type has <code>counts_as_property</code>, so behaviour is unchanged; an admin may switch it on for a custom type (TECHNICAL.html §17.2). The client reads the pre-computed <code>countsAsProperty</code> boolean the balance-grid response now carries per item — it never hard-codes a label. <strong>Renaming a type never moves items between the Property and No-Property sides</strong> — a rename changes only the label shown.</div>
 <p><strong>Exclusive items are always excluded</strong> from every series, subtotal, total, breakdown and export, under every lens — they remain reachable only as an explicit leaf drill target, where they are shown greyed and annotated "excluded from totals". Switching the lens re-filters which items feed every series and re-renders everything. Changing the lens <strong>keeps the current drill path</strong> (a deliberate change from an earlier design draft) so a lens that has no qualifying items in the current scope surfaces an explicit "switch to Grand Total" recovery state rather than silently resetting; clicking the <em>lens breadcrumb crumb</em> still resets the drill to root.</p>
 
 <h3>2.2 Group by</h3>
@@ -106,7 +107,8 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <tr><td>3</td><td>One item (leaf)</td><td>— (single series)</td><td>—</td></tr>
 </tbody>
 </table>
-<p><strong>Item type</strong> is an orthogonal cross-cut: at any depth it buckets the current node's descendant items by <code>TrackingItem.type</code>, ignoring category structure. Item-type buckets are <strong>not drillable</strong> and are most meaningful under the Grand Total lens.</p>
+<p><strong>Item type</strong> is an orthogonal cross-cut: at any depth it buckets the current node's descendant items by their type, ignoring category structure. Item-type buckets are <strong>not drillable</strong> and are most meaningful under the Grand Total lens.</p>
+<div class="callout"><strong>Configurable Item Types (ADR-027).</strong> Buckets are keyed by the type's stable <code>typeSlug</code> and ordered by the type's <code>sortOrder</code>; each bucket's <em>displayed name</em> is the type's current <code>label</code>. So renaming a type re-labels its bucket on the next load but never changes which items fall in it or its totals; an archived type with zero items in scope simply produces no bucket. The ordered type list comes from <code>GET /tracking/item-types</code> (the <code>useItemTypes()</code> hook), passed into the pure derivation functions.</div>
 
 <h3>2.3 Drill-down &amp; breadcrumb</h3>
 <p>The drill path is <code>Lens → Category → Sub-category → Item</code>. A breadcrumb shows the path with clickable ancestor crumbs and an <strong>Up</strong> control that steps one level. Clicking a chart line, band or bar drills into that bucket unless already at a leaf item; clicking an item row in the Scoped Dashboard also drills the whole view to that item (depth 3). Drilling one level advances the group-by to that depth's default and clears the breakdown snapshot period. A leaf shows a single series with a "most detailed level — drill disabled" note.</p>
@@ -206,7 +208,7 @@ Exclusive items are always their own badged row and never enter any total, verba
 <ol>
 <li><strong>Scope total</strong> "Total: {category}" — Grand Total lens → <code>category.subtotal[]</code> verbatim; Property / No-Property → derived sum over the category's lens-qualifying non-exclusive leaf items.</li>
 <li>Per sub-category in <code>orderIndex</code> order: a bold <strong>subtotal row</strong> (same verbatim-vs-derived rule) then its indented <strong>item rows</strong> (<code>item.cells[]</code> verbatim; non-qualifying-type items hidden under a Property / No-Property lens).</li>
-<li><strong>Grand Total lens only:</strong> two <strong>split rows</strong> "Property portion" / "Non-Property portion" — derived sums split on <code>item.type === 'Property'</code> vs the other five types. Placed immediately under the scope total (a split <em>of</em> it), before the sub-category breakdown.</li>
+<li><strong>Grand Total lens only:</strong> two <strong>split rows</strong> "Property portion" / "Non-Property portion" — derived sums split on <code>item.countsAsProperty</code> (= the item's type has the <code>counts_as_property</code> capability, <em>ADR-027</em>; was a literal <code>type === 'Property'</code> match) vs every other type. Placed immediately under the scope total (a split <em>of</em> it), before the sub-category breakdown.</li>
 <li>If the category has exclusive descendants: a separated <strong>"Excluded from total (exclusive)"</strong> block — each row badged, no rollup.</li>
 </ol>
 <h4>Depth 2 — sub-category</h4>
@@ -368,7 +370,7 @@ interface ViewState {
 <tr><td><code>readCellSeries(grid, cells)</code></td><td>Reads a positionally-aligned <code>BalanceCell[]</code> into ascending-order <code>balance / deltaAmount / deltaPercent / hasData / hasPreviousData</code> arrays.</td></tr>
 <tr><td><code>computeSeriesDeltas(balances)</code></td><td><strong>The client TS replica of the server <code>compute_series_deltas</code></strong> — see §12.</td></tr>
 <tr><td><code>rollupBalances(itemBalances, length)</code></td><td>Per period, sum the populated values across the given item balance arrays ("at least one populated" rule); a period with zero contributors stays <code>null</code>, never 0. This is the "derived bucket sum".</td></tr>
-<tr><td><code>lensIncludes(lens, item)</code></td><td><code>!exclusive</code> for Grand Total; <code>!exclusive &amp;&amp; type === 'Property'</code> for Property; <code>!exclusive &amp;&amp; type !== 'Property'</code> for No Property.</td></tr>
+<tr><td><code>lensIncludes(lens, item)</code></td><td><code>!exclusive</code> for Grand Total; <code>!exclusive &amp;&amp; countsAsProperty</code> for Property; <code>!exclusive &amp;&amp; !countsAsProperty</code> for No Property. <em>(ADR-027 — <code>countsAsProperty</code> is the per-item boolean the balance-grid response carries, = its type has the <code>counts_as_property</code> capability; was a literal <code>type === 'Property'</code> match.)</em></td></tr>
 <tr><td><code>nodeTotalSeries(grid, drill)</code></td><td>The authoritative balance series for the current drill node under the current lens: depth 0 → the lens aggregate array verbatim; depth 1/2 under Grand Total → <code>subtotal[]</code> verbatim; depth 1/2 under Property/No-Property → derived Σ of lens-qualifying leaf descendants; depth 3 → the item's <code>cells[]</code>. Feeds the trend overlay, the composition <code>periodTotal</code>, and the scope-aware StatRow.</td></tr>
 <tr><td><code>asOfYearlySeries(balances, axis)</code></td><td>Per year, pick the highest-index quarter that has data (Q4 → Q3 → Q2 → Q1); <code>null</code> if the year has none. Returns <code>{year, index, value, asOfQuarter}[]</code>. The one genuinely new derivation.</td></tr>
 <tr><td><code>trimEmptyEnds(length, isEmptyAt)</code></td><td>Drops leading and trailing periods where every visible series is null — the exact rule the dashboard chart uses; interior gaps are kept.</td></tr>

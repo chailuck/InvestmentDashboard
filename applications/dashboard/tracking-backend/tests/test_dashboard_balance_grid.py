@@ -10,6 +10,7 @@ import datetime as dt
 import uuid
 from decimal import Decimal
 
+from app.models.item_type import SYSTEM_ITEM_TYPE_IDS
 from app.models.update_tracking_list import UpdateTrackingList
 from app.models.update_tracking_list_balance import UpdateTrackingListBalance
 from app.services.dashboard_balance_grid import compute_series_deltas
@@ -50,7 +51,11 @@ async def _make_item(
 ) -> str:
     resp = await client.post(
         f"{PREFIX}/sub-categories/{sub_id}/items",
-        json={"name": name, "type": item_type, "exclusive": exclusive},
+        json={
+            "name": name,
+            "typeId": SYSTEM_ITEM_TYPE_IDS[item_type],
+            "exclusive": exclusive,
+        },
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
@@ -507,6 +512,55 @@ async def test_property_breakdown_partitions_and_excludes_exclusive_items(auth_c
     assert prop_cell["balance"] == "500000.0000"  # excludes the exclusive Property item
     assert non_prop_cell["balance"] == "3000.0000"
 
+    # ADR-027: item rows now carry capability-derived fields, and the
+    # partition is driven by `countsAsProperty` (the type's
+    # `counts_as_property` capability), not a literal label match.
+    house_row = _find_item_row(grid, property_item_id)
+    assert house_row["typeSlug"] == "property"
+    assert house_row["countsAsProperty"] is True
+    bank_row = _find_item_row(grid, bank_item_id)
+    assert bank_row["typeSlug"] == "bank_account"
+    assert bank_row["countsAsProperty"] is False
+
+
+async def test_property_breakdown_survives_property_type_rename(auth_client, admin_client):
+    """Renaming the `Property` type must NOT change the property/non-property
+    split — the predicate is the `counts_as_property` capability, not the
+    label (ADR-027 backward-compatibility acceptance criterion)."""
+    set_id = await _make_set(auth_client)
+    property_sub_id = await _property_sub_id(auth_client, set_id)
+    current_assets_sub_id = await _current_assets_sub_id(auth_client, set_id)
+
+    house_id = await _make_item(auth_client, property_sub_id, name="House2", item_type="Property")
+    bank_id = await _make_item(
+        auth_client, current_assets_sub_id, name="Checking2", item_type="Bank account"
+    )
+    list_id = await _make_list(auth_client, set_id, "2026-01-15", quarter=1, year=2026)
+    await _set_balance(auth_client, list_id, house_id, "700000")
+    await _set_balance(auth_client, list_id, bank_id, "4000")
+
+    prop_id = SYSTEM_ITEM_TYPE_IDS["Property"]
+    rename = await admin_client.put(
+        f"{PREFIX}/item-types/{prop_id}", json={"label": "Real Estate"}
+    )
+    assert rename.status_code == 200, rename.text
+    try:
+        grid = await _get_grid(auth_client, set_id)
+        breakdown = grid["propertyBreakdown"]
+        assert _cell(breakdown["propertyTotal"], 2026, 1)["balance"] == "700000.0000"
+        assert _cell(breakdown["nonPropertyTotal"], 2026, 1)["balance"] == "4000.0000"
+
+        house_row = _find_item_row(grid, house_id)
+        assert house_row["countsAsProperty"] is True
+        assert house_row["typeSlug"] == "property"  # slug is immutable across a rename
+        assert house_row["type"] == "Real Estate"  # denormalised label follows the rename
+    finally:
+        # Restore — the test DB persists committed rows across the session.
+        restore = await admin_client.put(
+            f"{PREFIX}/item-types/{prop_id}", json={"label": "Property"}
+        )
+        assert restore.status_code == 200, restore.text
+
 
 # ── Rollup delta skips a quarter where every contributing item is blank ─────
 
@@ -576,3 +630,119 @@ async def test_rollup_subtotal_reflects_lone_populated_item_when_sibling_is_blan
     cat_cell = _cell(assets_cat["subtotal"], 2026, 2)
     assert cat_cell["hasData"] is True
     assert cat_cell["balance"] == "437.2500"  # same "at least one" rule at the category tier
+
+
+# ── ADR-027 golden-fixture BYTE-IDENTICAL parity (design R-2 / §K) ──────────
+#
+# Headline acceptance criterion: renaming an item type via the admin API must
+# change NO grid number, NO structural field and NO ordering. The whole
+# balance-grid response for a representative seeded set is serialised and
+# compared byte-for-byte across:
+#   (b) post-migration, untouched — 7 seeded system types, no admin edits
+#   (c) after renaming BOND -> "Government Bond" AND Property -> "Real Estate"
+#
+# The ONLY field permitted to differ is each item row's transitional `type`
+# LABEL string (design §C.6 deliberately makes the denormalised label follow a
+# rename); `typeSlug`, `countsAsProperty`, every cell / delta / subtotal /
+# grandTotal / propertyBreakdown value, and row order must be identical.
+#
+# State (a) — the pre-refactor `type == "Property"` code path — is NOT
+# reproducible in-suite: that code no longer exists. (a)==(b) equivalence is
+# established instead by `test_item_type_migration.py` (the backfill maps every
+# old `type` string to the correct `type_id`, exact-label match) together with
+# `test_property_breakdown_partitions_and_excludes_exclusive_items` above (the
+# new `counts_as_property` predicate yields the same partition the old literal
+# match did).
+
+
+def _strip_type_label(node):
+    """Recursively drop every item row's transitional `type` label (the one
+    field a rename is designed to change) so the remainder can be compared
+    byte-for-byte. Returns the collected (id -> type) labels seen."""
+    seen: dict = {}
+
+    def walk(n):
+        if isinstance(n, dict):
+            if "typeSlug" in n and "type" in n:  # an item row
+                seen[n["id"]] = n.pop("type")
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(node)
+    return seen
+
+
+async def test_balance_grid_byte_identical_across_type_rename(auth_client, admin_client):
+    """Whole-grid byte-identical parity for (b) vs (c) — a multi-item,
+    multi-period seeded set spanning a year boundary so deltas, sub-category
+    and category subtotals, the grand total and the property breakdown all
+    carry non-trivial content."""
+    import copy
+    import json
+
+    set_id = await _make_set(auth_client)
+    property_sub = await _property_sub_id(auth_client, set_id)
+    current_sub = await _current_assets_sub_id(auth_client, set_id)
+    invest_sub = await _sub_id(auth_client, set_id, "Assets", "Long-term Investment")
+
+    house = await _make_item(auth_client, property_sub, name="House", item_type="Property")
+    excl_house = await _make_item(
+        auth_client, property_sub, name="ExclHouse", item_type="Property", exclusive=True
+    )
+    bank = await _make_item(auth_client, current_sub, name="Checking", item_type="Bank account")
+    bond = await _make_item(auth_client, invest_sub, name="GovtBondItem", item_type="BOND")
+    gold = await _make_item(auth_client, invest_sub, name="Gold", item_type="Materials")
+
+    # Three periods across a year boundary → non-trivial deltas everywhere.
+    l1 = await _make_list(auth_client, set_id, "2025-07-15", quarter=3, year=2025)
+    l2 = await _make_list(auth_client, set_id, "2026-01-15", quarter=1, year=2026)
+    l3 = await _make_list(auth_client, set_id, "2026-04-15", quarter=2, year=2026)
+    for lst, hv, bv, gv, dv, ev in (
+        (l1, "500000", "3000", "1200", "10000", "999999"),
+        (l2, "525000", "3500", "1100", "10500", "999999"),
+        (l3, "540000", "3200", "1300", "11000", "999999"),
+    ):
+        await _set_balance(auth_client, lst, house, hv)
+        await _set_balance(auth_client, lst, bank, bv)
+        await _set_balance(auth_client, lst, gold, gv)
+        await _set_balance(auth_client, lst, bond, dv)
+        await _set_balance(auth_client, lst, excl_house, ev)
+
+    snap_b = await _get_grid(auth_client, set_id)
+
+    prop_id = SYSTEM_ITEM_TYPE_IDS["Property"]
+    bond_id = SYSTEM_ITEM_TYPE_IDS["BOND"]
+    assert (await admin_client.put(f"{PREFIX}/item-types/{prop_id}", json={"label": "Real Estate"})).status_code == 200
+    assert (await admin_client.put(f"{PREFIX}/item-types/{bond_id}", json={"label": "Government Bond"})).status_code == 200
+    try:
+        snap_c = await _get_grid(auth_client, set_id)
+
+        b_norm, c_norm = copy.deepcopy(snap_b), copy.deepcopy(snap_c)
+        labels_b = _strip_type_label(b_norm)
+        labels_c = _strip_type_label(c_norm)
+
+        # Everything except the transitional label string is byte-identical.
+        assert json.dumps(b_norm, sort_keys=True) == json.dumps(c_norm, sort_keys=True)
+
+        # The one intended difference: the denormalised label followed the rename.
+        assert labels_b[house] == "Property"
+        assert labels_c[house] == "Real Estate"
+        assert labels_b[bond] == "BOND"
+        assert labels_c[bond] == "Government Bond"
+        assert labels_b[bank] == labels_c[bank] == "Bank account"
+
+        # Spot-check the high-value aggregates are untouched by the rename.
+        for key in ("grandTotal", "years"):
+            assert snap_b[key] == snap_c[key]
+        assert snap_b["propertyBreakdown"] == snap_c["propertyBreakdown"]
+        house_b = _find_item_row(snap_b, house)
+        house_c = _find_item_row(snap_c, house)
+        assert house_b["typeSlug"] == house_c["typeSlug"] == "property"
+        assert house_b["countsAsProperty"] == house_c["countsAsProperty"] is True
+        assert house_b["cells"] == house_c["cells"]
+    finally:
+        assert (await admin_client.put(f"{PREFIX}/item-types/{prop_id}", json={"label": "Property"})).status_code == 200
+        assert (await admin_client.put(f"{PREFIX}/item-types/{bond_id}", json={"label": "BOND"})).status_code == 200

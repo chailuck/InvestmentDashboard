@@ -1,6 +1,24 @@
-import type { BalanceCell, DashboardBalanceGridOut, DashboardCategoryRow } from '@/services/tracking'
+import type { BalanceCell, DashboardBalanceGridOut, DashboardCategoryRow, ItemType } from '@/services/tracking'
 import { defaultViewState } from '@/lib/tracking-analysis'
 import type { ViewState } from '../types'
+
+/** The 7 seeded system item types, in seed order. `property` carries
+ *  `counts_as_property`; `bond` carries `bond_register`. */
+export function makeItemTypes(): ItemType[] {
+  const rows: Array<[string, string, string[]]> = [
+    ['bank_account', 'Bank account', []],
+    ['property', 'Property', ['counts_as_property']],
+    ['investment_account', 'Investment Account', []],
+    ['tax_saving', 'TaxSaving', []],
+    ['materials', 'Materials', []],
+    ['insurance', 'Insurance', []],
+    ['bond', 'BOND', ['bond_register']],
+  ]
+  return rows.map(([slug, label, capabilities], i) => ({
+    id: `it-${slug}`, slug, label, sortOrder: i,
+    isSystem: true, isArchived: false, capabilities,
+  }))
+}
 
 type Q = 1 | 2 | 3 | 4
 const QUARTERS: Q[] = [1, 2, 3, 4]
@@ -60,13 +78,13 @@ export function makeGrid(): DashboardBalanceGridOut {
       {
         id: 's1', name: 'Bank', orderIndex: 0, subtotal: makeCells(yearsDesc, A_S1),
         items: [
-          { id: 'i1', name: 'Checking', type: 'Bank account', orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_CHECK) },
-          { id: 'i2', name: 'Savings', type: 'Bank account', orderIndex: 1, exclusive: false, cells: makeCells(yearsDesc, A_SAVE) },
+          { id: 'i1', name: 'Checking', typeId: 'it-bank_account', typeSlug: 'bank_account', countsAsProperty: false, type: 'Bank account', orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_CHECK) },
+          { id: 'i2', name: 'Savings', typeId: 'it-bank_account', typeSlug: 'bank_account', countsAsProperty: false, type: 'Bank account', orderIndex: 1, exclusive: false, cells: makeCells(yearsDesc, A_SAVE) },
         ],
       },
       {
         id: 's2', name: 'Realty', orderIndex: 1, subtotal: makeCells(yearsDesc, A_S2),
-        items: [{ id: 'i3', name: 'House', type: 'Property', orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_HOUSE) }],
+        items: [{ id: 'i3', name: 'House', typeId: 'it-property', typeSlug: 'property', countsAsProperty: true, type: 'Property', orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_HOUSE) }],
       },
     ],
   }
@@ -76,8 +94,8 @@ export function makeGrid(): DashboardBalanceGridOut {
       {
         id: 's3', name: 'Other', orderIndex: 0, subtotal: makeCells(yearsDesc, A_S3),
         items: [
-          { id: 'i4', name: 'Gold', type: 'Materials', orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_GOLD) },
-          { id: 'i5', name: 'SideBet', type: 'Investment Account', orderIndex: 1, exclusive: true, cells: makeCells(yearsDesc, A_SIDEBET) },
+          { id: 'i4', name: 'Gold', typeId: 'it-materials', typeSlug: 'materials', countsAsProperty: false, type: 'Materials', orderIndex: 0, exclusive: false, cells: makeCells(yearsDesc, A_GOLD) },
+          { id: 'i5', name: 'SideBet', typeId: 'it-investment_account', typeSlug: 'investment_account', countsAsProperty: false, type: 'Investment Account', orderIndex: 1, exclusive: true, cells: makeCells(yearsDesc, A_SIDEBET) },
         ],
       },
     ],

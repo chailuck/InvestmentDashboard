@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import uuid
 
+from app.models.item_type import SYSTEM_ITEM_TYPE_IDS
+
 PREFIX = "/api/v1/tracking"
 
 
@@ -22,7 +24,7 @@ async def _make_item(client, *, tracking_enabled: bool, name="Item"):
             f"{PREFIX}/sub-categories/{sub_id}/items",
             json={
                 "name": name,
-                "type": "Investment Account",
+                "typeId": SYSTEM_ITEM_TYPE_IDS["Investment Account"],
                 "initialInvestmentTracking": tracking_enabled,
             },
         )

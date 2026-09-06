@@ -35,7 +35,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
 <h1>API Spec — Financial Tracker</h1>
 
 <div class="obj">
-<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1); Update Tracking Lists with read-time balance deltas (Phase 2); a read-only quarterly/yearly balance-grid rollup report (Phase 3); and a full-snapshot export endpoint (Phase 4) used by the Dashboard page's "Email Dashboard" button. Phase 5 (ADR-018) adds an optional <code>note</code> on ledger entries, a <code>profitVsOriginal</code> block on the running-total response, and a per-set "profit vs original investment" rollup endpoint. Phase 7 (ADR-020–ADR-025) adds the <code>BOND</code> tracking-item type, a standalone bond-register resource (5 endpoints) whose <code>status</code> is computed on every read, and optional <code>code</code> / <code>name</code> labels on ledger entries. Served by the independent <code>tracking-backend</code> microservice. All routes are mounted under <code>/api/v1/tracking</code>.
+<strong>Objective:</strong> Full CRUD for the Financial Tracker ("Tracking") feature — Tracking Sets, Categories, Sub-categories, Tracking Items, Initial Investment Ledger entries (Phase 1); Update Tracking Lists with read-time balance deltas (Phase 2); a read-only quarterly/yearly balance-grid rollup report (Phase 3); and a full-snapshot export endpoint (Phase 4) used by the Dashboard page's "Email Dashboard" button. Phase 5 (ADR-018) adds an optional <code>note</code> on ledger entries, a <code>profitVsOriginal</code> block on the running-total response, and a per-set "profit vs original investment" rollup endpoint. Phase 7 (ADR-020–ADR-025) adds the <code>BOND</code> tracking-item type, a standalone bond-register resource (5 endpoints) whose <code>status</code> is computed on every read, and optional <code>code</code> / <code>name</code> labels on ledger entries. <strong>Configurable Item Types (ADR-027)</strong> replaces the closed 7-value <code>type</code> string with an admin-managed <code>ft_item_type</code> registry: a new <code>/tracking/item-types</code> resource (7 endpoints — <code>GET</code> for any tracker user, the rest admin-only), item create/update switch from <code>type</code> to <code>typeId</code>, and item / dashboard / export responses gain an embedded item-type object plus a stable <code>typeSlug</code>. Served by the independent <code>tracking-backend</code> microservice. All routes are mounted under <code>/api/v1/tracking</code>.
 </div>
 
 <div class="tip">
@@ -48,6 +48,7 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
 
 <h4>Authentication</h4>
 <p>All endpoints except <code>/health/*</code> require <code>Authorization: Bearer &lt;access_token&gt;</code>, where the token was issued by the <strong>main backend</strong>'s login endpoint. tracking-backend only verifies the token (shared <code>APP_SECRET_KEY</code>, same Redis blacklist) — it never issues tokens itself. See TECHNICAL.html §2 for the full verification flow.</p>
+<p><em>(Configurable Item Types / ADR-027)</em> The mutating <code>/tracking/item-types</code> routes additionally require an <strong>admin</strong> caller: the <code>require_admin</code> dependency runs the same verify + <code>jti</code> + blacklist path, then requires the signed JWT <code>role</code> claim <code>== "admin"</code> (else <code>403</code>). No <code>users</code>-table lookup — the role is read straight from the token. <code>GET /tracking/item-types</code> is open to any authenticated tracker user.</p>
 
 <h2>Endpoints at a Glance</h2>
 <table>
@@ -77,6 +78,12 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Get one Tracking Item</td></tr>
   <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Partial update of a Tracking Item</td></tr>
   <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/items/{id}</code></td><td>Delete (cascades to ledger entries) (HTTP 204)</td></tr>
+  <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/item-types</code></td><td><em>(ADR-027)</em> List configurable item types — any tracker user; <code>?includeArchived=true</code> to include archived</td></tr>
+  <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/item-types</code></td><td><em>(ADR-027)</em> Create a custom item type — <strong>admin only</strong> (HTTP 201)</td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/item-types/order</code></td><td><em>(ADR-027)</em> Persist a new item-type order (must list every id) — <strong>admin only</strong></td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/item-types/{id}</code></td><td><em>(ADR-027)</em> Edit label / sortOrder / capabilities (presence-aware) — <strong>admin only</strong></td></tr>
+  <tr><td><span class="badge put">PUT</span></td><td><code>/api/v1/tracking/item-types/{id}/archive</code> · <code>/unarchive</code></td><td><em>(ADR-027)</em> Archive / unarchive a type (idempotent) — <strong>admin only</strong></td></tr>
+  <tr><td><span class="badge del">DELETE</span></td><td><code>/api/v1/tracking/item-types/{id}</code></td><td><em>(ADR-027)</em> Delete an unused custom type — <strong>admin only</strong> (HTTP 204)</td></tr>
   <tr><td><span class="badge post">POST</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>Add a ledger entry (HTTP 201) — <em>(Phase 7)</em> accepts optional <code>code</code> / <code>name</code></td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/entries</code></td><td>List ledger entries, chronological — each carries <code>code</code> / <code>name</code> <em>(Phase 7)</em></td></tr>
   <tr><td><span class="badge get">GET</span></td><td><code>/api/v1/tracking/items/{id}/running-total</code></td><td>Ledger entries with a cumulative running total, plus a <code>profitVsOriginal</code> block <em>(Phase 5)</em>; each row carries <code>code</code> / <code>name</code> <em>(Phase 7)</em></td></tr>
@@ -256,7 +263,17 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   "id":                         "e4d5f6a7-...",
   "subCategoryId":              "d3c4e5f6-...",
   "name":                       "SCB Savings Account",
-  "type":                       "Bank account",
+  "typeId":                     "11111111-1111-4111-8111-111111111111",
+  "itemType": {                                       // embedded resolved type (ADR-027)
+    "id":         "11111111-1111-4111-8111-111111111111",
+    "slug":       "bank_account",
+    "label":      "Bank account",
+    "sortOrder":  0,
+    "isSystem":   true,
+    "isArchived": false,
+    "capabilities": []
+  },
+  "type":                       "Bank account",       // DEPRECATED transitional alias = itemType.label
   "initialInvestmentTracking":  true,
   "exclusive":                  false,
   "order":                      1,
@@ -266,21 +283,22 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
   "createdAt":                  "2026-08-23T09:25:00+00:00",
   "updatedAt":                  "2026-08-23T09:25:00+00:00"
 }</code></pre>
-<p><code>type</code> must be one of: <code>Bank account</code>, <code>Property</code>, <code>Investment Account</code>, <code>TaxSaving</code>, <code>Materials</code>, <code>Insurance</code>, <code>BOND</code> <em>(Phase 7)</em>. An item saved as <code>BOND</code> gains a bond register — see <strong>Bonds (Phase 7)</strong> below.</p>
+<p><em>(Configurable Item Types / ADR-027)</em> An item's type is now a row reference. The response carries <code>typeId</code> (UUID) and the embedded <code>itemType</code> object (see <strong>Item Types</strong> below for its shape). The flat <code>type</code> string is a <strong>deprecated transitional alias</strong> equal to <code>itemType.label</code> — kept for un-migrated clients until a follow-up release drops it; prefer <code>itemType.label</code>. Check <code>itemType.capabilities</code> (not the label) for behaviour: an item whose type has the <code>bond_register</code> capability (the built-in BOND type) gains a bond register — see <strong>Bonds (Phase 7)</strong> below.</p>
 
 <h3>POST /api/v1/tracking/sub-categories/{subCategoryId}/items</h3>
-<pre><code>// Request — name and type are required; the rest default as shown
+<pre><code>// Request — name and typeId are required; the rest default as shown
 {
   "name":                       "SCB Savings Account",
-  "type":                       "Bank account",
+  "typeId":                     "11111111-1111-4111-8111-111111111111",
   "initialInvestmentTracking":  false,
   "exclusive":                  false
 }
 
-// Response 201 — full item object</code></pre>
+// Response 201 — full item object (shape above)</code></pre>
 <div class="err">
-<strong>404 Not Found</strong> — parent sub-category not found.<br>
-<strong>422 Unprocessable Entity</strong> — <code>type</code> is not one of the 7 allowed values.
+<strong>404 Not Found</strong> — parent sub-category not found; OR <code>typeId</code> does not resolve to an item type <em>(ADR-027)</em>.<br>
+<strong>400 Bad Request</strong> — <code>typeId</code> resolves to an <strong>archived</strong> item type <em>(ADR-027)</em>: <code>{"detail": "Cannot assign an archived item type to a new item"}</code>.<br>
+<strong>422 Unprocessable Entity</strong> — <code>name</code> missing / blank / too long; <code>typeId</code> missing or not a UUID.
 </div>
 
 <h3>GET /api/v1/tracking/sub-categories/{subCategoryId}/items</h3>
@@ -295,20 +313,127 @@ hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0}
 <h3>PUT /api/v1/tracking/items/{id}</h3>
 <pre><code>// Request — every field optional; only provided fields are updated
 {
+  "typeId":                    "22222222-2222-4222-8222-222222222222",
   "initialInvestmentTracking": true,
   "accountName":               "xxx-x-xxxxx-x",
   "remark":                    "Emergency fund"
 }
 
-// Response 200 — full updated item object</code></pre>
+// Response 200 — full updated item object (embedded itemType reflects the switch)</code></pre>
+<p><em>(Configurable Item Types / ADR-027)</em> The type field is <code>typeId</code> (not <code>type</code>). Omitting it, or sending the item's current <code>typeId</code> unchanged, leaves the type as-is — <strong>including when that current type is archived</strong> (an existing archived assignment is kept). Sending a <em>different</em> <code>typeId</code> that is archived is rejected.</p>
 <div class="err">
-<strong>404 Not Found</strong> — item not found.<br>
-<strong>422 Unprocessable Entity</strong> — <code>type</code> provided but not one of the 6 allowed values.
+<strong>404 Not Found</strong> — item not found; OR a new <code>typeId</code> does not resolve to an item type <em>(ADR-027)</em>.<br>
+<strong>400 Bad Request</strong> — switching to an <strong>archived</strong> item type <em>(ADR-027)</em>: <code>{"detail": "Cannot switch an item to an archived item type"}</code>.<br>
+<strong>422 Unprocessable Entity</strong> — a provided field fails validation (e.g. <code>typeId</code> not a UUID, blank <code>name</code>).
 </div>
 
 <h3>DELETE /api/v1/tracking/items/{id}</h3>
 <p>Cascades to every ledger entry recorded against this item. HTTP 204.</p>
 <div class="err"><strong>404 Not Found</strong> — item not found.</div>
+
+<hr>
+
+<h2>Item Types (Configurable Item Types / ADR-027)</h2>
+
+<div class="obj">
+The admin-managed registry that replaces the old closed 7-value <code>type</code> enum. Implemented in <code>app/api/v1/endpoints/item_types.py</code>; model <code>app/models/item_type.py</code>; schemas <code>app/schemas/item_type.py</code>; the fixed capability set is <code>app/services/item_type_capabilities.py</code>. <code>GET</code> is any authenticated tracker user; every mutating route requires <code>require_admin</code> (signed JWT <code>role == "admin"</code>, no <code>users</code>-table access). Error bodies follow this service's <code>{"detail": "..."}</code> convention; the status codes are the contract. Behaviour: <a href="../18-financial-tracker/FUNCTIONAL.html">FUNCTIONAL.html</a> §17; design: <a href="../18-financial-tracker/TECHNICAL.html">TECHNICAL.html</a> §17 and <a href="../20-item-type-config/DESIGN.html">20-item-type-config/DESIGN.html</a>.
+</div>
+
+<h4>ItemType response shape</h4>
+<pre><code>{
+  "id":         "22222222-2222-4222-8222-222222222222",
+  "slug":       "property",          // immutable, code-facing key — never editable
+  "label":      "Property",          // admin-editable human name
+  "sortOrder":  1,
+  "isSystem":   true,                // built-in; archive-only, capabilities locked
+  "isArchived": false,
+  "capabilities": ["counts_as_property"],   // subset of { counts_as_property, bond_register }
+  "itemCount":  12,                  // ONLY on GET /item-types; null/absent elsewhere
+  "createdAt":  "2026-09-06T12:00:00+00:00",
+  "updatedAt":  "2026-09-06T12:00:00+00:00"
+}</code></pre>
+<ul>
+  <li><strong>Capabilities</strong> are a fixed, code-owned set of exactly two keys. <code>counts_as_property</code> — items of this type feed <code>propertyBreakdown.propertyTotal</code> and the Analysis Property lens; admin-assignable to a custom type, locked-on for the built-in <code>Property</code> type. <code>bond_register</code> — unlocks the bond register (see <strong>Bonds</strong>); <strong>system-only, never grantable via any endpoint</strong> (rejected with 422).</li>
+  <li><code>slug</code> is generated once from the label at create (<code>[a-z0-9_]</code>, <code>_2</code>/<code>_3</code>… on collision) and is <strong>never</strong> accepted or changed on any write — sending <code>slug</code> in a create/update body is a <code>422</code>.</li>
+</ul>
+
+<h3>GET /api/v1/tracking/item-types</h3>
+<p>Any authenticated tracker user. Returns the item-type list ordered by <code>sortOrder</code> asc, then <code>label</code> asc. Query: <code>?includeArchived=true</code> (default <code>false</code>) to include archived types — used by the admin screen and by the item-detail picker to resolve an item's own archived type. Response header <code>Cache-Control: private, max-age=60</code>; the client also caches it under React-Query key <code>['tracking-item-types']</code>.</p>
+<pre><code>// Response 200 — ItemType[]
+[
+  { "id": "11111111-...", "slug": "bank_account", "label": "Bank account", "sortOrder": 0,
+    "isSystem": true, "isArchived": false, "capabilities": [], "itemCount": 3,
+    "createdAt": "...", "updatedAt": "..." },
+  { "id": "22222222-...", "slug": "property", "label": "Property", "sortOrder": 1,
+    "isSystem": true, "isArchived": false, "capabilities": ["counts_as_property"], "itemCount": 12,
+    "createdAt": "...", "updatedAt": "..." }
+  // ... bond (slug "bond", capabilities ["bond_register"]), etc.
+]</code></pre>
+
+<h3>POST /api/v1/tracking/item-types</h3>
+<p><strong>Admin only.</strong> Creates a custom type (<code>isSystem: false</code>).</p>
+<pre><code>// Request
+{
+  "label":        "Crypto",          // required, 1..100 chars, trimmed, unique case-/trim-insensitively
+  "sortOrder":    7,                 // optional — defaults to (current max + 1)
+  "capabilities": ["counts_as_property"]   // optional — subset of the admin-assignable set
+}
+
+// Response 201 — ItemType (itemCount omitted)
+{ "id": "88888888-...", "slug": "crypto", "label": "Crypto", "sortOrder": 7,
+  "isSystem": false, "isArchived": false, "capabilities": ["counts_as_property"],
+  "createdAt": "...", "updatedAt": "..." }</code></pre>
+<div class="err">
+<strong>403 Forbidden</strong> — caller is not an admin: <code>{"detail": "Admin role required"}</code>.<br>
+<strong>409 Conflict</strong> — a type with this label already exists (case-/trim-insensitive): <code>{"detail": "An item type named 'Crypto' already exists"}</code>.<br>
+<strong>422 Unprocessable Entity</strong> — blank / over-100-char <code>label</code>; a <code>capabilities</code> entry that is unknown or is <code>bond_register</code> (SYSTEM_ONLY); any unknown body key including <code>slug</code>.
+</div>
+
+<h3>PUT /api/v1/tracking/item-types/{id}</h3>
+<p><strong>Admin only.</strong> Presence-aware — only keys present in the body are applied.</p>
+<pre><code>// Request — all optional
+{ "label": "Real Estate", "sortOrder": 1, "capabilities": ["counts_as_property"] }
+
+// Response 200 — the updated ItemType</code></pre>
+<ul>
+  <li>Allowed on a system row: <code>label</code>, <code>sortOrder</code>. <strong>Not</strong> allowed on a system row: <code>capabilities</code> → <code>422</code> ("system type capabilities are locked and cannot be edited").</li>
+  <li>Any <code>capabilities</code> entry not in the admin-assignable set (i.e. <code>bond_register</code> or an unknown key) → <code>422</code>, for every row.</li>
+  <li>A <code>label</code> change also updates the denormalised <code>ft_tracking_item.type</code> for every item of this type, in the same transaction (transition window).</li>
+</ul>
+<div class="err">
+<strong>403 Forbidden</strong> — not an admin.<br>
+<strong>404 Not Found</strong> — <code>{"detail": "Item type not found"}</code>.<br>
+<strong>409 Conflict</strong> — the new label collides with another type.<br>
+<strong>422 Unprocessable Entity</strong> — <code>capabilities</code> on a system row; a non-admin-assignable / unknown capability key; <code>slug</code> in the body; blank / over-length label.
+</div>
+
+<h3>PUT /api/v1/tracking/item-types/order</h3>
+<p><strong>Admin only.</strong> Bulk reorder — the body must list <strong>every</strong> item-type id exactly once (the app-wide reorder shape).</p>
+<pre><code>// Request
+{ "items": [ { "id": "11111111-...", "order": 0 }, { "id": "22222222-...", "order": 1 }, ... ] }
+
+// Response 200
+{ "status": "ok" }</code></pre>
+<div class="err">
+<strong>400 Bad Request</strong> — the id set is not exactly the full set: <code>{"detail": "reorder must list every item type id exactly once (N types exist)"}</code>.<br>
+<strong>403 Forbidden</strong> — not an admin.
+</div>
+
+<h3>PUT /api/v1/tracking/item-types/{id}/archive &nbsp;·&nbsp; PUT /api/v1/tracking/item-types/{id}/unarchive</h3>
+<p><strong>Admin only.</strong> Idempotent (archiving an already-archived type, or unarchiving an active one, is a no-op <code>200</code>). Allowed on system rows. Archiving hides the type from the picker for new / reassigned items; existing items keep it and every total is unaffected. Response <code>200</code> — the (un)archived <code>ItemType</code>.</p>
+<div class="err">
+<strong>403 Forbidden</strong> — not an admin.<br>
+<strong>404 Not Found</strong> — type id not found.<br>
+<strong>409 Conflict</strong> — archiving the <em>last</em> active type: <code>{"detail": "at least one active item type must remain"}</code>.
+</div>
+
+<h3>DELETE /api/v1/tracking/item-types/{id}</h3>
+<p><strong>Admin only.</strong> Permanently deletes an <em>unused custom</em> type; its capability rows cascade. HTTP <code>204</code>.</p>
+<div class="err">
+<strong>403 Forbidden</strong> — not an admin.<br>
+<strong>404 Not Found</strong> — type id not found.<br>
+<strong>409 Conflict</strong> — the type is a system type (<code>{"detail": "system types cannot be deleted; archive instead"}</code>) OR still assigned to one or more items (<code>{"detail": "N item(s) still use this type; archive instead"}</code> — the FK <code>ON DELETE RESTRICT</code> is the backstop).
+</div>
 
 <hr>
 
@@ -412,7 +537,7 @@ Ledger endpoints (<code>POST/GET .../entries</code>, <code>GET .../running-total
 <h2>Bonds (Phase 7)</h2>
 
 <div class="obj">
-A standalone register of individual bond holdings, each attached to a Tracking Item of type <code>BOND</code>. Implemented in <code>app/api/v1/endpoints/bonds.py</code>; schemas in <code>app/schemas/bond.py</code>; status logic in <code>app/services/bond_status.py</code>. The router carries <strong>no prefix</strong> — its routes span <code>/items/{itemId}/bonds</code> (collection under an item) and <code>/bonds/{bondId}</code> (single bond by id), the same shape the ledger feature uses across <code>tracking_items.py</code> + <code>entries.py</code>. <strong>Standalone by design</strong> (ADR-024): bonds do not appear in the Dashboard balance grid, the Update Tracking Lists, the original-investment rollup, the export snapshot, or the Analysis view. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §15 and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §15 (ADR-020–ADR-025).
+A standalone register of individual bond holdings, each attached to a Tracking Item whose type carries the <code>bond_register</code> capability <em>(ADR-027 — the built-in BOND type; the gate is capability-based, not a label match, so a renamed bond type still works)</em>. Implemented in <code>app/api/v1/endpoints/bonds.py</code>; schemas in <code>app/schemas/bond.py</code>; status logic in <code>app/services/bond_status.py</code>. The router carries <strong>no prefix</strong> — its routes span <code>/items/{itemId}/bonds</code> (collection under an item) and <code>/bonds/{bondId}</code> (single bond by id), the same shape the ledger feature uses across <code>tracking_items.py</code> + <code>entries.py</code>. <strong>Standalone by design</strong> (ADR-024): bonds do not appear in the Dashboard balance grid, the Update Tracking Lists, the original-investment rollup, the export snapshot, or the Analysis view. See <a href="../18-financial-tracker/FUNCTIONAL.html">18-financial-tracker/FUNCTIONAL.html</a> §15 and <a href="../18-financial-tracker/TECHNICAL.html">18-financial-tracker/TECHNICAL.html</a> §15 (ADR-020–ADR-025).
 </div>
 
 <h4>Wire-format conventions</h4>
@@ -474,7 +599,7 @@ A standalone register of individual bond holdings, each attached to a Tracking I
   }
 ]</code></pre>
 <div class="err">
-<strong>400 Bad Request</strong> — the item exists and is owned by the caller, but its <code>type</code> is not <code>BOND</code>: <code>{"detail": "Tracking item is of type '&lt;actual&gt;'; bonds can only be registered against an item of type 'BOND'"}</code><br>
+<strong>400 Bad Request</strong> — the item exists and is owned by the caller, but its type does not carry the <code>bond_register</code> capability <em>(ADR-027 — previously "type is not <code>BOND</code>"; the check is now capability-based, so a renamed bond type still works)</em>: <code>{"detail": "This tracking item's type does not provide a bond register; bonds can only be registered against an item whose type has the bond-register capability"}</code>. Still raised <strong>after</strong> the ownership check, so a cross-user id is <code>404</code>, never <code>400</code>.<br>
 <strong>404 Not Found</strong> — item does not exist or belongs to another user (bare 404, never 403).<br>
 <strong>401</strong> — missing / invalid / expired token.
 </div>
@@ -492,7 +617,7 @@ A standalone register of individual bond holdings, each attached to a Tracking I
 
 // Response 201 — BondOut (status + years computed from the dates; interestRate echoed as "3.2500")</code></pre>
 <div class="err">
-<strong>400 Bad Request</strong> — item's <code>type</code> is not <code>BOND</code> (same message as the GET above).<br>
+<strong>400 Bad Request</strong> — item's type does not carry the <code>bond_register</code> capability (same message as the GET above; <em>ADR-027</em>).<br>
 <strong>404 Not Found</strong> — item does not exist or is not owned by the caller.<br>
 <strong>422 Unprocessable Entity</strong> — <code>code</code> blank / whitespace-only or &gt; 100 chars; <code>amount</code> negative; <code>amount</code> missing; <code>startDate</code> / <code>expiredDate</code> not a valid ISO <code>YYYY-MM-DD</code> date; <code>issuer</code> &gt; 200 chars; <em>(ADR-026)</em> <code>interestRate</code> &lt; 0, <code>interestRate</code> &gt; 100, or <code>interestRate</code> non-numeric / non-finite (<code>0</code> and <code>100</code> are valid).<br>
 <strong>401</strong> — missing / invalid / expired token.
@@ -693,7 +818,8 @@ A single read-only report endpoint that rolls up every balance ever recorded via
     <tr><td><code>cells[].hasPreviousData</code></td><td>boolean</td><td><code>true</code> if a nearest-earlier populated quarter was found for the delta comparison — independent of <code>hasData</code> (a blank current quarter can still have <code>hasPreviousData: true</code> from an earlier quarter, though in that case <code>balance</code>/<code>deltaAmount</code> are still <code>null</code> since there is nothing to diff for a blank slot).</td></tr>
     <tr><td><code>categories[].subtotal</code>, <code>subCategories[].subtotal</code></td><td>Cell[]</td><td>Sums that group's non-Exclusive items for each quarter; populated as soon as at least one contributing item has data that quarter (never blanked just because a sibling has no history).</td></tr>
     <tr><td><code>grandTotal</code></td><td>Cell[]</td><td>Sums every non-Exclusive item in the whole tracking set.</td></tr>
-    <tr><td><code>propertyBreakdown.propertyTotal</code> / <code>.nonPropertyTotal</code></td><td>Cell[]</td><td>Splits <code>grandTotal</code> by whether the item's <code>type</code> is <code>"Property"</code>; the two always sum to <code>grandTotal</code> for any populated quarter.</td></tr>
+    <tr><td><code>...items[].typeId</code> / <code>typeSlug</code> / <code>countsAsProperty</code></td><td>UUID / string / boolean</td><td><em>(Configurable Item Types / ADR-027)</em> The item's type as a row reference (<code>typeId</code>), its stable code key (<code>typeSlug</code>), and <code>countsAsProperty</code> = whether that type has the <code>counts_as_property</code> capability. <code>type</code> (the label) is still present as a deprecated transitional field.</td></tr>
+    <tr><td><code>propertyBreakdown.propertyTotal</code> / <code>.nonPropertyTotal</code></td><td>Cell[]</td><td>Splits <code>grandTotal</code> by whether the item's type has the <code>counts_as_property</code> capability <em>(ADR-027 — was "type == 'Property'"; byte-identical for the seeded types)</em>; the two always sum to <code>grandTotal</code> for any populated quarter. <strong>Field names unchanged.</strong></td></tr>
   </tbody>
 </table>
 
@@ -712,7 +838,9 @@ A single read-only report endpoint that rolls up every balance ever recorded via
           "id": "d3c4e5f6-...", "name": "Current Assets", "orderIndex": 0,
           "items": [
             {
-              "id": "e4d5f6a7-...", "name": "SCB Savings Account", "type": "Bank account",
+              "id": "e4d5f6a7-...", "name": "SCB Savings Account",
+              "typeId": "11111111-...", "typeSlug": "bank_account", "countsAsProperty": false,
+              "type": "Bank account",
               "orderIndex": 0, "exclusive": false,
               "cells": [
                 { "year": 2026, "quarter": 1, "balance": 110000.00, "deltaAmount": 5000.00, "deltaPercent": 4.76, "hasData": true, "hasPreviousData": true },
@@ -734,8 +862,8 @@ A single read-only report endpoint that rolls up every balance ever recorded via
   ],
   "grandTotal": [ /* same 8-cell shape, whole tracking set */ ],
   "propertyBreakdown": {
-    "propertyTotal": [ /* same 8-cell shape, type == "Property" only */ ],
-    "nonPropertyTotal": [ /* same 8-cell shape, type != "Property" only */ ]
+    "propertyTotal": [ /* same 8-cell shape, items whose type has counts_as_property */ ],
+    "nonPropertyTotal": [ /* same 8-cell shape, items whose type lacks it */ ]
   }
 }</code></pre>
 <div class="obj">
@@ -840,7 +968,7 @@ A single read-only endpoint returning a full, restorable snapshot of one Trackin
     <tr><td><code>trackingSet</code></td><td>object</td><td><code>{id, name, description, createdAt, updatedAt}</code>. <strong>No <code>userId</code> field</strong> — deliberately omitted for restore-safety (see TECHNICAL.html §12.1).</td></tr>
     <tr><td><code>categories[]</code></td><td>array</td><td>Flat array; each row includes <code>trackingSetId</code>, <code>orderIndex</code>, and every other raw <code>ft_category</code> column.</td></tr>
     <tr><td><code>subCategories[]</code></td><td>array</td><td>Flat array; each row includes <code>categoryId</code>, <code>orderIndex</code>, and every other raw <code>ft_sub_category</code> column.</td></tr>
-    <tr><td><code>trackingItems[]</code></td><td>array</td><td>Flat array; each row includes <code>subCategoryId</code>, <code>type</code>, <code>initialInvestmentTracking</code>, <code>exclusive</code>, <code>orderIndex</code>, and every other raw <code>ft_tracking_item</code> column.</td></tr>
+    <tr><td><code>trackingItems[]</code></td><td>array</td><td>Flat array; each row includes <code>subCategoryId</code>, <code>initialInvestmentTracking</code>, <code>exclusive</code>, <code>orderIndex</code>, and every other raw <code>ft_tracking_item</code> column. <em>(Configurable Item Types / ADR-027)</em> each row emits BOTH <code>typeSlug</code> (stable machine key — the join key on re-import) and <code>typeLabel</code> (current display label); <code>type</code> is kept as a <strong>deprecated alias</strong> (= label) for the transition window and dropped with the column. <code>ft_bond</code> is still excluded from this export (ADR-024).</td></tr>
     <tr><td><code>updateTrackingLists[]</code></td><td>array</td><td>Every Phase 2 snapshot header for this set, verbatim (<code>transactionDate</code>, <code>quarter</code>, <code>year</code>, etc.).</td></tr>
     <tr><td><code>updateTrackingListBalances[]</code></td><td>array</td><td>Every Phase 2 per-item balance row for this set's lists, verbatim.</td></tr>
     <tr><td><code>initialInvestmentEntries[]</code></td><td>array</td><td>Every Phase 1 ledger entry for any item in this set, verbatim — including the <em>(Phase 5)</em> <code>note</code> field (<code>null</code> for entries with no note).</td></tr>
@@ -863,7 +991,7 @@ A single read-only endpoint returning a full, restorable snapshot of one Trackin
     { "id": "d3c4e5f6-...", "categoryId": "c2b3d4e5-...", "name": "Current Assets", "description": null, "orderIndex": 0, "createdAt": "...", "updatedAt": "..." }
   ],
   "trackingItems": [
-    { "id": "e4d5f6a7-...", "subCategoryId": "d3c4e5f6-...", "name": "SCB Savings Account", "type": "Bank account", "initialInvestmentTracking": false, "exclusive": false, "orderIndex": 0, "description": null, "accountName": null, "remark": null, "createdAt": "...", "updatedAt": "..." }
+    { "id": "e4d5f6a7-...", "subCategoryId": "d3c4e5f6-...", "name": "SCB Savings Account", "typeSlug": "bank_account", "typeLabel": "Bank account", "type": "Bank account", "initialInvestmentTracking": false, "exclusive": false, "orderIndex": 0, "description": null, "accountName": null, "remark": null, "createdAt": "...", "updatedAt": "..." }
   ],
   "updateTrackingLists": [
     { "id": "f5e6a7b8-...", "trackingSetId": "a1b2c3d4-...", "transactionDate": "2026-06-30", "quarter": 2, "year": 2026, "createdAt": "...", "updatedAt": "..." }
@@ -882,12 +1010,13 @@ A single read-only endpoint returning a full, restorable snapshot of one Trackin
 <h2>Common Error Handling</h2>
 <table>
   <tr><th>Status</th><th>Scenario</th><th>Detail</th></tr>
-  <tr><td>400</td><td>Reorder ids not belonging to the parent; ledger action on an item with <code>initialInvestmentTracking=false</code>; Update Tracking List balance upsert containing a <code>trackingItemId</code> outside the list's own tracking set; <em>(Phase 7)</em> bond create / list against a Tracking Item whose <code>type</code> is not <code>BOND</code></td><td>Specific message per case</td></tr>
+  <tr><td>400</td><td>Reorder ids not belonging to the parent; ledger action on an item with <code>initialInvestmentTracking=false</code>; Update Tracking List balance upsert containing a <code>trackingItemId</code> outside the list's own tracking set; <em>(Phase 7)</em> bond create / list against a Tracking Item whose type lacks the <code>bond_register</code> capability <em>(ADR-027)</em>; <em>(ADR-027)</em> item create against an archived <code>typeId</code>, item update switching to an archived <code>typeId</code>, or a <code>PUT /item-types/order</code> that does not list every id</td><td>Specific message per case</td></tr>
   <tr><td>401</td><td>Missing/invalid/expired Bearer token, missing <code>jti</code> claim, or token revoked (blacklisted)</td><td>"Missing authentication credentials" / "Invalid token: ..." / "Token missing jti claim" / "Token has been revoked"</td></tr>
-  <tr><td>404</td><td>Resource UUID not found, or belongs to another user (ownership check never distinguishes the two — see TECHNICAL.html §5.1)</td><td>"&lt;Resource&gt; not found"</td></tr>
-  <tr><td>409</td><td>Duplicate Tracking Set name for the same user</td><td>"A tracking set with this name already exists"</td></tr>
-  <tr><td>422</td><td>Missing required field, wrong type, invalid <code>type</code> enum value, zero-amount ledger entry, ledger <code>note</code> longer than 500 chars, or an explicit <code>null</code> for a ledger entry's <code>amount</code> / <code>entryDate</code> on <code>PUT /entries/{id}</code> <em>(Phase 5)</em>; <em>(Phase 7)</em> ledger <code>code</code> / <code>name</code> longer than 100 chars; blank / over-length bond <code>code</code>, negative or missing bond <code>amount</code>, over-length bond <code>issuer</code>, non-ISO bond date, or an explicit <code>null</code> for a bond's <code>code</code> / <code>amount</code> on <code>PUT /bonds/{id}</code>; <em>(ADR-026)</em> bond <code>interestRate</code> &lt; 0, &gt; 100, or non-numeric / non-finite on <code>POST /items/{id}/bonds</code> or <code>PUT /bonds/{id}</code></td><td>Pydantic validation error array</td></tr>
-  <tr><td>503</td><td>Redis unreachable while checking the token blacklist (fails closed, not open)</td><td>"Authentication service temporarily unavailable"</td></tr>
+  <tr><td>403</td><td><em>(Configurable Item Types / ADR-027)</em> A non-admin caller on any mutating <code>/tracking/item-types</code> route (create / update / reorder / archive / unarchive / delete)</td><td>"Admin role required"</td></tr>
+  <tr><td>404</td><td>Resource UUID not found, or belongs to another user (ownership check never distinguishes the two — see TECHNICAL.html §5.1); <em>(ADR-027)</em> a <code>typeId</code> on item create/update that does not resolve to an item type ("Item type not found")</td><td>"&lt;Resource&gt; not found"</td></tr>
+  <tr><td>409</td><td>Duplicate Tracking Set name for the same user; <em>(ADR-027)</em> duplicate item-type label (case-/trim-insensitive); deleting a system item type or one still in use; archiving the last active item type</td><td>"A tracking set with this name already exists" / "An item type named '…' already exists" / "system types cannot be deleted; archive instead" / "N item(s) still use this type; archive instead" / "at least one active item type must remain"</td></tr>
+  <tr><td>422</td><td>Missing required field, wrong type, zero-amount ledger entry, ledger <code>note</code> longer than 500 chars, or an explicit <code>null</code> for a ledger entry's <code>amount</code> / <code>entryDate</code> on <code>PUT /entries/{id}</code> <em>(Phase 5)</em>; <em>(Phase 7)</em> ledger <code>code</code> / <code>name</code> longer than 100 chars; blank / over-length bond <code>code</code>, negative or missing bond <code>amount</code>, over-length bond <code>issuer</code>, non-ISO bond date, or an explicit <code>null</code> for a bond's <code>code</code> / <code>amount</code> on <code>PUT /bonds/{id}</code>; <em>(ADR-026)</em> bond <code>interestRate</code> &lt; 0, &gt; 100, or non-numeric / non-finite on <code>POST /items/{id}/bonds</code> or <code>PUT /bonds/{id}</code>; <em>(ADR-027)</em> item <code>typeId</code> missing or not a UUID; blank / over-100-char item-type <code>label</code>; a <code>capabilities</code> entry that is unknown or is <code>bond_register</code> (SYSTEM_ONLY); <code>capabilities</code> sent for a system item type; <code>slug</code> (or any unknown key) in an item-type create/update body</td><td>Pydantic validation error array, or a specific <code>{"detail": "…"}</code> for the ADR-027 capability / system-row cases</td></tr>
+  <tr><td>503</td><td>Redis unreachable while checking the token blacklist (fails closed, not open) — including the <code>require_admin</code> path <em>(ADR-027)</em></td><td>"Authentication service temporarily unavailable"</td></tr>
 </table>
 
 </body>

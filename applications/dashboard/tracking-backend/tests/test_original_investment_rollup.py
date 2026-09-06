@@ -17,6 +17,8 @@ from decimal import Decimal
 
 from sqlalchemy import event
 
+from app.models.item_type import SYSTEM_ITEM_TYPE_IDS
+
 PREFIX = "/api/v1/tracking"
 
 
@@ -69,7 +71,7 @@ async def _make_item(
         f"{PREFIX}/sub-categories/{sub_id}/items",
         json={
             "name": name,
-            "type": item_type,
+            "typeId": SYSTEM_ITEM_TYPE_IDS[item_type],
             "initialInvestmentTracking": flag,
             "exclusive": exclusive,
         },
@@ -284,17 +286,14 @@ async def test_nonexistent_set_returns_404(auth_client):
 
 
 async def test_rollup_endpoint_issues_fixed_query_count(auth_client, engine):
-    """Fully-populated set. Expected SELECT budget = 8:
+    """Fully-populated set. Expected SELECT budget = 10:
       1  ownership check (_get_set_or_404)
       +5 get_balance_grid  (lists, balances, categories, sub-categories, items)
+      +2 ItemTypeRegistry  (all ft_item_type rows + all capability rows) — ADR-027,
+         a FIXED pair regardless of item count, never a per-item query
       +1 Query A  (in-scope tracking-item ids)
       +1 Query B  (all entries for those ids, one shot)
     No query is issued inside any per-item / per-slot loop.
-
-    NOTE: ADR-018 wrote this budget as "9 (1 ownership + 6 grid + A + B)";
-    that counted the caller's ownership check twice (once on its own, once
-    inside the grid docstring's "6"). get_balance_grid itself issues 5
-    SELECTs, so the real end-to-end figure is 8.
     """
     set_id = await _make_set(auth_client)
     sub_id = await _current_assets_sub_id(auth_client, set_id)
@@ -310,7 +309,7 @@ async def test_rollup_endpoint_issues_fixed_query_count(auth_client, engine):
         resp = await auth_client.get(f"{PREFIX}/sets/{set_id}/dashboard/original-investment")
         assert resp.status_code == 200
 
-    assert counter["n"] == 8, f"expected 8 SELECTs, issued {counter['n']}"
+    assert counter["n"] == 10, f"expected 10 SELECTs, issued {counter['n']}"
 
 
 async def test_rollup_query_count_does_not_grow_with_item_count(auth_client, engine):
@@ -327,4 +326,4 @@ async def test_rollup_query_count_does_not_grow_with_item_count(auth_client, eng
         resp = await auth_client.get(f"{PREFIX}/sets/{set_id}/dashboard/original-investment")
         assert resp.status_code == 200
 
-    assert counter["n"] == 8, f"expected 8 SELECTs regardless of item count, issued {counter['n']}"
+    assert counter["n"] == 10, f"expected 10 SELECTs regardless of item count, issued {counter['n']}"

@@ -57,6 +57,7 @@ from app.schemas.export import (
     UpdateTrackingListBalanceExport,
     UpdateTrackingListExport,
 )
+from app.services.item_type_registry import ItemTypeRegistry
 
 router = APIRouter(tags=["Export"])
 
@@ -100,6 +101,29 @@ async def export_tracking_set(set_id: uuid.UUID, user_id: UserId, db: DB) -> Tra
         tracking_items = list(tracking_items_result.scalars().all())
     tracking_item_ids = [i.id for i in tracking_items]
 
+    registry = await ItemTypeRegistry.create(db)
+
+    def _item_export(i: TrackingItem) -> TrackingItemExport:
+        rt = registry.get(i.type_id)
+        slug = rt.slug if rt is not None else ""
+        label = rt.label if rt is not None else i.type
+        return TrackingItemExport(
+            id=i.id,
+            sub_category_id=i.sub_category_id,
+            name=i.name,
+            type_slug=slug,
+            type_label=label,
+            type=label,
+            initial_investment_tracking=i.initial_investment_tracking,
+            exclusive=i.exclusive,
+            order_index=i.order_index,
+            description=i.description,
+            account_name=i.account_name,
+            remark=i.remark,
+            created_at=i.created_at,
+            updated_at=i.updated_at,
+        )
+
     update_tracking_lists_result = await db.execute(
         select(UpdateTrackingList)
         .where(
@@ -139,7 +163,7 @@ async def export_tracking_set(set_id: uuid.UUID, user_id: UserId, db: DB) -> Tra
         tracking_set=TrackingSetExport.model_validate(tracking_set),
         categories=[CategoryExport.model_validate(c) for c in categories],
         sub_categories=[SubCategoryExport.model_validate(s) for s in sub_categories],
-        tracking_items=[TrackingItemExport.model_validate(i) for i in tracking_items],
+        tracking_items=[_item_export(i) for i in tracking_items],
         update_tracking_lists=[
             UpdateTrackingListExport.model_validate(u) for u in update_tracking_lists
         ],

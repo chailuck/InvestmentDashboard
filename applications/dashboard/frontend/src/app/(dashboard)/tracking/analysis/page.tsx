@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Loader2, AlertCircle, Info } from 'lucide-react'
 import Link from 'next/link'
 import { trackingService, type DashboardBalanceGridOut } from '@/services/tracking'
+import { useItemTypes } from '@/hooks/useItemTypes'
 import {
   buildScopedGrid,
   buildStatRow,
@@ -133,9 +134,20 @@ function AnalysisPageInner() {
     [patch, viewState.granularity, viewState.comparison.mode],
   )
 
+  // Item-type list — feeds the `itemType` group-by buckets and the rename-aware
+  // single-type note. Archived types are included so an existing item's archived
+  // type still resolves to a label. Cached ~5 min; refetched on admin edits.
+  const { data: itemTypes = [] } = useItemTypes(true)
+
   // ── Derivations ──────────────────────────────────────────────────────────
-  const chartModel = useMemo(() => (grid ? deriveChartModel(grid, viewState) : null), [grid, viewState])
-  const scoped = useMemo(() => (grid ? buildScopedGrid(grid, viewState) : null), [grid, viewState])
+  const chartModel = useMemo(
+    () => (grid ? deriveChartModel(grid, viewState, itemTypes) : null),
+    [grid, viewState, itemTypes],
+  )
+  const scoped = useMemo(
+    () => (grid ? buildScopedGrid(grid, viewState, itemTypes) : null),
+    [grid, viewState, itemTypes],
+  )
   const statRow = useMemo(
     () => (chartModel && chartModel.empty === null ? buildStatRow(chartModel.axis, chartModel.aggregate.balance) : null),
     [chartModel],

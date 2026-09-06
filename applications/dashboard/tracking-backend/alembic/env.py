@@ -29,6 +29,7 @@ from app.models.sub_category import SubCategory  # noqa: F401
 from app.models.tracking_item import TrackingItem  # noqa: F401
 from app.models.initial_investment_entry import InitialInvestmentEntry  # noqa: F401
 from app.models.bond import Bond  # noqa: F401
+from app.models.item_type import ItemType, ItemTypeCapability  # noqa: F401
 
 # ── Alembic Config object ─────────────────────────────────────────────────────
 config = context.config

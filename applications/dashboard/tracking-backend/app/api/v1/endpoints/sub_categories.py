@@ -8,15 +8,18 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import get_current_user_id
 from app.core.logging import get_logger
 from app.database.session import get_db
+from app.models.item_type import ItemType
 from app.models.sub_category import SubCategory
 from app.models.tracking_item import TrackingItem
 from app.schemas.category import ReorderRequest
 from app.schemas.sub_category import SubCategoryOut, SubCategoryUpdate
 from app.schemas.tracking_item import TrackingItemCreate, TrackingItemOut
+from app.services.item_type_registry import ItemTypeRegistry
 
 router = APIRouter(prefix="/sub-categories", tags=["Sub-Categories"])
 _log = get_logger("api.sub_categories")
@@ -71,12 +74,31 @@ async def delete_sub_category(sub_category_id: uuid.UUID, user_id: UserId, db: D
 
 # ── Nested: tracking items under a sub-category ─────────────────────────────
 
+async def _load_item_out(item_id: uuid.UUID, db: AsyncSession) -> TrackingItem:
+    """Re-fetch an item with its `item_type` + capability rows eager-loaded so
+    `TrackingItemOut` can embed `itemType` without an async lazy-load."""
+    return (
+        await db.execute(
+            select(TrackingItem)
+            .options(selectinload(TrackingItem.item_type).selectinload(ItemType.capabilities))
+            .where(TrackingItem.id == item_id)
+        )
+    ).scalar_one()
+
+
 @router.post("/{sub_category_id}/items", response_model=TrackingItemOut, status_code=201)
 async def create_tracking_item(
     sub_category_id: uuid.UUID, body: TrackingItemCreate, user_id: UserId, db: DB
 ) -> TrackingItem:
     sub_category = await _get_or_404(sub_category_id, user_id, db)
     uid = uuid.UUID(user_id)
+
+    registry = await ItemTypeRegistry.create(db)
+    resolved = registry.get(body.type_id)
+    if resolved is None:
+        raise HTTPException(404, "Item type not found")
+    if resolved.is_archived:
+        raise HTTPException(400, "Cannot assign an archived item type to a new item")
 
     order = body.order
     if order is None:
@@ -93,7 +115,10 @@ async def create_tracking_item(
         user_id=uid,
         sub_category_id=sub_category.id,
         name=body.name.strip(),
-        type=body.type,
+        # Denormalised label — set by the app AND kept in sync by the DB
+        # trigger (transition window, design §C.6).
+        type=resolved.label,
+        type_id=resolved.id,
         initial_investment_tracking=body.initial_investment_tracking,
         exclusive=body.exclusive,
         order_index=order,
@@ -103,8 +128,14 @@ async def create_tracking_item(
     )
     db.add(item)
     await db.commit()
-    await db.refresh(item)
-    return item
+    _log.info(
+        "Tracking item created",
+        user_id=user_id,
+        item_id=str(item.id),
+        type_id=str(resolved.id),
+        type_slug=resolved.slug,
+    )
+    return await _load_item_out(item.id, db)
 
 
 @router.get("/{sub_category_id}/items", response_model=list[TrackingItemOut])
@@ -112,6 +143,7 @@ async def list_tracking_items(sub_category_id: uuid.UUID, user_id: UserId, db: D
     await _get_or_404(sub_category_id, user_id, db)
     result = await db.execute(
         select(TrackingItem)
+        .options(selectinload(TrackingItem.item_type).selectinload(ItemType.capabilities))
         .where(TrackingItem.sub_category_id == sub_category_id)
         .order_by(TrackingItem.order_index.asc())
     )

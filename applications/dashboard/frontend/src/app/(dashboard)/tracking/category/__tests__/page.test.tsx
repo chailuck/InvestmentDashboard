@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { render } from '@/test/test-utils'
 import TrackingCategoryPage from '../page'
 import { trackingService } from '@/services/tracking'
-import type { TrackingSet, Category, SubCategory, TrackingItem } from '@/services/tracking'
+import type { TrackingSet, Category, SubCategory, TrackingItem, ItemType } from '@/services/tracking'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -31,10 +31,8 @@ vi.mock('@/services/tracking', () => ({
     updateItem: vi.fn(),
     deleteItem: vi.fn(),
     reorderItems: vi.fn(),
+    listItemTypes: vi.fn(),
   },
-  TRACKING_ITEM_TYPES: [
-    'Bank account', 'Property', 'Investment Account', 'TaxSaving', 'Materials', 'Insurance',
-  ],
 }))
 
 vi.mock('react-hot-toast', () => ({
@@ -62,9 +60,19 @@ const SUBCATEGORIES_ASSETS: SubCategory[] = [
 
 const SUBCATEGORIES_LIABILITIES: SubCategory[] = []
 
+const ITEM_TYPES: ItemType[] = [
+  { id: 'it-bank', slug: 'bank_account', label: 'Bank account', sortOrder: 0, isSystem: true, isArchived: false, capabilities: [] },
+  { id: 'it-prop', slug: 'property', label: 'Property', sortOrder: 1, isSystem: true, isArchived: false, capabilities: ['counts_as_property'] },
+  { id: 'it-inv', slug: 'investment_account', label: 'Investment Account', sortOrder: 2, isSystem: true, isArchived: false, capabilities: [] },
+  { id: 'it-mat', slug: 'materials', label: 'Materials', sortOrder: 4, isSystem: true, isArchived: false, capabilities: [] },
+]
+
+const bankType = ITEM_TYPES[0]
+
 const ITEMS_CURRENT: TrackingItem[] = [
   {
-    id: 'item-cash', subCategoryId: 'sub-current', name: 'Cash', type: 'Bank account',
+    id: 'item-cash', subCategoryId: 'sub-current', name: 'Cash',
+    typeId: 'it-bank', itemType: bankType, type: 'Bank account',
     initialInvestmentTracking: false, exclusive: false, order: 0,
     description: null, accountName: null, remark: null, createdAt: '', updatedAt: '',
   },
@@ -72,6 +80,7 @@ const ITEMS_CURRENT: TrackingItem[] = [
 
 function setupDefaultMocks() {
   mocked.listSets.mockResolvedValue(SETS)
+  mocked.listItemTypes.mockResolvedValue(ITEM_TYPES)
   mocked.listCategories.mockResolvedValue(CATEGORIES)
   mocked.listSubCategories.mockImplementation(async (categoryId: string) =>
     categoryId === 'cat-assets' ? SUBCATEGORIES_ASSETS : SUBCATEGORIES_LIABILITIES,
@@ -287,10 +296,11 @@ describe('TrackingCategoryPage — sub-category actions', () => {
 // ---------------------------------------------------------------------------
 
 describe('TrackingCategoryPage — item actions', () => {
-  it('creates a tracking item with a name and type', async () => {
+  it('creates a tracking item, sending the selected type as a typeId (not a label)', async () => {
     const user = userEvent.setup()
     mocked.createItem.mockResolvedValueOnce({
-      id: 'item-new', subCategoryId: 'sub-current', name: 'Provident Fund', type: 'Investment Account',
+      id: 'item-new', subCategoryId: 'sub-current', name: 'Provident Fund',
+      typeId: 'it-inv', itemType: ITEM_TYPES[2], type: 'Investment Account',
       initialInvestmentTracking: false, exclusive: false, order: 1,
       description: null, accountName: null, remark: null, createdAt: '', updatedAt: '',
     })
@@ -305,10 +315,16 @@ describe('TrackingCategoryPage — item actions', () => {
 
     await waitFor(() => {
       expect(mocked.createItem).toHaveBeenCalledWith('sub-current', {
-        name: 'Provident Fund', type: 'Investment Account',
+        name: 'Provident Fund', typeId: 'it-inv',
         initialInvestmentTracking: false, exclusive: false,
       })
     })
+  })
+
+  it('renders the item type badge from itemType.label', async () => {
+    render(<TrackingCategoryPage />)
+    const badge = await screen.findByText('Bank account')
+    expect(badge).toBeInTheDocument()
   })
 
   it('reorders items using the move-down control', async () => {
@@ -317,7 +333,8 @@ describe('TrackingCategoryPage — item actions', () => {
       subCategoryId === 'sub-current'
         ? [
           ...ITEMS_CURRENT,
-          { id: 'item-fd', subCategoryId: 'sub-current', name: 'Fixed Deposit', type: 'Bank account' as const,
+          { id: 'item-fd', subCategoryId: 'sub-current', name: 'Fixed Deposit',
+            typeId: 'it-bank', itemType: bankType, type: 'Bank account',
             initialInvestmentTracking: false, exclusive: false, order: 1,
             description: null, accountName: null, remark: null, createdAt: '', updatedAt: '' },
         ]

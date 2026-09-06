@@ -13,6 +13,7 @@ from unittest.mock import patch
 from sqlalchemy import select
 
 from app.api.v1.endpoints import update_tracking_lists as update_tracking_lists_module
+from app.models.item_type import SYSTEM_ITEM_TYPE_IDS
 from app.models.update_tracking_list import UpdateTrackingList
 from app.models.update_tracking_list_balance import UpdateTrackingListBalance
 from app.services.update_tracking import get_update_list_detail
@@ -38,7 +39,8 @@ async def _current_assets_sub_id(client, set_id: str) -> str:
 
 async def _make_item(client, sub_id: str, name: str = "Item", item_type: str = "Bank account") -> str:
     resp = await client.post(
-        f"{PREFIX}/sub-categories/{sub_id}/items", json={"name": name, "type": item_type}
+        f"{PREFIX}/sub-categories/{sub_id}/items",
+        json={"name": name, "typeId": SYSTEM_ITEM_TYPE_IDS[item_type]},
     )
     return resp.json()["id"]
 

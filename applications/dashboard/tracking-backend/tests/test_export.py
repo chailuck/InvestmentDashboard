@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import uuid
 
+from app.models.item_type import SYSTEM_ITEM_TYPE_IDS
+
 PREFIX = "/api/v1/tracking"
 
 
@@ -52,7 +54,7 @@ async def _make_item(
 ) -> str:
     body = {
         "name": name,
-        "type": item_type,
+        "typeId": SYSTEM_ITEM_TYPE_IDS[item_type],
         "exclusive": exclusive,
         "initialInvestmentTracking": initial_investment_tracking,
     }
@@ -160,7 +162,9 @@ async def test_fully_populated_set_exports_every_record(auth_client):
     assert len(export["trackingItems"]) == 2
     items_by_id = {i["id"]: i for i in export["trackingItems"]}
     assert items_by_id[item1_id]["name"] == "Checking"
-    assert items_by_id[item1_id]["type"] == "Bank account"
+    assert items_by_id[item1_id]["type"] == "Bank account"  # deprecated alias, transition window
+    assert items_by_id[item1_id]["typeSlug"] == "bank_account"  # OQ-13: stable machine key
+    assert items_by_id[item1_id]["typeLabel"] == "Bank account"
     assert items_by_id[item1_id]["initialInvestmentTracking"] is True
     assert items_by_id[item1_id]["exclusive"] is False
     assert items_by_id[item1_id]["description"] == "Main checking account"
@@ -170,6 +174,8 @@ async def test_fully_populated_set_exports_every_record(auth_client):
 
     assert items_by_id[item2_id]["name"] == "House"
     assert items_by_id[item2_id]["type"] == "Property"
+    assert items_by_id[item2_id]["typeSlug"] == "property"
+    assert items_by_id[item2_id]["typeLabel"] == "Property"
     assert items_by_id[item2_id]["exclusive"] is True
     assert items_by_id[item2_id]["description"] is None
     assert items_by_id[item2_id]["accountName"] is None
