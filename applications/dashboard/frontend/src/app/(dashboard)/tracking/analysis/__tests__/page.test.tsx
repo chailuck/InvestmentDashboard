@@ -70,13 +70,78 @@ describe('Analysis page', () => {
     expect(property).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('drilling from the trend chart advances the breadcrumb', async () => {
+  it('drilling from the "Drill into:" row advances the breadcrumb', async () => {
     render(<AnalysisPage />)
     await screen.findByRole('heading', { name: 'Trend' })
     const drillRow = screen.getByText('Drill into:').parentElement as HTMLElement
     await userEvent.click(within(drillRow).getByRole('button', { name: 'Assets' }))
     const nav = screen.getByRole('navigation', { name: /drill path/i })
     await waitFor(() => expect(within(nav).getByText('Assets')).toBeInTheDocument())
+  })
+
+  it('renders the page-level "Drill into:" row below the breadcrumb Up button and above the Latest value tile, regardless of which chart owns the underlying data', async () => {
+    render(<AnalysisPage />)
+    await screen.findByRole('heading', { name: 'Trend' })
+    const upButton = screen.getByRole('button', { name: 'Step up one level' })
+    const drillLabel = screen.getByText('Drill into:')
+    const latestValueTile = screen.getByText('Latest value')
+    // Below (follows) the Up button in DOM order.
+    expect(upButton.compareDocumentPosition(drillLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    // Above (precedes) the "Latest value" KPI tile in DOM order.
+    expect(drillLabel.compareDocumentPosition(latestValueTile) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    // Not owned by the Trend chart itself — it lives outside the "Trend" ChartCard.
+    const trendHeading = screen.getByRole('heading', { name: 'Trend' })
+    expect(trendHeading.compareDocumentPosition(drillLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(0)
+  })
+
+  it('keeps the page-level "Drill into:" row visible when the Trend chart is switched to table view (drilling is page-level, not gated by the Trend chart\'s own showTable state)', async () => {
+    render(<AnalysisPage />)
+    await screen.findByRole('heading', { name: 'Trend' })
+    expect(screen.getByText('Drill into:')).toBeInTheDocument()
+
+    const trendCard = screen.getByRole('heading', { name: 'Trend' }).closest('section') as HTMLElement
+    await userEvent.click(within(trendCard).getByRole('button', { name: 'Table view' }))
+
+    // The Trend chart itself switched to its table (proves the click landed
+    // on the right toggle, scoped to the Trend card — Composition/Delta
+    // trend also have their own "Table view" buttons on this page).
+    expect(within(trendCard).getByRole('table')).toBeInTheDocument()
+
+    // The page-level drill row must still be present and still functional —
+    // it is no longer owned by TrendChart's `!showTable` gate (removed along
+    // with `onDrill`), so it must not disappear when the Trend chart's own
+    // table view is toggled on.
+    const drillRow = screen.getByText('Drill into:').parentElement as HTMLElement
+    await userEvent.click(within(drillRow).getByRole('button', { name: 'Assets' }))
+    const nav = screen.getByRole('navigation', { name: /drill path/i })
+    await waitFor(() => expect(within(nav).getByText('Assets')).toBeInTheDocument())
+  })
+
+  it('renders no "Drill into:" row at all (not even an empty wrapper) at the deepest drill level, where no bucket carries a drillId', async () => {
+    render(<AnalysisPage />)
+    await screen.findByRole('heading', { name: 'Trend' })
+
+    // depth 0 -> 1: drill into category "Assets".
+    await userEvent.click(within(screen.getByText('Drill into:').parentElement as HTMLElement).getByRole('button', { name: 'Assets' }))
+    await waitFor(() => expect(within(screen.getByRole('navigation', { name: /drill path/i })).getByText('Assets')).toBeInTheDocument())
+
+    // depth 1 -> 2: drill into sub-category "Bank".
+    await userEvent.click(within(screen.getByText('Drill into:').parentElement as HTMLElement).getByRole('button', { name: 'Bank' }))
+    await waitFor(() => expect(within(screen.getByRole('navigation', { name: /drill path/i })).getByText('Bank')).toBeInTheDocument())
+
+    // depth 2 -> 3: drill into leaf item "Checking" — the most detailed level.
+    await userEvent.click(within(screen.getByText('Drill into:').parentElement as HTMLElement).getByRole('button', { name: 'Checking' }))
+    await screen.findByText('Single item — the most detailed level; drill is disabled.')
+
+    // At depth 3 no bucket carries a `drillId`, so `chartModel.buckets.some(s => s.drillId)`
+    // is false and the row's `&&`-guarded JSX renders nothing — not even an
+    // empty wrapper `<div>` — confirmed by both the label's absence and the
+    // Trend heading having no following sibling row of that shape.
+    expect(screen.queryByText('Drill into:')).not.toBeInTheDocument()
   })
 
   it('fetches the balance grid exactly once for the selected set', async () => {

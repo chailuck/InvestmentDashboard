@@ -38,13 +38,11 @@ export function TrendChart({
   series,
   aggregate,
   measure,
-  onDrill,
 }: {
   axis: AxisPoint[]
   series: AnalysisSeries[]
   aggregate: AnalysisSeries
   measure: Measure
-  onDrill: (drillId: string) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(720)
@@ -227,22 +225,6 @@ export function TrendChart({
       </div>
 
       <p className="sr-only" aria-live="polite">{cursorReadout}</p>
-
-      {!showTable && series.some(s => s.drillId) && (
-        <div className="flex items-center gap-2 flex-wrap text-xs">
-          <span className="text-ink-muted">Drill into:</span>
-          {series.filter(s => s.drillId).map(s => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => s.drillId && onDrill(s.drillId)}
-              className="btn-ghost px-2 py-0.5 text-xs"
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

@@ -7,6 +7,7 @@ Routes
 ------
   GET    /daily-performance                  — list snapshots in a date range
   POST   /daily-performance/backfill         — one-time historical backfill (destructive)
+  POST   /daily-performance/catch-up         — fill only missing trailing weekdays
   POST   /daily-performance/run              — trigger snapshot for current user
   PUT    /daily-performance/{date_str}       — patch a stored snapshot record
   DELETE /daily-performance/{date_str}       — delete a single snapshot record
@@ -28,7 +29,11 @@ from app.core.logging import get_logger
 from app.database.session import get_db
 from app.models.daily_performance import DailyPerformance
 from app.models.portfolio import Portfolio
-from app.services.daily_performance_service import run_daily_snapshot, run_historical_backfill
+from app.services.daily_performance_service import (
+    run_catch_up_snapshot,
+    run_daily_snapshot,
+    run_historical_backfill,
+)
 
 _log = get_logger("daily_performance.endpoint")
 
@@ -272,6 +277,78 @@ async def trigger_historical_backfill(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"status": "ok", **summary}
+
+
+@router.post("/catch-up")
+async def trigger_catch_up_snapshot(
+    user_id: UserId,
+    db: DB,
+    portfolio_id: uuid.UUID | None = Query(
+        None,
+        description="Portfolio UUID. Defaults to the user's default portfolio.",
+    ),
+) -> dict[str, Any]:
+    """Fill in only the missing trailing business days for the portfolio.
+
+    Unlike ``/backfill`` (which deletes and recomputes the entire history),
+    this walks forward from the day after the most recent existing
+    daily_performance row through today, inserting only the missing Mon–Fri
+    days. Existing rows are never touched. Intended for routine "catch me up"
+    use — e.g. after the nightly scheduler missed a run, or after the user
+    has been away for a few days.
+
+    The response's own ``status`` field carries the outcome — one of
+    ``"no_history"`` (no rows exist yet; run Backfill first), ``"up_to_date"``
+    (nothing missing), or ``"completed"`` — so, unlike ``/backfill`` and
+    ``/run``, this endpoint returns the service summary directly rather than
+    wrapping it in an additional ``{"status": "ok", ...}`` envelope.
+
+    Retry semantics: this walk always resumes from ``MAX(date) + 1``, so a
+    subsequent call after a run with ``errors > 0`` only continues forward
+    from the new latest date — it does not re-attempt an earlier date that
+    failed if a later date in that same run already succeeded (that later
+    success already advanced ``MAX(date)`` past the gap). When that pattern
+    occurs, the response includes a ``partial_failure_note`` explaining that
+    the orphaned date needs a per-row Refresh or a full Backfill History to
+    recover, rather than another Catch Up call.
+
+    Args:
+        user_id:      Injected from the JWT bearer token.
+        db:           Async DB session.
+        portfolio_id: Optional portfolio UUID; defaults to the user's default.
+
+    Returns:
+        ``{status, message, latest_existing_date, missing_dates_found,
+        processed, skipped, errors, start_date, end_date,
+        partial_failure_note}`` — ``partial_failure_note`` is only present
+        when ``status == "completed"`` and ``errors > 0``.
+
+    Raises:
+        403: Portfolio does not belong to the authenticated user.
+        404: Portfolio not found or no default portfolio configured.
+        409: A backfill or another catch-up is already in progress for this
+            portfolio.
+    """
+    uid = uuid.UUID(user_id)
+    resolved_portfolio_id = await _resolve_portfolio_id(db, uid, portfolio_id)
+
+    _log.info(
+        "daily_performance.catch_up_requested",
+        user_id=user_id,
+        portfolio_id=str(resolved_portfolio_id),
+    )
+
+    try:
+        summary = await run_catch_up_snapshot(
+            db,
+            user_id=user_id,
+            portfolio_id=str(resolved_portfolio_id),
+        )
+    except RuntimeError as exc:
+        # Concurrency guard: a backfill or another catch-up is already running.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return summary
 
 
 @router.post("/run")

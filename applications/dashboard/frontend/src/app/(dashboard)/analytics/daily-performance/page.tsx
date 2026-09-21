@@ -6,7 +6,9 @@ import {
   RefreshCw,
   AlertCircle,
   History,
+  CalendarClock,
   CheckCircle2,
+  Info,
   Trash2,
   Pencil,
   X,
@@ -16,6 +18,7 @@ import {
   type DailyPerformanceRecord,
   type DailyPerformanceUpdateInput,
   type BackfillResult,
+  type CatchUpResult,
   type PositionChip,
 } from '@/services/dailyPerformance'
 import { apiClient } from '@/services/api'
@@ -411,6 +414,13 @@ export default function DailyPerformancePage() {
     text: string
   } | null>(null)
 
+  // ── Catch-up state ────────────────────────────────────────────────────────────
+  const [runningCatchUp, setRunningCatchUp] = useState(false)
+  const [catchUpMessage, setCatchUpMessage] = useState<{
+    type: 'success' | 'info' | 'error'
+    text: string
+  } | null>(null)
+
   // ── Per-row delete / refresh state ───────────────────────────────────────────
   const [deletingRowDate, setDeletingRowDate] = useState<string | null>(null)
   const [refreshingRowDate, setRefreshingRowDate] = useState<string | null>(null)
@@ -554,6 +564,46 @@ export default function DailyPerformancePage() {
       })
     } finally {
       setRunningBackfill(false)
+    }
+  }
+
+  const handleCatchUp = async () => {
+    if (!selectedPortfolioId) return
+    setRunningCatchUp(true)
+    setCatchUpMessage(null)
+    setError(null)
+    try {
+      const result: CatchUpResult = await dailyPerformanceService.catchUp(selectedPortfolioId)
+      if (result.status === 'no_history') {
+        setCatchUpMessage({
+          type: 'info',
+          text: result.message ?? 'No existing history to catch up from. Use Backfill History to generate it.',
+        })
+      } else if (result.status === 'up_to_date') {
+        setCatchUpMessage({
+          type: 'info',
+          text: `Already up to date through ${result.end_date ?? getToday()}.`,
+        })
+      } else {
+        const hasErrors = result.errors > 0
+        setCatchUpMessage({
+          type: hasErrors ? 'error' : 'success',
+          text: hasErrors
+            ? `Caught up ${result.processed} day(s) with ${result.errors} error(s). ${
+                result.partial_failure_note ??
+                'Re-running Catch Up will only retry dates from the current latest date forward — it will not retry an earlier failed date. Use that row\'s Refresh action, or run a full Backfill History, to recover it.'
+              }`
+            : `Caught up ${result.processed} day(s) of missing history.`,
+        })
+        await fetchData()
+      }
+    } catch {
+      setCatchUpMessage({
+        type: 'error',
+        text: 'Catch up failed. Please check the server logs and try again.',
+      })
+    } finally {
+      setRunningCatchUp(false)
     }
   }
 
@@ -719,14 +769,15 @@ export default function DailyPerformancePage() {
             Daily Performance
           </h1>
           <p className="text-xs text-ink-muted mt-0.5">
-            Historical P&amp;L and investment activity by day
+            Historical P&amp;L and investment activity by day. Use Catch Up for recent gaps —
+            Backfill History fully rebuilds all records from scratch.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => setShowBackfillConfirm(true)}
-            disabled={runningBackfill || runningSnapshot || loading}
+            disabled={runningBackfill || runningSnapshot || runningCatchUp || loading}
             className="flex items-center gap-1.5 text-sm px-3 py-2 rounded border border-border text-ink-secondary hover:text-ink-primary hover:border-brand-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             aria-live="polite"
             aria-busy={runningBackfill}
@@ -736,8 +787,19 @@ export default function DailyPerformancePage() {
           </button>
           <button
             type="button"
+            onClick={handleCatchUp}
+            disabled={runningCatchUp || runningSnapshot || runningBackfill || loading}
+            className="flex items-center gap-1.5 text-sm px-3 py-2 rounded border border-border text-ink-secondary hover:text-ink-primary hover:border-brand-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-live="polite"
+            aria-busy={runningCatchUp}
+          >
+            <CalendarClock className={`w-4 h-4 ${runningCatchUp ? 'animate-spin' : ''}`} aria-hidden="true" />
+            {runningCatchUp ? 'Catching up…' : 'Catch Up'}
+          </button>
+          <button
+            type="button"
             onClick={handleRunNow}
-            disabled={runningSnapshot || loading || runningBackfill}
+            disabled={runningSnapshot || loading || runningBackfill || runningCatchUp}
             className="btn-primary flex items-center gap-1.5 text-sm"
             aria-live="polite"
             aria-busy={runningSnapshot}
@@ -794,6 +856,39 @@ export default function DailyPerformancePage() {
           <button
             type="button"
             onClick={() => setBackfillMessage(null)}
+            className="ml-2 opacity-60 hover:opacity-100 transition-opacity"
+            aria-label="Dismiss notification"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* ── Catch-up result banner ────────────────────────────────────────────── */}
+      {catchUpMessage && (
+        <div
+          className="flex items-center gap-2 rounded-md border px-4 py-3 text-sm"
+          style={
+            catchUpMessage.type === 'success'
+              ? { borderColor: 'rgba(34,197,94,0.35)', backgroundColor: 'rgba(34,197,94,0.07)', color: COLORS.positive }
+              : catchUpMessage.type === 'info'
+                ? { borderColor: 'rgba(59,130,246,0.35)', backgroundColor: 'rgba(59,130,246,0.07)', color: COLORS.investment }
+                : { borderColor: 'rgba(239,68,68,0.35)', backgroundColor: 'rgba(239,68,68,0.07)', color: COLORS.negative }
+          }
+          role="alert"
+          aria-live="assertive"
+        >
+          {catchUpMessage.type === 'success' ? (
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+          ) : catchUpMessage.type === 'info' ? (
+            <Info className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+          ) : (
+            <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+          )}
+          <span className="flex-1">{catchUpMessage.text}</span>
+          <button
+            type="button"
+            onClick={() => setCatchUpMessage(null)}
             className="ml-2 opacity-60 hover:opacity-100 transition-opacity"
             aria-label="Dismiss notification"
           >

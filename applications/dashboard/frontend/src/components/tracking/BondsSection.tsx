@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
 import {
-  Landmark, Loader2, AlertCircle, Plus, Edit2, Trash2, X, Save, ChevronUp, ChevronDown,
+  Landmark, Loader2, AlertCircle, Plus, Edit2, Trash2, X, Save,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
@@ -13,6 +13,7 @@ import { trackingService, type Bond, type BondInput, type BondStatus } from '@/s
 import { extractApiError } from '@/services/api'
 import { computeBondStatus, computeBondYears } from '@/lib/bond-status'
 import { ConfirmDeleteModal } from '@/components/tracking/ConfirmDeleteModal'
+import { SortableHeader, toggleSortState, type SortDirection, type SortState } from '@/components/tracking/SortableHeader'
 
 const todayIso = () => format(new Date(), 'yyyy-MM-dd')
 const fmtDate = (iso: string | null) => (iso ? format(new Date(iso), 'dd MMM yyyy') : '—')
@@ -236,13 +237,6 @@ function BondForm({
 type SortColumn =
   | 'code' | 'issuer' | 'startDate' | 'expiredDate' | 'amount' | 'status' | 'interestRate' | 'years'
 
-type SortDirection = 'asc' | 'desc'
-
-interface SortState {
-  column: SortColumn
-  direction: SortDirection
-}
-
 /** Lifecycle order for status sorting — NOT alphabetical. */
 const STATUS_SORT_ORDER: Record<BondStatus, number> = {
   'Pre-order': 1, Active: 2, Expire: 3, Unknown: 4,
@@ -287,46 +281,6 @@ function sortBonds(list: Bond[], column: SortColumn, direction: SortDirection): 
   })
 }
 
-/**
- * A sortable column header. The `<th>` carries `aria-sort`; the click target is
- * a real `<button>` so keyboard users can operate it. The active column shows a
- * chevron indicating the current direction.
- */
-function SortableHeader({
-  column, label, align, sort, onSort,
-}: {
-  column: SortColumn
-  label: string
-  align: 'left' | 'right'
-  sort: SortState
-  onSort: (column: SortColumn) => void
-}) {
-  const active = sort.column === column
-  return (
-    <th
-      className={cn('px-3 py-2 font-medium', align === 'right' ? 'text-right' : 'text-left')}
-      aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
-    >
-      <button
-        type="button"
-        onClick={() => onSort(column)}
-        className={cn(
-          'inline-flex items-center gap-1 hover:text-ink-secondary transition-colors',
-          align === 'right' && 'flex-row-reverse',
-          active && 'text-ink-secondary',
-        )}
-      >
-        <span>{label}</span>
-        {active && (
-          sort.direction === 'asc'
-            ? <ChevronUp className="w-3 h-3" aria-hidden="true" />
-            : <ChevronDown className="w-3 h-3" aria-hidden="true" />
-        )}
-      </button>
-    </th>
-  )
-}
-
 // ── Bonds section ────────────────────────────────────────────────────────────
 
 /**
@@ -341,7 +295,7 @@ export function BondsSection({ itemId }: { itemId: string }) {
   const [deleteBond, setDeleteBond] = useState<Bond | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [sort, setSort] = useState<SortState>({ column: 'expiredDate', direction: 'asc' })
+  const [sort, setSort] = useState<SortState<SortColumn>>({ column: 'expiredDate', direction: 'asc' })
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['tracking-bonds', itemId],
@@ -349,14 +303,7 @@ export function BondsSection({ itemId }: { itemId: string }) {
     staleTime: 10_000,
   })
 
-  // Active column → flip direction; a new column → start ascending.
-  const toggleSort = (column: SortColumn) => {
-    setSort(prev =>
-      prev.column === column
-        ? { column, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
-        : { column, direction: 'asc' },
-    )
-  }
+  const toggleSort = (column: SortColumn) => setSort(prev => toggleSortState(prev, column))
 
   const rows = useMemo(
     () => sortBonds(data ?? [], sort.column, sort.direction),

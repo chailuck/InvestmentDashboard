@@ -72,6 +72,25 @@ export interface BackfillResult {
   message?: string
 }
 
+export interface CatchUpResult {
+  status: 'no_history' | 'up_to_date' | 'completed'
+  message: string | null
+  latest_existing_date: string | null
+  missing_dates_found: number
+  processed: number
+  skipped: number
+  errors: number
+  start_date: string | null
+  end_date: string | null
+  /**
+   * Present (non-null) only when status === 'completed' && errors > 0.
+   * Explains that re-running Catch Up only retries forward from the new
+   * latest date, so it will NOT heal an earlier failed date that a later
+   * date already succeeded past in the same run (DEF-001).
+   */
+  partial_failure_note: string | null
+}
+
 // ─── Cash Transaction Types ───────────────────────────────────────────────────
 
 export interface CashTransaction {
@@ -147,6 +166,24 @@ export const dailyPerformanceService = {
       '/daily-performance/backfill',
       null,
       { params, timeout: 120_000 },
+    )
+    return data
+  },
+
+  /**
+   * Fill in any missing days since the portfolio's most recent existing
+   * record (or its full history, if none exists yet).
+   * POST /daily-performance/catch-up?portfolio_id=X
+   *
+   * Non-destructive: unlike `backfill`, this never deletes existing records
+   * — it only generates the days that are missing. Bounded to a small gap,
+   * so a lighter 60-second client timeout is applied (vs. backfill's 120s).
+   */
+  async catchUp(portfolioId: string): Promise<CatchUpResult> {
+    const { data } = await apiClient.post<CatchUpResult>(
+      '/daily-performance/catch-up',
+      null,
+      { params: { portfolio_id: portfolioId }, timeout: 60_000 },
     )
     return data
   },

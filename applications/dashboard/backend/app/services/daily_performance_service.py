@@ -6,12 +6,27 @@ for one portfolio or all portfolios.  Called from:
   * The APScheduler job (nightly, Mon–Fri at 23:30 Bangkok time).
   * The POST /api/v1/daily-performance/run endpoint (on-demand, single portfolio).
   * The POST /api/v1/daily-performance/backfill endpoint (one-time historical fill).
+  * The POST /api/v1/daily-performance/catch-up endpoint (fill only the missing
+    trailing weekdays since the last recorded snapshot).
 
 Public surface
 --------------
   run_daily_snapshot(db, user_id, snapshot_date, portfolio_id)     →  DailyPerformance
   run_historical_backfill(db, user_id, portfolio_id, start_date)   →  dict
+  run_catch_up_snapshot(db, user_id, portfolio_id)                 →  dict
   run_snapshot_for_all_portfolios(db, snapshot_date)               →  dict
+
+Catch-up semantics
+-------------------
+  ``run_catch_up_snapshot`` is a lightweight complement to
+  ``run_historical_backfill``: instead of deleting and recomputing the entire
+  history, it only computes the business (Mon–Fri) days strictly after the
+  most recent existing ``daily_performance`` row through today, inclusive.
+  Existing rows are never touched — new days are inserted via the same
+  idempotent upsert used elsewhere in this module. It shares the
+  ``_active_backfills`` concurrency guard with ``run_historical_backfill`` so
+  the two operations (and catch-up vs. itself) can never run concurrently for
+  the same portfolio.
 
 Investment calculation (as of migration c3d4e5f6a7b8)
 ------------------------------------------------------
@@ -940,6 +955,372 @@ async def run_historical_backfill(
             "daily_performance.backfill_complete",
             portfolio_id=portfolio_id,
             **summary,
+        )
+        return summary
+
+    finally:
+        _active_backfills.discard(portfolio_id)
+
+
+async def run_catch_up_snapshot(
+    db: AsyncSession,
+    user_id: str,
+    portfolio_id: str,
+) -> dict:
+    """Fill in only the missing business days since the last recorded snapshot.
+
+    A lightweight complement to ``run_historical_backfill``: rather than
+    deleting and recomputing the whole history, this walks forward from the
+    day after the most recent existing ``daily_performance`` row through
+    today (inclusive), inserting only the missing Mon–Fri days. Existing rows
+    are never read for mutation and never touched.
+
+    Steps
+    -----
+    1. Acquire the shared ``_active_backfills`` concurrency lock; raise
+       RuntimeError if a backfill or another catch-up is already running for
+       this portfolio.
+    2. Find the latest existing daily_performance date for this portfolio.
+       If none exists, return early with status ``"no_history"``.
+    3. Compute the missing weekday dates from (latest + 1 day) through today.
+       If none, return early with status ``"up_to_date"``.
+    4. Fetch ALL positions and ALL cash transactions for the portfolio (same
+       unfiltered shape as ``run_historical_backfill``), then expunge every
+       loaded ORM object so later per-date commits in step 7 cannot expire
+       them out from under us (expire_on_commit=True by default).
+    5. Fetch price history in parallel for every unique symbol across the
+       portfolio's positions, scoped only to the gap window
+       [missing_dates[0], missing_dates[-1]] — not the full portfolio history.
+    6. Seed the running accumulated-P&L counter from the ``acc_pnl`` value of
+       the latest existing row (0.0 + a warning log if that value is NULL —
+       a legacy row predating the acc_pnl column).
+    7. Iterate the missing dates ascending; compute and upsert each day,
+       committing after every successfully-processed day. A failure on one
+       day rolls back just that statement, restores the accumulator, counts
+       an error, and continues — it never aborts the whole run.
+    8. Release the concurrency lock (always, via finally).
+    9. Return a summary dict.
+
+    Retry semantics (read this before assuming a re-run "heals" everything):
+    Because step 3 always resumes scanning from ``MAX(date) + 1``, retrying
+    after a run with ``errors > 0`` only continues the scan forward from
+    whatever the latest *successfully written* date now is — it does NOT
+    re-examine or re-attempt any earlier date. If a middle date in a run
+    fails but a later date in that same run succeeds, the failed date
+    becomes a permanent gap that a subsequent catch-up call will never
+    rediscover (the later success already advanced MAX(date) past it). Only
+    that specific date's Refresh action, or a full Backfill History run,
+    can heal such a gap. Retry IS safe/sufficient for the common case of a
+    trailing gap (e.g. a missed scheduler run) where nothing after the
+    failure point has already succeeded.
+
+    Args:
+        db:           Async SQLAlchemy session.
+        user_id:      String UUID of the authenticated user.
+        portfolio_id: String UUID of the target portfolio.
+
+    Returns:
+        Dict: ``{status, message, latest_existing_date, missing_dates_found,
+        processed, skipped, errors, start_date, end_date,
+        partial_failure_note}``. ``partial_failure_note`` is only present
+        (non-None) when ``status == "completed"`` and ``errors > 0``; see
+        the retry semantics note above for what it warns about.
+
+    Raises:
+        RuntimeError: A backfill or catch-up is already running for this
+            portfolio.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert  # deferred
+
+    user_uuid = uuid.UUID(user_id)
+    portfolio_uuid = uuid.UUID(portfolio_id)
+    today = date.today()
+
+    # ── 0. Concurrency guard (shared with run_historical_backfill) ───────────
+    if portfolio_id in _active_backfills:
+        raise RuntimeError(
+            f"A backfill or catch-up is already in progress for portfolio "
+            f"{portfolio_id}. Please wait for it to complete before starting "
+            "another."
+        )
+    _active_backfills.add(portfolio_id)
+
+    try:
+        _log.info(
+            "daily_performance.catch_up_start",
+            user_id=user_id,
+            portfolio_id=portfolio_id,
+        )
+
+        # ── 1. Find latest existing daily_performance date ────────────────────
+        latest_result = await db.execute(
+            select(sa_func.max(DailyPerformance.date)).where(
+                DailyPerformance.portfolio_id == portfolio_uuid
+            )
+        )
+        latest_existing_date = latest_result.scalar_one_or_none()
+
+        if latest_existing_date is None:
+            _log.info(
+                "daily_performance.catch_up_no_history",
+                user_id=user_id,
+                portfolio_id=portfolio_id,
+            )
+            return {
+                "status": "no_history",
+                "message": (
+                    "No existing daily performance history for this portfolio. "
+                    "Run Backfill History to build it first."
+                ),
+                "latest_existing_date": None,
+                "missing_dates_found": 0,
+                "processed": 0,
+                "skipped": 0,
+                "errors": 0,
+                "start_date": None,
+                "end_date": None,
+            }
+
+        # ── 2. Compute missing business days ───────────────────────────────────
+        missing_dates: list[date] = []
+        cursor = latest_existing_date + timedelta(days=1)
+        while cursor <= today:
+            if cursor.weekday() < 5:  # Mon=0 .. Fri=4
+                missing_dates.append(cursor)
+            cursor += timedelta(days=1)
+
+        if not missing_dates:
+            _log.info(
+                "daily_performance.catch_up_up_to_date",
+                user_id=user_id,
+                portfolio_id=portfolio_id,
+                latest_existing_date=latest_existing_date.isoformat(),
+            )
+            return {
+                "status": "up_to_date",
+                "message": None,
+                "latest_existing_date": latest_existing_date.isoformat(),
+                "missing_dates_found": 0,
+                "processed": 0,
+                "skipped": 0,
+                "errors": 0,
+                "start_date": None,
+                "end_date": None,
+            }
+
+        gap_start = missing_dates[0]
+        gap_end = missing_dates[-1]
+
+        _log.info(
+            "daily_performance.catch_up_range",
+            portfolio_id=portfolio_id,
+            latest_existing_date=latest_existing_date.isoformat(),
+            gap_start=gap_start.isoformat(),
+            gap_end=gap_end.isoformat(),
+            missing_dates_found=len(missing_dates),
+        )
+
+        # ── 3. Fetch ALL positions and ALL cash transactions ────────────────────
+        # Same unfiltered shape as run_historical_backfill: the full position
+        # history is needed to classify open/closed state correctly on each
+        # missing day, and cash investment is a cumulative sum since inception.
+        pos_result = await db.execute(
+            select(PortfolioDbPosition).where(
+                PortfolioDbPosition.user_id == user_uuid,
+                PortfolioDbPosition.portfolio_id == portfolio_uuid,
+            )
+        )
+        all_positions = [
+            p for p in pos_result.scalars().all() if p.entry_date is not None
+        ]
+        # Expunge immediately — required because the per-date commit loop below
+        # (step 6) expires previously-loaded objects on every commit under
+        # SQLAlchemy's expire_on_commit=True default. Without this, a later
+        # iteration's attribute access on an already-committed object throws
+        # MissingGreenlet on an async session. Mirrors run_historical_backfill.
+        for pos in all_positions:
+            db.expunge(pos)
+
+        cash_q = (
+            select(InvestmentTransaction)
+            .where(InvestmentTransaction.portfolio_id == portfolio_uuid)
+            .order_by(InvestmentTransaction.date.asc())
+        )
+        cash_result = await db.execute(cash_q)
+        cash_txns_raw = cash_result.scalars().all()
+        cash_pairs: list[tuple[date, float]] = []
+        for tx in cash_txns_raw:
+            cash_pairs.append((
+                tx.date,
+                -float(tx.amount) if tx.action == "CASH_OUT" else float(tx.amount),
+            ))
+            db.expunge(tx)
+
+        _log.info(
+            "daily_performance.catch_up_data_loaded",
+            portfolio_id=portfolio_id,
+            positions=len(all_positions),
+            cash_transactions=len(cash_pairs),
+        )
+
+        # ── 4. Fetch price history scoped to the gap window only ────────────────
+        all_symbols = list({pos.symbol for pos in all_positions})
+
+        loop = asyncio.get_running_loop()
+        history_results = await asyncio.gather(
+            *[
+                loop.run_in_executor(
+                    None, _fetch_price_history, sym, gap_start, gap_end
+                )
+                for sym in all_symbols
+            ],
+            return_exceptions=True,
+        )
+
+        price_history: dict[str, dict[date, float]] = {}
+        for sym, hist in zip(all_symbols, history_results):
+            if isinstance(hist, Exception):
+                _log.warning(
+                    "daily_performance.catch_up_symbol_history_failed",
+                    symbol=sym,
+                    error=str(hist),
+                )
+                price_history[sym] = {}
+            else:
+                price_history[sym] = hist  # type: ignore[assignment]
+
+        # ── 5. Seed acc_pnl_running from the latest existing row ────────────────
+        prior_acc_result = await db.execute(
+            select(DailyPerformance.acc_pnl).where(
+                DailyPerformance.portfolio_id == portfolio_uuid,
+                DailyPerformance.date == latest_existing_date,
+            )
+        )
+        prior_acc_pnl_raw = prior_acc_result.scalar_one_or_none()
+        if prior_acc_pnl_raw is None:
+            acc_pnl_running: float = 0.0
+            _log.warning(
+                "daily_performance.catch_up_acc_pnl_null_legacy_row",
+                portfolio_id=portfolio_id,
+                latest_existing_date=latest_existing_date.isoformat(),
+            )
+        else:
+            acc_pnl_running = float(prior_acc_pnl_raw)
+
+        # ── 6. Iterate missing dates ascending and upsert ────────────────────────
+
+        def _make_price_lookup(snap_date: date) -> Callable[[str], float | None]:
+            def _lookup(symbol: str) -> float | None:
+                return _get_historical_price(price_history, symbol, snap_date)
+            return _lookup
+
+        processed = 0
+        skipped = 0
+        errors = 0
+
+        last_missing_date = missing_dates[-1]
+
+        for snapshot_date in missing_dates:
+            positions_on_date = [
+                pos for pos in all_positions if pos.entry_date <= snapshot_date
+            ]
+
+            if not positions_on_date:
+                skipped += 1
+                continue
+
+            # Snapshot the accumulator so it can be restored if the DB write fails.
+            acc_pnl_before = acc_pnl_running
+
+            try:
+                cash_investment = sum(
+                    amt for d, amt in cash_pairs if d <= snapshot_date
+                )
+
+                upsert_values = _compute_snapshot_values(
+                    positions_on_date,
+                    snapshot_date,
+                    _make_price_lookup(snapshot_date),
+                    cash_investment=cash_investment,
+                )
+
+                daily_pnl = sum(
+                    float(pos.get("pnl", 0) or 0)
+                    for pos in (upsert_values.get("sold_positions") or [])
+                )
+                acc_pnl_running += daily_pnl
+                upsert_values["acc_pnl"] = round(acc_pnl_running, 4)
+
+                stmt = (
+                    pg_insert(DailyPerformance)
+                    .values(
+                        id=uuid.uuid4(),
+                        user_id=user_uuid,
+                        portfolio_id=portfolio_uuid,
+                        date=snapshot_date,
+                        **upsert_values,
+                    )
+                    .on_conflict_do_update(
+                        constraint="uq_daily_performance_portfolio_date",
+                        set_={
+                            **upsert_values,
+                            "updated_at": sa_func.now(),
+                        },
+                    )
+                )
+                await db.execute(stmt)
+                await db.commit()
+                processed += 1
+
+            except Exception as exc:  # noqa: BLE001
+                acc_pnl_running = acc_pnl_before
+                errors += 1
+                try:
+                    await db.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                # A failure on any date other than the last one in this
+                # run's missing_dates means later dates will still be
+                # attempted and may succeed — which advances MAX(date) past
+                # this failed date and makes it an orphaned gap that a
+                # forward-only retry can never rediscover (see the
+                # "Retry semantics" note on this function's docstring).
+                # Cheap to flag here: no extra query, just a position check
+                # against the loop we're already in.
+                may_require_manual_recovery = snapshot_date != last_missing_date
+                _log.error(
+                    "daily_performance.catch_up_day_failed",
+                    portfolio_id=portfolio_id,
+                    snapshot_date=snapshot_date.isoformat(),
+                    error=str(exc),
+                    may_require_manual_recovery=may_require_manual_recovery,
+                )
+
+        summary: dict = {
+            "status": "completed",
+            "message": None,
+            "latest_existing_date": latest_existing_date.isoformat(),
+            "missing_dates_found": len(missing_dates),
+            "processed": processed,
+            "skipped": skipped,
+            "errors": errors,
+            "start_date": gap_start.isoformat(),
+            "end_date": gap_end.isoformat(),
+            "partial_failure_note": (
+                "Some dates could not be processed and were skipped. "
+                "Re-running Catch Up will only retry dates from the current "
+                "latest date forward — it will NOT retry a failed date that "
+                "falls before a later date which succeeded in this run. To "
+                "recover a specific orphaned date, use that row's Refresh "
+                "action, or run a full Backfill History."
+                if errors > 0
+                else None
+            ),
+        }
+        _log.info(
+            "daily_performance.catch_up_complete",
+            portfolio_id=portfolio_id,
+            **{k: v for k, v in summary.items() if k not in ("status", "message")},
         )
         return summary
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { render } from '@/test/test-utils'
@@ -13,7 +13,7 @@ function model() {
 describe('TrendChart', () => {
   it('renders an accessible chart with a legend for every bucket plus the total overlay', () => {
     const m = model()
-    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" onDrill={vi.fn()} />)
+    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" />)
     expect(screen.getByRole('img', { name: /trend of balance over/i })).toBeInTheDocument()
     const legend = screen.getByRole('group', { name: /trend legend/i })
     expect(within(legend).getByText('Assets')).toBeInTheDocument()
@@ -23,7 +23,7 @@ describe('TrendChart', () => {
 
   it('offers a table view with a value for every period (no value is hover-gated)', async () => {
     const m = model()
-    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" onDrill={vi.fn()} />)
+    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" />)
     await userEvent.click(screen.getByRole('button', { name: 'Table view' }))
     const table = screen.getByRole('table')
     expect(within(table).getByText('Period')).toBeInTheDocument()
@@ -33,7 +33,7 @@ describe('TrendChart', () => {
 
   it('legend click toggles a series visibility', async () => {
     const m = model()
-    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" onDrill={vi.fn()} />)
+    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" />)
     const legend = screen.getByRole('group', { name: /trend legend/i })
     const assetsBtn = within(legend).getByRole('button', { name: 'Assets' })
     expect(assetsBtn).toHaveAttribute('aria-pressed', 'true')
@@ -41,19 +41,16 @@ describe('TrendChart', () => {
     expect(assetsBtn).toHaveAttribute('aria-pressed', 'false')
   })
 
-  it('drill affordance calls onDrill with the bucket id', async () => {
+  it('no longer renders its own "Drill into:" affordance — drilling is now a page-level, cross-chart control', () => {
     const m = model()
-    const onDrill = vi.fn()
-    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" onDrill={onDrill} />)
-    const drillRow = screen.getByText('Drill into:').parentElement as HTMLElement
-    await userEvent.click(within(drillRow).getByRole('button', { name: 'Assets' }))
-    expect(onDrill).toHaveBeenCalledWith('c1')
+    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" />)
+    expect(screen.queryByText('Drill into:')).not.toBeInTheDocument()
   })
 
   it('arrow keys move a period cursor and announce it via aria-live', async () => {
     const m = model()
     const { container } = render(
-      <TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" onDrill={vi.fn()} />,
+      <TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" />,
     )
     const svg = screen.getByRole('img', { name: /trend of balance/i })
     svg.focus()
@@ -64,7 +61,7 @@ describe('TrendChart', () => {
 
   it('balance tooltip renders the period-over-period delta on its own line (not concatenated onto the value)', async () => {
     const m = model()
-    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" onDrill={vi.fn()} />)
+    render(<TrendChart axis={m.axis} series={m.buckets} aggregate={m.aggregate} measure="balance" />)
     const svg = screen.getByRole('img', { name: /trend of balance/i })
     svg.focus()
     // Walk the cursor to the last (fully populated) period so the aggregate row

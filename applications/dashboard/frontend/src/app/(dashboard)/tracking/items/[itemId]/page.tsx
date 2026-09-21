@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -20,6 +20,7 @@ import { useItemTypes, bySortOrder } from '@/hooks/useItemTypes'
 import { extractApiError } from '@/services/api'
 import { ConfirmDeleteModal } from '@/components/tracking/ConfirmDeleteModal'
 import { BondsSection } from '@/components/tracking/BondsSection'
+import { SortableHeader, toggleSortState, type SortDirection, type SortState } from '@/components/tracking/SortableHeader'
 
 const todayIso = () => format(new Date(), 'yyyy-MM-dd')
 
@@ -256,6 +257,60 @@ function ProfitVsOriginalPanel({ data }: { data: ProfitVsOriginal }) {
   )
 }
 
+// ── Client-side ledger sorting ───────────────────────────────────────────────
+// The ledger's running total is computed by the backend in chronological
+// (entry date) order, so the default sort MUST be Date ascending — otherwise
+// the Running Total column's individual values stay correct but no longer
+// read as monotonically increasing down the page, which looks like a bug.
+// When the user actively sorts by any other column, an inline hint below the
+// table clarifies that Running Total still reflects chronological order.
+//
+// Pattern mirrors `BondsSection`'s register sort exactly (same nulls-last
+// convention, same shared `SortableHeader`) — see that file for the sibling
+// implementation this was modeled on.
+
+type LedgerEntry = Entry & { runningTotal: number }
+
+type LedgerSortColumn = 'entryDate' | 'amount' | 'runningTotal' | 'note' | 'code' | 'name'
+
+/** Treat a blank/whitespace-only string the same as `null` for sorting purposes. */
+const blankToNull = (s: string | null): string | null => (s && s.trim() !== '' ? s : null)
+
+/** The raw value the sort reads for a column — used only for the null check. */
+const LEDGER_SORT_FIELD: Record<LedgerSortColumn, (e: LedgerEntry) => unknown> = {
+  entryDate: e => e.entryDate,
+  amount: e => e.amount,
+  runningTotal: e => e.runningTotal,
+  note: e => blankToNull(e.note),
+  code: e => blankToNull(e.code),
+  name: e => blankToNull(e.name),
+}
+
+/** Non-null comparator per column (nulls are handled by `sortEntries`). */
+const ledgerComparators: Record<LedgerSortColumn, (a: LedgerEntry, b: LedgerEntry) => number> = {
+  entryDate:    (a, b) => a.entryDate.localeCompare(b.entryDate),
+  amount:       (a, b) => a.amount - b.amount,
+  runningTotal: (a, b) => a.runningTotal - b.runningTotal,
+  note:         (a, b) => (blankToNull(a.note) as string).localeCompare(blankToNull(b.note) as string),
+  code:         (a, b) => (blankToNull(a.code) as string).localeCompare(blankToNull(b.code) as string),
+  name:         (a, b) => (blankToNull(a.name) as string).localeCompare(blankToNull(b.name) as string),
+}
+
+/** Pure, stable-ish sort: copies the list, keeps nulls/blanks last in both directions. */
+function sortEntries(list: LedgerEntry[], column: LedgerSortColumn, direction: SortDirection): LedgerEntry[] {
+  const field = LEDGER_SORT_FIELD[column]
+  const cmp = ledgerComparators[column]
+  const dir = direction === 'asc' ? 1 : -1
+  return [...list].sort((a, b) => {
+    const aNull = field(a) == null
+    const bNull = field(b) == null
+    if (aNull && bNull) return 0
+    if (aNull) return 1          // null/blank LAST regardless of direction
+    if (bNull) return -1
+    return dir * cmp(a, b)
+  })
+}
+
 // ── Ledger section ─────────────────────────────────────────────────────────────
 
 function LedgerSection({ itemId }: { itemId: string }) {
@@ -265,12 +320,58 @@ function LedgerSection({ itemId }: { itemId: string }) {
   const [deleteEntry, setDeleteEntry] = useState<Entry | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [sort, setSort] = useState<SortState<LedgerSortColumn>>({ column: 'entryDate', direction: 'asc' })
+
+  // ── Multi-select (bulk delete) ──────────────────────────────────────────
+  // Keyed by entry id (not row index/position) so a selection survives a
+  // re-sort — `rows` order changes on sort, but `data.entries` identity and
+  // ids do not.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkError, setBulkError] = useState<string | null>(null)
+  const [resultAnnouncement, setResultAnnouncement] = useState('')
+  const selectAllRef = useRef<HTMLInputElement>(null)
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['tracking-running-total', itemId],
     queryFn: () => trackingService.getRunningTotal(itemId),
     staleTime: 10_000,
   })
+
+  const toggleSort = (column: LedgerSortColumn) => setSort(prev => toggleSortState(prev, column))
+
+  const rows = useMemo(
+    () => (data ? sortEntries(data.entries, sort.column, sort.direction) : []),
+    [data, sort],
+  )
+
+  const allVisibleSelected = rows.length > 0 && rows.every(r => selectedIds.has(r.id))
+  const someVisibleSelected = !allVisibleSelected && rows.some(r => selectedIds.has(r.id))
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someVisibleSelected
+  }, [someVisibleSelected])
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allVisibleSelected) rows.forEach(r => next.delete(r.id))
+      else rows.forEach(r => next.add(r.id))
+      return next
+    })
+  }
+
+  const clearSelection = () => setSelectedIds(new Set())
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['tracking-running-total', itemId] })
 
@@ -299,7 +400,16 @@ function LedgerSection({ itemId }: { itemId: string }) {
     setDeleteError(null)
     try {
       await trackingService.deleteEntry(deleteEntry.id)
+      const deletedId = deleteEntry.id
       setDeleteEntry(null)
+      // Keep selection state consistent if the row being single-deleted also
+      // happened to be part of the current bulk selection.
+      setSelectedIds(prev => {
+        if (!prev.has(deletedId)) return prev
+        const next = new Set(prev)
+        next.delete(deletedId)
+        return next
+      })
       await invalidate()
     } catch (err) {
       setDeleteError(extractApiError(err))
@@ -310,6 +420,71 @@ function LedgerSection({ itemId }: { itemId: string }) {
 
   const fmtAmount = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(2)
   const fmtDate = (iso: string) => format(new Date(iso), 'dd MMM yyyy')
+
+  /** Short, capped-length summary of entries for the bulk-delete confirmation. */
+  const summarizeEntries = (entries: LedgerEntry[]): string => {
+    const shown = entries.slice(0, 5).map(e => `${fmtDate(e.entryDate)} (${fmtAmount(e.amount)})`)
+    const extra = entries.length - shown.length
+    return `This will delete: ${shown.join(', ')}${extra > 0 ? `, +${extra} more` : ''}.`
+  }
+
+  const selectedEntries = rows.filter(r => selectedIds.has(r.id))
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    setBulkDeleting(true)
+    setBulkError(null)
+    setResultAnnouncement('')
+
+    // Look up labels from the un-sorted source list so a label is still
+    // available even if the row briefly leaves `rows` mid-batch.
+    const byId = new Map((data?.entries ?? []).map(e => [e.id, e]))
+
+    const results = await Promise.allSettled(ids.map(id => trackingService.deleteEntry(id)))
+
+    const succeededIds: string[] = []
+    const failed: { id: string; label: string; error: string }[] = []
+    results.forEach((result, i) => {
+      const id = ids[i]
+      if (result.status === 'fulfilled') {
+        succeededIds.push(id)
+      } else {
+        const entry = byId.get(id)
+        const label = entry ? `${fmtDate(entry.entryDate)} (${fmtAmount(entry.amount)})` : id
+        failed.push({ id, label, error: extractApiError(result.reason) })
+      }
+    })
+
+    // Clear only the successfully-deleted ids from selection; failed ones
+    // stay selected so the user can retry just those.
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      succeededIds.forEach(id => next.delete(id))
+      return next
+    })
+
+    // Invalidate exactly once for the whole batch, not once per row.
+    await invalidate()
+
+    setBulkDeleting(false)
+
+    if (failed.length === 0) {
+      setShowBulkConfirm(false)
+      setBulkError(null)
+      setResultAnnouncement(`${succeededIds.length} deleted`)
+      toast.success(`Deleted ${succeededIds.length} ${succeededIds.length === 1 ? 'entry' : 'entries'}`)
+    } else {
+      const summary = failed.map(f => `${f.label}: ${f.error}`).join('; ')
+      setBulkError(
+        `${succeededIds.length} of ${ids.length} deleted. ${failed.length} failed — ${summary}`,
+      )
+      setResultAnnouncement(`${succeededIds.length} deleted, ${failed.length} failed`)
+      toast.error(`${failed.length} ${failed.length === 1 ? 'entry' : 'entries'} failed to delete`)
+      // Leave the confirmation modal open (with the error shown) so the user
+      // can see what failed and retry just the still-selected rows.
+    }
+  }
 
   return (
     <div className="card p-5 space-y-4">
@@ -329,6 +504,14 @@ function LedgerSection({ itemId }: { itemId: string }) {
         </button>
       </div>
 
+      {/* Screen-reader-only announcements — kept separate from the visible
+          selection-count text below since they're driven by different
+          triggers (selection changes vs. a completed delete batch). */}
+      <div aria-live="polite" className="sr-only">
+        {selectedIds.size > 0 ? `${selectedIds.size} selected` : ''}
+      </div>
+      <div aria-live="polite" className="sr-only">{resultAnnouncement}</div>
+
       <AnimatePresence>
         {showAdd && <EntryForm onClose={() => setShowAdd(false)} onSave={handleAdd} />}
         {editEntry && <EntryForm initial={editEntry} onClose={() => setEditEntry(null)} onSave={handleEdit} />}
@@ -336,6 +519,24 @@ function LedgerSection({ itemId }: { itemId: string }) {
 
       {data && data.entries.length >= 1 && (
         <ProfitVsOriginalPanel data={data.profitVsOriginal} />
+      )}
+
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-brand-500/10 border border-brand-500/20">
+          <p className="text-xs text-ink-secondary">{selectedIds.size} selected</p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={clearSelection} className="btn-ghost text-xs px-3 py-1.5">
+              Clear selection
+            </button>
+            <button
+              type="button"
+              onClick={() => { setBulkError(null); setShowBulkConfirm(true) }}
+              className="text-xs px-3 py-1.5 rounded-lg bg-loss/15 text-loss border border-loss/30 hover:bg-loss/25 transition-colors flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete Selected
+            </button>
+          </div>
+        </div>
       )}
 
       {isLoading ? (
@@ -351,48 +552,74 @@ function LedgerSection({ itemId }: { itemId: string }) {
           No entries yet. Click <span className="text-brand-400 font-medium">Add Entry</span> to record the first investment amount.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border/50 text-ink-muted">
-                <th className="px-3 py-2 text-left font-medium">Date</th>
-                <th className="px-3 py-2 text-right font-medium">Amount</th>
-                <th className="px-3 py-2 text-right font-medium">Running Total</th>
-                <th className="px-3 py-2 text-left font-medium">Note</th>
-                <th className="px-3 py-2 text-left font-medium">Code</th>
-                <th className="px-3 py-2 text-left font-medium">Name</th>
-                <th className="px-3 py-2 text-left font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.entries.map(entry => (
-                <tr key={entry.id} className="border-b border-border/25 hover:bg-surface-elevated/50 transition-colors">
-                  <td className="px-3 py-2 text-ink-secondary whitespace-nowrap">{fmtDate(entry.entryDate)}</td>
-                  <td className={cn('px-3 py-2 text-right font-mono font-medium', entry.amount >= 0 ? 'text-gain' : 'text-loss')}>
-                    {fmtAmount(entry.amount)}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-ink-primary">{fmtAmount(entry.runningTotal)}</td>
-                  <td className="px-3 py-2 text-ink-secondary">
-                    <div className="max-w-[16rem] truncate" title={entry.note ?? ''}>{entry.note ?? '—'}</div>
-                  </td>
-                  <td className="px-3 py-2 text-ink-secondary whitespace-nowrap">{entry.code ?? '—'}</td>
-                  <td className="px-3 py-2 text-ink-secondary">
-                    <div className="max-w-[12rem] truncate" title={entry.name ?? ''}>{entry.name ?? '—'}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => setEditEntry(entry)} aria-label={`Edit entry on ${fmtDate(entry.entryDate)}`} className="btn-icon w-7 h-7">
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => setDeleteEntry(entry)} aria-label={`Delete entry on ${fmtDate(entry.entryDate)}`} className="btn-icon w-7 h-7 text-loss/70 hover:text-loss">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
+        <div className="space-y-1.5">
+          {sort.column !== 'entryDate' && (
+            <p className="text-[11px] text-ink-disabled">
+              Running Total reflects chronological (Date) order and may not appear in sequence under this sort.
+            </p>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border/50 text-ink-muted">
+                  <th className="px-3 py-2 text-left font-medium w-8">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      aria-label="Select all ledger entries"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAll}
+                    />
+                  </th>
+                  <SortableHeader column="entryDate"     label="Date"          align="left"  sort={sort} onSort={toggleSort} />
+                  <SortableHeader column="amount"        label="Amount"        align="right" sort={sort} onSort={toggleSort} />
+                  <SortableHeader column="runningTotal"  label="Running Total" align="right" sort={sort} onSort={toggleSort} />
+                  <SortableHeader column="note"          label="Note"          align="left"  sort={sort} onSort={toggleSort} />
+                  <SortableHeader column="code"          label="Code"          align="left"  sort={sort} onSort={toggleSort} />
+                  <SortableHeader column="name"          label="Name"          align="left"  sort={sort} onSort={toggleSort} />
+                  <th className="px-3 py-2 text-left font-medium">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map(entry => (
+                  <tr key={entry.id} className="border-b border-border/25 hover:bg-surface-elevated/50 transition-colors">
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select entry on ${fmtDate(entry.entryDate)}, ${fmtAmount(entry.amount)}`}
+                        checked={selectedIds.has(entry.id)}
+                        onChange={() => toggleSelectOne(entry.id)}
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-ink-secondary whitespace-nowrap">{fmtDate(entry.entryDate)}</td>
+                    <td className={cn('px-3 py-2 text-right font-mono font-medium whitespace-nowrap', entry.amount >= 0 ? 'text-gain' : 'text-loss')}>
+                      {fmtAmount(entry.amount)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-ink-primary whitespace-nowrap">{fmtAmount(entry.runningTotal)}</td>
+                    <td className="px-3 py-2 text-ink-secondary">
+                      <div className="max-w-[16rem] truncate" title={entry.note ?? ''}>{entry.note ?? '—'}</div>
+                    </td>
+                    <td className="px-3 py-2 text-ink-secondary">
+                      <div className="max-w-[8rem] truncate" title={entry.code ?? ''}>{entry.code ?? '—'}</div>
+                    </td>
+                    <td className="px-3 py-2 text-ink-secondary">
+                      <div className="max-w-[10rem] truncate" title={entry.name ?? ''}>{entry.name ?? '—'}</div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setEditEntry(entry)} aria-label={`Edit entry on ${fmtDate(entry.entryDate)}`} className="btn-icon w-7 h-7">
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => setDeleteEntry(entry)} aria-label={`Delete entry on ${fmtDate(entry.entryDate)}`} className="btn-icon w-7 h-7 text-loss/70 hover:text-loss">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -405,6 +632,20 @@ function LedgerSection({ itemId }: { itemId: string }) {
             error={deleteError}
             onConfirm={handleDelete}
             onClose={() => { setDeleteEntry(null); setDeleteError(null) }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showBulkConfirm && (
+          <ConfirmDeleteModal
+            entityLabel="ledger entries"
+            entityName={`${selectedEntries.length} ledger ${selectedEntries.length === 1 ? 'entry' : 'entries'}`}
+            cascadeWarning={selectedEntries.length > 0 ? summarizeEntries(selectedEntries) : undefined}
+            loading={bulkDeleting}
+            error={bulkError}
+            onConfirm={handleBulkDelete}
+            onClose={() => { setShowBulkConfirm(false); setBulkError(null) }}
           />
         )}
       </AnimatePresence>
@@ -497,7 +738,7 @@ export default function TrackingItemDetailPage() {
   }
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4">
       {/* Breadcrumb — this page has no sidebar entry of its own */}
       <Link
         href="/tracking/category"
@@ -521,7 +762,7 @@ export default function TrackingItemDetailPage() {
             <p className="text-xs text-ink-muted mt-0.5">Tracking Item detail</p>
           </div>
 
-          <div className="card p-5 space-y-4">
+          <div className="card p-5 space-y-4 max-w-3xl">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label htmlFor="item-name" className="block text-xs font-medium text-ink-secondary">Name</label>

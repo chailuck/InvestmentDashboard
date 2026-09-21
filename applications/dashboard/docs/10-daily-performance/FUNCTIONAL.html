@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Daily Performance — Functional Specification</h1>
 
-<p><strong>Version:</strong> 2.0 &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-07-18 &nbsp;|&nbsp; <strong>Route:</strong> <code>/analytics/daily-performance</code></p>
+<p><strong>Version:</strong> 2.1 &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-09-14 &nbsp;|&nbsp; <strong>Route:</strong> <code>/analytics/daily-performance</code></p>
 
 <hr>
 
@@ -134,10 +134,50 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 
 <hr>
 
-<h2>6. Run Now</h2>
+<h2>6. Snapshot actions: Run Now, Backfill History, and Catch Up</h2>
+<p>The page header offers three related but distinct actions for generating <code>daily_performance</code> rows. All three write through the same idempotent upsert, so none of them can produce duplicate rows for a given portfolio/date — but they differ in how much history they touch and whether they overwrite what is already stored.</p>
+
+<table>
+  <thead><tr><th>Action</th><th>Scope</th><th>Overwrites existing rows?</th><th>Typical use</th></tr></thead>
+  <tbody>
+    <tr><td>Run Now</td><td>Today only</td><td>Yes — today's row, if present</td><td>Refresh today's figures on demand</td></tr>
+    <tr><td>Catch Up</td><td>Missing weekdays from the day after the latest existing row through today</td><td>No — never touches an existing row</td><td>Routine "fill the gap" after a missed scheduler run or a few days away from the app</td></tr>
+    <tr><td>Backfill History</td><td>Every weekday from the portfolio's earliest trade (or an explicit start date) through today</td><td>Yes — every row in range is recomputed</td><td>First-time setup, or recovering after data corrections that must propagate through the whole history</td></tr>
+  </tbody>
+</table>
+
+<h3>6.1 Run Now</h3>
 <p>The Run Now button in the page header triggers <code>POST /api/v1/daily-performance/run?portfolio_id={id}</code> using today as the snapshot date. The button shows a spinning icon and the label "Running…" while the request is in flight.</p>
 <p>The operation is <strong>idempotent</strong>: if a snapshot already exists for today and the selected portfolio, it is overwritten with freshly fetched live prices and recalculated figures. Running it multiple times on the same day is safe.</p>
 <p>After a successful run the page re-fetches the record list so the new or updated row is immediately visible in the table and chart.</p>
+
+<h3>6.2 Backfill History</h3>
+<p>The Backfill History button opens a confirmation dialog before triggering <code>POST /api/v1/daily-performance/backfill?portfolio_id={id}</code> — a confirmation step exists because this action recomputes and overwrites the portfolio's <em>entire</em> stored history. It walks every SET trading weekday from the portfolio's earliest recorded position <code>entry_date</code> (or an explicit <code>start_date</code>) through today, and every row in that range is recomputed and upserted, whether or not it already existed.</p>
+<p>Reach for Backfill History when the full history needs to be regenerated from scratch — for example, on first-time setup for a portfolio, or after correcting cash-transaction data that changes the cumulative investment figure used by every day's snapshot.</p>
+<div class="callout warn">Only one Backfill History or Catch Up run can be in flight for a given portfolio at a time. Starting a second one while the first is still running is rejected with an error asking the user to wait — the two actions share the same concurrency guard.</div>
+
+<h3>6.3 Catch Up</h3>
+<p>The Catch Up button triggers <code>POST /api/v1/daily-performance/catch-up?portfolio_id={id}</code>. Unlike Backfill History, it <strong>never recomputes or overwrites an existing row</strong> — it looks only at the gap between the most recently recorded snapshot and today, and inserts the missing weekdays (Saturdays and Sundays are always skipped; the underlying job otherwise makes no attempt to detect SET market holidays — see TD-DP-03). It has no confirmation dialog because it cannot touch existing data.</p>
+<p>Use Catch Up as the routine option: after the nightly scheduler missed a run, or after being away from the app for a few days, it is faster and safer than a full Backfill because it leaves every already-recorded day untouched.</p>
+
+<p>Catch Up reports one of three outcomes in a dismissible banner:</p>
+<table>
+  <thead><tr><th>Outcome</th><th>Meaning</th><th>Banner shown</th></tr></thead>
+  <tbody>
+    <tr><td><code>no_history</code></td><td>No <code>daily_performance</code> rows exist yet for this portfolio — there is nothing to catch up from.</td><td>Info — directs the user to run Backfill History first.</td></tr>
+    <tr><td><code>up_to_date</code></td><td>No weekdays are missing between the latest existing row and today.</td><td>Info — "Already up to date through {date}."</td></tr>
+    <tr><td><code>completed</code></td><td>One or more missing days were processed (with or without errors).</td><td>Success if every day processed cleanly; error styling if any day failed.</td></tr>
+  </tbody>
+</table>
+
+<h4>Completed with errors — a real partial-failure case</h4>
+<p>When the outcome is <code>completed</code> and one or more of the missing days failed to compute, the banner switches to error styling instead of success, and shows the counts directly — e.g. "Caught up 3 day(s) with 1 error(s)." This is a genuine partial failure: the days that succeeded are saved; the ones that failed are not.</p>
+
+<div class="callout warn">
+<strong>Catch Up is not fully idempotent for a failure that happens in the middle of a run.</strong> Each Catch Up call always resumes scanning forward from whatever the latest recorded date currently is. So if, in one run, day 2 of a 5-day gap fails but days 3–5 succeed, day 3's success moves the "latest date" marker past the failed day 2 — a later Catch Up call will never go back and retry it. Day 2 becomes an orphaned gap that a simple retry cannot heal.
+<br><br>
+To recover a specific orphaned date like this, use that row's <strong>Refresh</strong> action in the records table (it deletes and regenerates just that one date), or run a full <strong>Backfill History</strong>. Retrying Catch Up itself remains the right move for the common case — a plain trailing gap where nothing after the point of failure has already succeeded.
+</div>
 
 <hr>
 

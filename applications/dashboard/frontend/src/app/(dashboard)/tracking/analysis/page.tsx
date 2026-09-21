@@ -449,6 +449,22 @@ function AnalysisPageInner() {
 
           <DrillBreadcrumb crumbs={crumbs} onNavigate={goToDepth} onUp={() => goToDepth(Math.max(0, depth - 1) as DrillDepth)} />
 
+          {chartModel && chartModel.buckets.some(s => s.drillId) && (
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <span className="text-ink-muted">Drill into:</span>
+              {chartModel.buckets.filter(s => s.drillId).map(s => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => s.drillId && drillInto(s.drillId)}
+                  className="btn-ghost px-2 py-0.5 text-xs"
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           {statRow ? <StatRow model={statRow} /> : <StatRow model={zeroStat()} cleared />}
 
           {chartModel && chartModel.empty !== null ? (
@@ -475,7 +491,6 @@ function AnalysisPageInner() {
                   series={chartModel.buckets}
                   aggregate={chartModel.aggregate}
                   measure={viewState.measure}
-                  onDrill={drillInto}
                 />
               </ChartCard>
 

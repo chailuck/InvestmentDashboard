@@ -32,7 +32,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <body>
 <h1>Daily Performance — Technical Design</h1>
 
-<p><strong>Version:</strong> 2.0 &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-07-18</p>
+<p><strong>Version:</strong> 2.1 &nbsp;|&nbsp; <strong>Last updated:</strong> 2026-09-14</p>
 
 <hr>
 
@@ -41,7 +41,7 @@ hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0 }
 <h3>Backend files</h3>
 <pre><code>backend/app/models/daily_performance.py          — SQLAlchemy ORM model (DailyPerformance)
 backend/app/services/daily_performance_service.py — Snapshot computation and upsert logic
-backend/app/api/v1/endpoints/daily_performance.py — FastAPI router (3 endpoints)
+backend/app/api/v1/endpoints/daily_performance.py — FastAPI router (6 endpoints)
 backend/app/scheduler.py                          — APScheduler jobs (daily_performance_job,
                                                     start_performance_scheduler,
                                                     stop_performance_scheduler)</code></pre>
@@ -133,6 +133,43 @@ frontend/src/app/(dashboard)/analytics/daily-performance/page.tsx
 <p><code>open_positions</code>, <code>purchased_positions</code>, and <code>sold_positions</code> are each passed through <code>_merge_same_symbol_positions()</code> before being returned, which collapses same-symbol/same-price/same-entry_date duplicates produced by partial sells (a shrunk active row plus its closed remainder); merging never crosses list boundaries and never applies to entries with a null <code>entry_date</code>.</p>
 
 <p>Price-fetch failures are caught per-symbol; the symbol's P&amp;L contribution is treated as 0.0 and a warning is logged. The snapshot always completes even if all price fetches fail.</p>
+
+<h3>run_catch_up_snapshot</h3>
+<pre><code>async def run_catch_up_snapshot(
+    db: AsyncSession,
+    user_id: str,        # string UUID of the owner user
+    portfolio_id: str,   # string UUID of the target portfolio
+) -> dict</code></pre>
+
+<p>A lightweight complement to <code>run_historical_backfill</code>: instead of deleting and recomputing the whole history, it walks forward from the day after the most recent existing <code>daily_performance</code> row through today (inclusive), inserting only the missing Mon–Fri days. Existing rows are never read for mutation and never touched.</p>
+
+<ol>
+  <li>Acquire the shared <code>_active_backfills</code> concurrency lock (see ADR-DP-04 below); raise <code>RuntimeError</code> if a backfill or another catch-up is already running for this portfolio.</li>
+  <li>Query <code>MAX(date)</code> for this portfolio. If no row exists, return early with <code>status = "no_history"</code>.</li>
+  <li>Compute the missing weekday dates from <code>(latest_existing_date + 1 day)</code> through <code>date.today()</code>. If none, return early with <code>status = "up_to_date"</code>.</li>
+  <li>Fetch <strong>all</strong> positions and <strong>all</strong> cash transactions for the portfolio — the same unfiltered shape used by <code>run_historical_backfill</code> — then immediately <code>db.expunge()</code> every loaded ORM object. This is required because the per-date commit loop in step 7 runs under SQLAlchemy's default <code>expire_on_commit=True</code>; without expunging first, a later iteration's attribute access on an already-committed object raises <code>MissingGreenlet</code> on an async session.</li>
+  <li>Fetch price history in parallel for every unique symbol across the portfolio's positions, scoped only to the gap window <code>[missing_dates[0], missing_dates[-1]]</code> — not the full portfolio history, since only the gap needs to be priced.</li>
+  <li>Seed the running <code>acc_pnl</code> accumulator from the <code>acc_pnl</code> value stored on the latest existing row (falls back to <code>0.0</code> with a warning log if that value is <code>NULL</code> — a legacy row predating the <code>acc_pnl</code> column).</li>
+  <li>Iterate the missing dates ascending. For each date: compute the snapshot values, upsert via <code>INSERT ... ON CONFLICT DO UPDATE</code>, and <strong>commit immediately</strong> (see ADR-DP-05 below). A failure on one date rolls back just that statement, restores the accumulator to its pre-date value, increments <code>errors</code>, logs with <code>may_require_manual_recovery</code> set to whether this date is not the last date in the batch, and continues to the next date — it never aborts the run.</li>
+  <li>Release the concurrency lock in a <code>finally</code> block, regardless of outcome.</li>
+</ol>
+
+<p><strong>Returns</strong> a summary dict:</p>
+<pre><code>{
+  "status": "no_history" | "up_to_date" | "completed",
+  "message": str | null,
+  "latest_existing_date": "YYYY-MM-DD" | null,
+  "missing_dates_found": int,
+  "processed": int,
+  "skipped": int,
+  "errors": int,
+  "start_date": "YYYY-MM-DD" | null,
+  "end_date": "YYYY-MM-DD" | null,
+  "partial_failure_note": str | null
+}</code></pre>
+<p><code>partial_failure_note</code> is populated only when <code>status == "completed"</code> and <code>errors &gt; 0</code>; it is the same guidance surfaced to the user (see DEF-001 below).</p>
+
+<div class="callout warn">DEF-001 — Forward-only gap detection means a middle-date failure is not self-healing. Because step 3 always resumes scanning from <code>MAX(date) + 1</code>, a retry after a run with <code>errors &gt; 0</code> continues only from the new latest <em>successfully written</em> date — it does not re-examine any earlier date. If a middle date in a run fails but a later date in that same run succeeds, the failed date becomes a permanent, silently orphaned gap: the later success has already advanced <code>MAX(date)</code> past it, so no future Catch Up call will ever rediscover it. Retry is safe and sufficient only for the common case of a trailing gap (nothing after the failure point already succeeded). Recovery for an orphaned middle-date gap requires either that specific row's Refresh action (<code>DELETE</code> then <code>POST /run?snapshot_date=&lt;date&gt;</code>) or a full <code>run_historical_backfill</code>.</div>
 
 <h3>run_snapshot_for_all_portfolios</h3>
 <pre><code>async def run_snapshot_for_all_portfolios(

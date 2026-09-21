@@ -6,7 +6,7 @@ import TrackingDashboardPage from '../page'
 import { trackingService } from '@/services/tracking'
 import type {
   TrackingSet, DashboardBalanceGridOut, BalanceCell, TrackingSetExport,
-  OriginalInvestmentRollup,
+  OriginalInvestmentRollup, OriginalInvestmentItemRow, RunningTotal,
 } from '@/services/tracking'
 import { sendExportEmail } from '@/services/emailExport'
 import { utf8ToBase64 } from '@/lib/tracking-export-html'
@@ -25,6 +25,7 @@ vi.mock('@/services/tracking', () => ({
     getBalanceGrid: vi.fn(),
     getExport: vi.fn(),
     getOriginalInvestmentRollup: vi.fn(),
+    getRunningTotal: vi.fn(),
   },
 }))
 
@@ -380,6 +381,50 @@ function filledConst(value: number): BalanceCell[] {
   }))
 }
 
+// Two categories with OPPOSITE-signed deltas in the SAME quarters —
+// `cat-pos` always increases, `cat-neg` always decreases — specifically to
+// exercise `CategoryDeltaChart`'s diverging stack on its untested side: every
+// other delta-chart fixture in this file uses exclusively non-negative
+// `deltaAmount` values (0 or positive), so the `cumNeg`/negativeSegs branch,
+// the negative-side y-domain padding, and a segment actually rendering BELOW
+// the zero baseline have never been exercised until this fixture.
+const DELTA_SIGN_GRID: DashboardBalanceGridOut = {
+  trackingSetId: 'set-1',
+  years: [{ year: 2024, quarters: [1, 2, 3, 4] }],
+  categories: [
+    {
+      id: 'cat-pos', name: 'Growing', orderIndex: 0,
+      subtotal: [
+        { year: 2024, quarter: 1, balance: 1000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+        { year: 2024, quarter: 2, balance: 1100, deltaAmount: 100, deltaPercent: 10, hasData: true, hasPreviousData: true },
+        { year: 2024, quarter: 3, balance: 1250, deltaAmount: 150, deltaPercent: 13.64, hasData: true, hasPreviousData: true },
+        { year: 2024, quarter: 4, balance: 1450, deltaAmount: 200, deltaPercent: 16, hasData: true, hasPreviousData: true },
+      ],
+      subCategories: [],
+    },
+    {
+      id: 'cat-neg', name: 'Shrinking', orderIndex: 1,
+      subtotal: [
+        { year: 2024, quarter: 1, balance: 500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+        { year: 2024, quarter: 2, balance: 450, deltaAmount: -50, deltaPercent: -10, hasData: true, hasPreviousData: true },
+        { year: 2024, quarter: 3, balance: 370, deltaAmount: -80, deltaPercent: -17.78, hasData: true, hasPreviousData: true },
+        { year: 2024, quarter: 4, balance: 340, deltaAmount: -30, deltaPercent: -8.11, hasData: true, hasPreviousData: true },
+      ],
+      subCategories: [],
+    },
+  ],
+  grandTotal: [
+    { year: 2024, quarter: 1, balance: 1500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 2, balance: 1550, deltaAmount: 50, deltaPercent: 3.33, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 3, balance: 1620, deltaAmount: 70, deltaPercent: 4.52, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 4, balance: 1790, deltaAmount: 170, deltaPercent: 10.49, hasData: true, hasPreviousData: true },
+  ],
+  propertyBreakdown: {
+    propertyTotal: filledRow1Year(0),
+    nonPropertyTotal: filledRow1Year(0),
+  },
+}
+
 // Single category, single quarter (Q1) where the category ITSELF is
 // `hasData:false` but Grand Total is `hasData:true` for that same quarter —
 // the rare "all-categories-absent, total present" edge case. The documented
@@ -446,6 +491,264 @@ const TARGET_GRID: DashboardBalanceGridOut = {
   },
 }
 
+// ---------------------------------------------------------------------------
+// Fixtures — Feature 1 (12-quarter Grand-Total moving average overlay)
+// ---------------------------------------------------------------------------
+
+/** `n` filled cells (n/4 years x 4 quarters) — the N-quarter generalization of `filledRow`/`filledRow1Year` above, used only where category subtotal VALUES don't matter (the MA-specific fixtures below all use `categories: []`, so only `propertyBreakdown`'s array LENGTH needs to match `years.length * 4`). */
+const filledRowN = (base: number, n: number): BalanceCell[] =>
+  Array.from({ length: n }, (_, i) => filled(base + i * 10))
+
+// These MA-specific fixtures deliberately use `categories: []` (no
+// categories at all) so `CategoryDeltaChart`'s bar-stack y-domain collapses
+// to a fixed, trivial constant (`yMin=-0.08`, `yRange=1` — see
+// `deltaChartYOf` below) — this decouples the moving-average LINE's pixel
+// position from any category bar-stack math entirely, so its expected
+// y-coordinate can be hand-derived exactly, letting these tests verify the
+// actual AVERAGING arithmetic (not merely "a line exists").
+const PAD_TOP = 20
+const INNER_H = 260 - 20 - 36 // TREND_CHART_H - TREND_CHART_PAD.top - TREND_CHART_PAD.bottom, mirrored from page.tsx
+
+/** Replicates `CategoryDeltaChart`'s own `yOf` mapping for the fixed domain every `categories: []` fixture below produces (`dataMin=dataMax=0` -> `yMin=-0.08`, `yRange=1`, deterministically, every time). */
+function deltaChartYOf(value: number): number {
+  const yMin = -0.08
+  const yRange = 1
+  return PAD_TOP + INNER_H - ((value - yMin) / yRange) * INNER_H
+}
+
+/** Parses every `M`/`L` coordinate pair out of an SVG path `d` string, in order — a generalization of the `[ML]([\d.]+),([\d.]+)` regex this file already uses elsewhere, extended with a leading `-?` since these fixtures' deliberately-degenerate y-domain (see above) produces far-off-chart negative pixel values. */
+function parsePathPoints(d: string): { x: number; y: number }[] {
+  const matches = d.match(/[ML](-?[\d.]+),(-?[\d.]+)/g) ?? []
+  return matches.map(m => {
+    const [, x, y] = m.match(/[ML](-?[\d.]+),(-?[\d.]+)/)!
+    return { x: Number(x), y: Number(y) }
+  })
+}
+
+// 12 chronological quarters (2024 Q1 .. 2026 Q4, `years` given in realistic
+// DESCENDING order per the chart's own chronological-reversal contract — see
+// `CHART_GRID`'s own comment above). Grand Total's delta is unresolvable at
+// the very first quarter (2024 Q1, `hasPreviousData:false`, as every "start
+// of history" quarter on this page already is) and a clean arithmetic
+// sequence 10, 20, .., 110 (step 10) at every quarter after that — chosen so
+// the trailing-12 window at the LAST quarter (2026 Q4) averages the 11
+// resolvable values to an exact, hand-checkable 60
+// (`(10+20+...+110)/11 = 660/11 = 60`).
+const MA_12Q_GRID: DashboardBalanceGridOut = {
+  trackingSetId: 'set-1',
+  years: [
+    { year: 2026, quarters: [1, 2, 3, 4] },
+    { year: 2025, quarters: [1, 2, 3, 4] },
+    { year: 2024, quarters: [1, 2, 3, 4] },
+  ],
+  categories: [],
+  grandTotal: [
+    { year: 2026, quarter: 1, balance: 1000, deltaAmount: 80, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2026, quarter: 2, balance: 1090, deltaAmount: 90, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2026, quarter: 3, balance: 1190, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2026, quarter: 4, balance: 1300, deltaAmount: 110, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 1, balance: 700, deltaAmount: 40, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 2, balance: 750, deltaAmount: 50, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 3, balance: 810, deltaAmount: 60, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 4, balance: 880, deltaAmount: 70, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 1, balance: 500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 2, balance: 510, deltaAmount: 10, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 3, balance: 530, deltaAmount: 20, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 4, balance: 560, deltaAmount: 30, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  ],
+  propertyBreakdown: {
+    propertyTotal: filledRowN(0, 12),
+    nonPropertyTotal: filledRowN(0, 12),
+  },
+}
+
+// 16 chronological quarters (2024 Q1 .. 2027 Q4), with the two most recent
+// (2027 Q3-Q4) entirely unstarted so the page's own trailing-quarter trim
+// (Gate 1 requirement 4) drops them, leaving 2027 Q2 as the actual LAST
+// plotted quarter — deliberately, so its trailing-12 window
+// (`[2024 Q3 .. 2027 Q2]`, 12 quarters) EXCLUDES both 2024 Q1
+// (`hasPreviousData:false`, as always) AND 2024 Q2, whose delta is a huge
+// outlier (99,999), specifically to prove the window is a genuinely CAPPED
+// trailing-12 (excluding 2024 Q2 because it has fallen OUTSIDE the window,
+// not because of `hasPreviousData` gating) rather than an ever-growing
+// average. The 12 in-window values are a clean 10, 20, .., 120 (step 10),
+// averaging to an exact, hand-checkable 65 (`(10+...+120)/12 = 780/12 = 65`).
+const MA_TRAILING_CAP_GRID: DashboardBalanceGridOut = {
+  trackingSetId: 'set-1',
+  years: [
+    { year: 2027, quarters: [1, 2, 3, 4] },
+    { year: 2026, quarters: [1, 2, 3, 4] },
+    { year: 2025, quarters: [1, 2, 3, 4] },
+    { year: 2024, quarters: [1, 2, 3, 4] },
+  ],
+  categories: [],
+  grandTotal: [
+    { year: 2027, quarter: 1, balance: 2000, deltaAmount: 110, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2027, quarter: 2, balance: 2120, deltaAmount: 120, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2027, quarter: 3, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+    { year: 2027, quarter: 4, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: false },
+    { year: 2026, quarter: 1, balance: 1400, deltaAmount: 70, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2026, quarter: 2, balance: 1480, deltaAmount: 80, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2026, quarter: 3, balance: 1570, deltaAmount: 90, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2026, quarter: 4, balance: 1670, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 1, balance: 1000, deltaAmount: 30, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 2, balance: 1040, deltaAmount: 40, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 3, balance: 1090, deltaAmount: 50, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 4, balance: 1150, deltaAmount: 60, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 1, balance: 500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 2, balance: 100499, deltaAmount: 99999, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 3, balance: 100509, deltaAmount: 10, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 4, balance: 100529, deltaAmount: 20, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  ],
+  propertyBreakdown: {
+    propertyTotal: filledRowN(0, 16),
+    nonPropertyTotal: filledRowN(0, 16),
+  },
+}
+
+// A single year (4 quarters) — an "expanding window" case: fewer than 12
+// quarters exist at all, so the trailing-12 window at the last quarter
+// (2024 Q4) simply uses every quarter available (minus the always-
+// unresolvable first one). Chosen as 100/200/300 for a clean average of 200
+// at the last quarter (`(100+200+300)/3 = 200`).
+const MA_SHORT_GRID: DashboardBalanceGridOut = {
+  trackingSetId: 'set-1',
+  years: [{ year: 2024, quarters: [1, 2, 3, 4] }],
+  categories: [],
+  grandTotal: [
+    { year: 2024, quarter: 1, balance: 500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 2, balance: 600, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 3, balance: 800, deltaAmount: 200, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 4, balance: 1100, deltaAmount: 300, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  ],
+  propertyBreakdown: {
+    propertyTotal: filledRowN(0, 4),
+    nonPropertyTotal: filledRowN(0, 4),
+  },
+}
+
+// A single year (4 quarters) where BOTH 2024 Q1 (the always-unresolvable
+// first-ever quarter) AND 2024 Q2 are `hasPreviousData:false` — Q2
+// deliberately carries a non-null `deltaAmount` (40) anyway, specifically to
+// prove it is excluded from the average because of `hasPreviousData`, NOT
+// coerced to 0 or accidentally included as 40. This also doubles as the
+// "window with zero qualifying values renders a gap" case: at Q2 itself the
+// trailing window is just `[Q1, Q2]`, both unresolvable, so its own
+// moving-average point must be a genuine GAP (absent from the plotted path)
+// rather than a fabricated zero.
+const MA_EXCLUDE_GRID: DashboardBalanceGridOut = {
+  trackingSetId: 'set-1',
+  years: [{ year: 2024, quarters: [1, 2, 3, 4] }],
+  categories: [],
+  grandTotal: [
+    { year: 2024, quarter: 1, balance: 500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 2, balance: 540, deltaAmount: 40, deltaPercent: 1, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 3, balance: 640, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 4, balance: 940, deltaAmount: 300, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  ],
+  propertyBreakdown: {
+    propertyTotal: filledRowN(0, 4),
+    nonPropertyTotal: filledRowN(0, 4),
+  },
+}
+
+// 8 chronological quarters (2024 Q1 .. 2025 Q4) where the `hasPreviousData:false`
+// quarter is NOT at the leading edge of history — it sits at 2024 Q3, a
+// window position with a QUALIFYING quarter both before it (2024 Q2) and
+// after it (2024 Q4), unlike every other MA fixture above (all of which only
+// ever exclude quarters at the very start of the array). 2024 Q3 carries a
+// deliberately poisonous non-null `deltaAmount` (99,999) specifically to
+// prove two things at once: (1) its own value is excluded from every
+// average it would otherwise fall inside, even though it is surrounded by
+// qualifying quarters, not merely preceding them; and (2) the MOVING-AVERAGE
+// POINT AT 2024 Q3 ITSELF still plots (using only its window's qualifying
+// members, here just 2024 Q2's 100) — proving the point's existence is
+// gated on "does this window contain ANY qualifying member", never on
+// "does the CURRENT quarter's own cell qualify" (a plausible but wrong
+// alternate implementation this fixture would catch).
+const MA_MIDWINDOW_EXCLUDE_GRID: DashboardBalanceGridOut = {
+  trackingSetId: 'set-1',
+  years: [
+    { year: 2025, quarters: [1, 2, 3, 4] },
+    { year: 2024, quarters: [1, 2, 3, 4] },
+  ],
+  categories: [],
+  grandTotal: [
+    { year: 2025, quarter: 1, balance: 1600, deltaAmount: 300, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 2, balance: 2000, deltaAmount: 400, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 3, balance: 2500, deltaAmount: 500, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2025, quarter: 4, balance: 3100, deltaAmount: 600, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 1, balance: 500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 2, balance: 600, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 3, balance: 700, deltaAmount: 99999, deltaPercent: 1, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 4, balance: 900, deltaAmount: 200, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  ],
+  propertyBreakdown: {
+    propertyTotal: filledRowN(0, 8),
+    nonPropertyTotal: filledRowN(0, 8),
+  },
+}
+
+// 20 chronological quarters (2024 Q1 .. 2028 Q4) — unlike every fixture
+// above, whose only gaps ever occur at the LEADING edge of history (either
+// the inherent first-ever quarter, or `MA_MIDWINDOW_EXCLUDE_GRID`'s single
+// excluded quarter whose OWN window still reaches back far enough to find a
+// qualifying member), this fixture constructs a run of EXACTLY 12
+// consecutive `hasPreviousData:false` quarters (2024 Q4 .. 2027 Q3) — long
+// enough that the run's OWN last member (2027 Q3) has a full 12-wide
+// trailing window entirely contained within the run, with zero qualifying
+// members — a genuine INTERIOR gap: a `null` point with real, populated MA
+// points both immediately before it (2027 Q2, whose window still reaches
+// back to 2024 Q3's qualifying 200) and immediately after it (2027 Q4,
+// itself qualifying, whose window has fully aged out every quarter in the
+// run). `buildLinePathWithGaps` must therefore emit TWO separate `M`
+// (moveto) commands, proving the SVG path actually breaks mid-stream — not
+// merely "starts late", which is all every other gap fixture in this file
+// exercises.
+const MA_MIDSTREAM_GAP_GRID: DashboardBalanceGridOut = {
+  trackingSetId: 'set-1',
+  years: [
+    { year: 2028, quarters: [1, 2, 3, 4] },
+    { year: 2027, quarters: [1, 2, 3, 4] },
+    { year: 2026, quarters: [1, 2, 3, 4] },
+    { year: 2025, quarters: [1, 2, 3, 4] },
+    { year: 2024, quarters: [1, 2, 3, 4] },
+  ],
+  categories: [],
+  grandTotal: [
+    { year: 2028, quarter: 1, balance: 6100, deltaAmount: 600, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2028, quarter: 2, balance: 6710, deltaAmount: 610, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2028, quarter: 3, balance: 7330, deltaAmount: 620, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2028, quarter: 4, balance: 7960, deltaAmount: 630, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2027, quarter: 1, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2027, quarter: 2, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    // The run's own last member — its full 12-wide trailing window
+    // ([2024 Q4 .. 2027 Q3]) is entirely non-qualifying, producing the
+    // genuine interior gap. Carries a poisonous non-null delta anyway (like
+    // `MA_MIDWINDOW_EXCLUDE_GRID`'s 2024 Q3), proving exclusion is gated on
+    // `hasPreviousData`, never on whether `deltaAmount` happens to be null.
+    { year: 2027, quarter: 3, balance: 3000, deltaAmount: 99999, deltaPercent: 1, hasData: true, hasPreviousData: false },
+    { year: 2027, quarter: 4, balance: 3500, deltaAmount: 500, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2026, quarter: 1, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2026, quarter: 2, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2026, quarter: 3, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2026, quarter: 4, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2025, quarter: 1, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2025, quarter: 2, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2025, quarter: 3, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2025, quarter: 4, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 1, balance: 500, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+    { year: 2024, quarter: 2, balance: 600, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    { year: 2024, quarter: 3, balance: 800, deltaAmount: 200, deltaPercent: 1, hasData: true, hasPreviousData: true },
+    // Start of the 12-quarter non-qualifying run.
+    { year: 2024, quarter: 4, balance: 3000, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+  ],
+  propertyBreakdown: {
+    propertyTotal: filledRowN(0, 20),
+    nonPropertyTotal: filledRowN(0, 20),
+  },
+}
+
 /** An empty rollup — the default so the standalone "Original Investment vs Profit" section renders its inert "no tracked items" state and never collides with existing per-table text assertions. Individual tests override with `ROLLUP_FULL`. */
 const ROLLUP_EMPTY: OriginalInvestmentRollup = {
   trackingSetId: 'set-1',
@@ -481,6 +784,175 @@ const ROLLUP_FULL: OriginalInvestmentRollup = {
     },
   ],
   totals: { netOriginalInvestment: 150000, currentValue: 177000, profit: 27000, profitPercent: 18 },
+}
+
+// ---------------------------------------------------------------------------
+// Fixtures — Feature 2 (expandable per-item charts on the rollup table)
+// ---------------------------------------------------------------------------
+
+// A DEDICATED grid, separate from `GRID` above, so these tests never disturb
+// the many existing assertions built around `GRID`'s own item/category ids.
+// `years` given in realistic DESCENDING order (2025, 2024) — same
+// chronological-reversal contract as `CHART_GRID` etc. — so `chartQuarters`
+// reads chronologically as 2024 Q1..Q4, 2025 Q1..Q4 (8 quarters).
+//
+// `exp-item-1`'s own cells (`EXPAND_ITEM_CELLS`) are positionally aligned to
+// `years` (`[2025 Q1-4, 2024 Q1-4]`), chosen so its CHRONOLOGICAL
+// `currentValues` are `[1800, 2000, 2100, 2200, null, 2300, 2400, 2500]` —
+// every quarter has a balance EXCEPT 2025 Q1 (`hasData:false`), which is
+// deliberately the one quarter where a resolvable original-investment figure
+// (see `EXPAND_ITEM_1_RUNNING_TOTAL` below) still exists but no bar may
+// render (current value missing) — the "quarter missing either component
+// doesn't render a fabricated partial bar" case.
+const EXPAND_ITEM_CELLS: BalanceCell[] = [
+  { year: 2025, quarter: 1, balance: null, deltaAmount: null, deltaPercent: null, hasData: false, hasPreviousData: true },
+  { year: 2025, quarter: 2, balance: 2300, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  { year: 2025, quarter: 3, balance: 2400, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  { year: 2025, quarter: 4, balance: 2500, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  { year: 2024, quarter: 1, balance: 1800, deltaAmount: null, deltaPercent: null, hasData: true, hasPreviousData: false },
+  { year: 2024, quarter: 2, balance: 2000, deltaAmount: 200, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  { year: 2024, quarter: 3, balance: 2100, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+  { year: 2024, quarter: 4, balance: 2200, deltaAmount: 100, deltaPercent: 1, hasData: true, hasPreviousData: true },
+]
+
+// `exp-item-1`'s ledger — 3 entries, deliberately stored OUT OF
+// chronological order (`e-b`, `e-c`, `e-a`) to prove the max-qualifying-
+// `entryDate` logic, not array order, determines each quarter's original-
+// investment-to-date. Quarter-end boundaries: 2024 Q1=03-31, Q2=06-30,
+// Q3=09-30, Q4=12-31.
+//  - 2024 Q1 (03-31): no entry qualifies yet (`e-a` is 05-01) -> OID = null
+//    (zero qualifying entries -> null, never 0).
+//  - 2024 Q2 (06-30): `e-a` (05-01, BEFORE the boundary) and `e-b` (06-30,
+//    EXACTLY ON the boundary — must count) both qualify; `e-b` is the later
+//    of the two -> OID = 1500.
+//  - 2024 Q3 (09-30): `e-c` (10-15) is AFTER this boundary -> must NOT
+//    count yet -> OID stays at `e-b`'s 1500 — the "gap quarter still
+//    reflects the most recent prior cumulative" case.
+//  - 2024 Q4 (12-31) onward: `e-c` now qualifies -> OID = 1800.
+const EXPAND_ITEM_1_RUNNING_TOTAL: RunningTotal = {
+  itemId: 'exp-item-1',
+  currentTotal: 1800,
+  entries: [
+    { id: 'e-b', trackingItemId: 'exp-item-1', amount: 500, entryDate: '2024-06-30', note: null, code: null, name: null, createdAt: '', updatedAt: '', runningTotal: 1500 },
+    { id: 'e-c', trackingItemId: 'exp-item-1', amount: 300, entryDate: '2024-10-15', note: null, code: null, name: null, createdAt: '', updatedAt: '', runningTotal: 1800 },
+    { id: 'e-a', trackingItemId: 'exp-item-1', amount: 1000, entryDate: '2024-05-01', note: null, code: null, name: null, createdAt: '', updatedAt: '', runningTotal: 1000 },
+  ],
+  profitVsOriginal: {
+    netOriginalInvestment: 1800, currentValue: 2500, currentValueSlot: { year: 2025, quarter: 4 },
+    profit: 700, profitPercent: 38.89, isCovered: true,
+  },
+}
+
+/**
+ * `exp-item-1`'s ledger for the same-`entryDate` tie-break regression test
+ * (Gate 3 fix). Two entries share the SAME `entryDate` (2024-06-30, exactly
+ * the 2024 Q2 boundary) but differ in `createdAt` and `runningTotal`, and
+ * are deliberately stored with the STALE (earlier-`createdAt`) entry FIRST
+ * in the array — mirroring the real bug repro (first-in-array
+ * `runningTotal:500`, second/later-entered-that-day `runningTotal:800`).
+ * The backend's own sort (`entry_date ASC, created_at ASC`) would also put
+ * `e-tie-2` last, but this fixture doesn't rely on that ordering surviving —
+ * it exists to prove the derivation itself, not array/server order, picks
+ * the later-`createdAt` entry's `runningTotal` (800), never the
+ * first-encountered one (500).
+ */
+const EXPAND_ITEM_TIEBREAK_RUNNING_TOTAL: RunningTotal = {
+  itemId: 'exp-item-1',
+  currentTotal: 800,
+  entries: [
+    { id: 'e-tie-1', trackingItemId: 'exp-item-1', amount: 500, entryDate: '2024-06-30', note: null, code: null, name: null, createdAt: '2024-06-30T08:00:00+00:00', updatedAt: '', runningTotal: 500 },
+    { id: 'e-tie-2', trackingItemId: 'exp-item-1', amount: 300, entryDate: '2024-06-30', note: null, code: null, name: null, createdAt: '2024-06-30T15:00:00+00:00', updatedAt: '', runningTotal: 800 },
+  ],
+  profitVsOriginal: {
+    netOriginalInvestment: 800, currentValue: 2500, currentValueSlot: { year: 2025, quarter: 4 },
+    profit: 1700, profitPercent: 212.5, isCovered: true,
+  },
+}
+
+/** `exp-item-2`'s ledger — a single simple entry; used only for the lazy-fetch/expand-toggle tests below, which don't need deep derivation coverage (that's `EXPAND_ITEM_1_RUNNING_TOTAL`'s job). */
+const EXPAND_ITEM_2_RUNNING_TOTAL: RunningTotal = {
+  itemId: 'exp-item-2',
+  currentTotal: 500,
+  entries: [
+    { id: 'e2-a', trackingItemId: 'exp-item-2', amount: 500, entryDate: '2024-01-01', note: null, code: null, name: null, createdAt: '', updatedAt: '', runningTotal: 500 },
+  ],
+  profitVsOriginal: {
+    netOriginalInvestment: 500, currentValue: 1070, currentValueSlot: { year: 2025, quarter: 4 },
+    profit: 570, profitPercent: 114, isCovered: true,
+  },
+}
+
+const EXPAND_GRID: DashboardBalanceGridOut = {
+  trackingSetId: 'set-1',
+  years: [
+    { year: 2025, quarters: [1, 2, 3, 4] },
+    { year: 2024, quarters: [1, 2, 3, 4] },
+  ],
+  categories: [
+    {
+      id: 'exp-cat-1', name: 'Investments', orderIndex: 0,
+      subtotal: filledRowN(0, 8),
+      subCategories: [
+        {
+          id: 'exp-sub-1', name: 'Brokerage', orderIndex: 0,
+          subtotal: filledRowN(0, 8),
+          items: [
+            {
+              id: 'exp-item-1', name: 'Growth Fund', typeId: 'it-inv', typeSlug: 'investment_account',
+              countsAsProperty: false, type: 'Investment Account', orderIndex: 0, exclusive: false,
+              cells: EXPAND_ITEM_CELLS,
+            },
+            {
+              id: 'exp-item-2', name: 'Bond Ladder', typeId: 'it-inv', typeSlug: 'investment_account',
+              countsAsProperty: false, type: 'Investment Account', orderIndex: 1, exclusive: false,
+              cells: filledRowN(1000, 8),
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  grandTotal: filledRowN(3000, 8),
+  propertyBreakdown: {
+    propertyTotal: filledRowN(0, 8),
+    nonPropertyTotal: filledRowN(0, 8),
+  },
+}
+
+/** Two covered rows (`exp-item-1`, `exp-item-2`) + one not-covered row — the not-covered row's `itemId` deliberately has NO corresponding entry in `EXPAND_GRID` at all (matching real "excluded item" rows, which need no chart data since they never render an expand control). */
+const EXPAND_ROLLUP: OriginalInvestmentRollup = {
+  trackingSetId: 'set-1',
+  generatedAt: '2026-08-30T07:30:00+00:00',
+  coverage: { shownCount: 2, totalCount: 3, excludedItemNames: ['Uncovered Item'] },
+  items: [
+    {
+      itemId: 'exp-item-1', itemName: 'Growth Fund', categoryName: 'Investments', subCategoryName: 'Brokerage',
+      netOriginalInvestment: 1800, currentValue: 2500, currentValueSlot: { year: 2025, quarter: 4 },
+      profit: 700, profitPercent: 38.89, isCovered: true,
+    },
+    {
+      itemId: 'exp-item-2', itemName: 'Bond Ladder', categoryName: 'Investments', subCategoryName: 'Brokerage',
+      netOriginalInvestment: 500, currentValue: 1070, currentValueSlot: { year: 2025, quarter: 4 },
+      profit: 570, profitPercent: 114, isCovered: true,
+    },
+    {
+      itemId: 'exp-item-3', itemName: 'Uncovered Item', categoryName: 'Investments', subCategoryName: 'Brokerage',
+      netOriginalInvestment: null, currentValue: null, currentValueSlot: null,
+      profit: null, profitPercent: null, isCovered: false,
+    },
+  ],
+  totals: { netOriginalInvestment: 2300, currentValue: 3570, profit: 1270, profitPercent: 55.22 },
+}
+
+/** Mirrors `ItemProfitLineChart`'s own y-domain math exactly, parameterized by the caller's known `profitToDate` values (non-null only) — lets these tests hand-verify exact pixel positions the same way the Feature 1 tests above verify `CategoryDeltaChart`'s `yOf`. */
+function itemProfitLineYOf(values: number[], v: number): number {
+  const dataMin = Math.min(0, ...values)
+  const dataMax = Math.max(0, ...values)
+  const range = Math.max(dataMax - dataMin, 1)
+  const yMin = dataMin - range * 0.08
+  const yMax = dataMax + range * 0.08
+  const yRange = Math.max(yMax - yMin, 1)
+  return PAD_TOP + INNER_H - ((v - yMin) / yRange) * INNER_H
 }
 
 beforeEach(() => {
@@ -1032,26 +1504,32 @@ describe('TrackingDashboardPage — global Detail/Sub-category/Summary toggle', 
 })
 
 // ---------------------------------------------------------------------------
-// Category Trend chart (requirement 4)
+// Category Delta Trend chart (redefined — was a per-category BALANCE line
+// chart named "Category Trend"; is now a per-category DELTA diverging
+// stacked bar chart, reading `BalanceCell.deltaAmount` instead of `.balance`)
 // ---------------------------------------------------------------------------
 
-describe('TrackingDashboardPage — Category Trend chart', () => {
-  it('renders once, with one line per category plus a Grand Total line, and matching legend entries', async () => {
+describe('TrackingDashboardPage — Category Delta Trend chart (redefined)', () => {
+  it('renders once, with one stacked bar segment per quarter per category with a resolvable delta, and a legend entry per category', async () => {
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
-    const chart = screen.getByRole('img', { name: 'Category trend lines chart' })
+    const chart = screen.getByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })
     expect(chart).toBeInTheDocument()
 
-    const legend = screen.getByRole('list', { name: 'Category trend chart legend' })
+    const legend = screen.getByRole('list', { name: 'Category delta trend chart legend' })
     const items = within(legend).getAllByRole('listitem')
-    // 1 category ("Assets") + Grand Total.
-    expect(items).toHaveLength(2)
+    // 1 category ("Assets") — no Grand Total entry: this chart plots each
+    // category's own delta, never an aggregate line.
+    expect(items).toHaveLength(1)
     expect(within(legend).getByText('Assets')).toBeInTheDocument()
-    expect(within(legend).getByText('Grand Total')).toBeInTheDocument()
 
-    expect(chart.querySelector('[data-testid="chart-line-cat-1"]')).toBeInTheDocument()
-    expect(chart.querySelector('[data-testid="chart-line-__grand-total__"]')).toBeInTheDocument()
+    // GRID's only category (`filled()`) has a constant, resolvable +10
+    // delta at every one of the 8 chronological quarters — one present
+    // segment per quarter, none absent.
+    for (let qi = 0; qi < 8; qi++) {
+      expect(within(chart).getByTestId(`delta-bar-segment-${qi}-cat-1`)).toBeInTheDocument()
+    }
   })
 
   it('renders exactly once regardless of Detail/Sub-category/Summary/year-collapse toggles', async () => {
@@ -1059,41 +1537,36 @@ describe('TrackingDashboardPage — Category Trend chart', () => {
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
-    expect(screen.getAllByRole('img', { name: 'Category trend lines chart' })).toHaveLength(1)
+    expect(screen.getAllByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })).toHaveLength(1)
 
     await user.click(screen.getByRole('button', { name: /Summary/i }))
     await user.click(screen.getByRole('button', { name: 'Collapse 2024 table' }))
 
-    expect(screen.getAllByRole('img', { name: 'Category trend lines chart' })).toHaveLength(1)
+    expect(screen.getAllByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })).toHaveLength(1)
     // Legend is unaffected by any of the above toggles.
-    expect(within(screen.getByRole('list', { name: 'Category trend chart legend' })).getAllByRole('listitem')).toHaveLength(2)
+    expect(within(screen.getByRole('list', { name: 'Category delta trend chart legend' })).getAllByRole('listitem')).toHaveLength(1)
   })
 
-  it('renders a blank-data quarter (hasData:false) as a gap in the line, never as a fabricated zero point', async () => {
+  it('renders a quarter with no resolvable delta (hasPreviousData:false, or deltaAmount null because the current balance is missing) as an ABSENT segment, never a fabricated zero', async () => {
     mocked.getBalanceGrid.mockResolvedValue(CHART_GRID)
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
-    const path = document.querySelector('[data-testid="chart-line-cat-a"]') as SVGPathElement
-    expect(path).toBeInTheDocument()
-    const d = path.getAttribute('d') ?? ''
+    const chart = screen.getByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })
 
-    // 8 chronological quarters (2024 Q1-4, 2025 Q1-4) with ONE gap at 2025 Q2
-    // (chronological index 5) — the path must break there: two separate
-    // "M...L..." subpaths (one covering indices 0-4, one covering 6-7)
-    // rather than a single continuous polyline, and exactly 7 plotted points
-    // total (8 quarters minus the 1 gap that is never plotted at all, let
-    // alone plotted as 0).
-    const moveCount = (d.match(/M/g) ?? []).length
-    const pointCount = (d.match(/[ML]/g) ?? []).length
-    expect(moveCount).toBe(2)
-    expect(pointCount).toBe(7)
-
-    // The Grand Total line has no gaps in this fixture — a single continuous subpath.
-    const grandTotalPath = document.querySelector('[data-testid="chart-line-__grand-total__"]') as SVGPathElement
-    const grandTotalD = grandTotalPath.getAttribute('d') ?? ''
-    expect((grandTotalD.match(/M/g) ?? []).length).toBe(1)
-    expect((grandTotalD.match(/[ML]/g) ?? []).length).toBe(8)
+    // 8 chronological quarters (2024 Q1-4, 2025 Q1-4). cat-a's delta is
+    // unresolvable at chronological index 0 (2024 Q1, hasPreviousData:false),
+    // 4 (2025 Q1, hasPreviousData:false), and 5 (2025 Q2, hasData:false so
+    // deltaAmount is null despite hasPreviousData:true) — present at every
+    // other index.
+    const absentIdxs = [0, 4, 5]
+    const presentIdxs = [1, 2, 3, 6, 7]
+    absentIdxs.forEach(qi => {
+      expect(within(chart).queryByTestId(`delta-bar-segment-${qi}-cat-a`)).not.toBeInTheDocument()
+    })
+    presentIdxs.forEach(qi => {
+      expect(within(chart).getByTestId(`delta-bar-segment-${qi}-cat-a`)).toBeInTheDocument()
+    })
   })
 
   it('trims leading quarters with no data in ANY series, starting the x-axis at the first quarter that actually has data', async () => {
@@ -1101,7 +1574,7 @@ describe('TrackingDashboardPage — Category Trend chart', () => {
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
-    const chart = screen.getByRole('img', { name: 'Category trend lines chart' })
+    const chart = screen.getByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })
 
     // 2022 (entirely unstarted, both cat-a and Grand Total hasData:false for
     // all 4 quarters) must not be labeled on the x-axis at all.
@@ -1109,57 +1582,313 @@ describe('TrackingDashboardPage — Category Trend chart', () => {
     // 2023 Q1 — the first quarter with real data — must be the first label.
     expect(within(chart).getByText('Q1 2023')).toBeInTheDocument()
 
-    // The underlying line must also only plot the 4 real 2023 points, not 8
-    // (i.e. this is a genuine data trim, not just a label/tick display trim).
-    const catPath = document.querySelector('[data-testid="chart-line-cat-a"]') as SVGPathElement
-    const catD = catPath.getAttribute('d') ?? ''
-    expect((catD.match(/M/g) ?? []).length).toBe(1)
-    expect((catD.match(/[ML]/g) ?? []).length).toBe(4)
+    // Genuine DATA trim (not just a label/tick display trim): exactly 4
+    // bar-columns (2023 Q1-4), never 8.
+    expect(within(chart).getAllByTestId(/^delta-bar-column-/)).toHaveLength(4)
+    expect(within(chart).queryByTestId('delta-bar-column-4')).not.toBeInTheDocument()
 
-    const grandTotalPath = document.querySelector('[data-testid="chart-line-__grand-total__"]') as SVGPathElement
-    const grandTotalD = grandTotalPath.getAttribute('d') ?? ''
-    expect((grandTotalD.match(/[ML]/g) ?? []).length).toBe(4)
+    // Within the trimmed range, 2023 Q1 (index 0) has hasPreviousData:false
+    // -> no resolvable delta -> absent segment; Q2-Q4 (+50 each) -> present.
+    expect(within(chart).queryByTestId('delta-bar-segment-0-cat-a')).not.toBeInTheDocument()
+    expect(within(chart).getByTestId('delta-bar-segment-1-cat-a')).toBeInTheDocument()
+    expect(within(chart).getByTestId('delta-bar-segment-2-cat-a')).toBeInTheDocument()
+    expect(within(chart).getByTestId('delta-bar-segment-3-cat-a')).toBeInTheDocument()
+  })
 
-    // The stacked bar layer reads from the SAME (already-trimmed) `quarters`
-    // array as the lines — exactly 4 bar-columns (2023 Q1-4), never 8, i.e.
-    // this is a genuine trim of the bar layer too, not just the lines.
-    expect(document.querySelectorAll('[data-testid^="chart-bar-column-"]')).toHaveLength(4)
-    expect(document.querySelector('[data-testid="chart-bar-column-4"]')).not.toBeInTheDocument()
+  it('renders a positive-delta segment ABOVE the zero baseline and a negative-delta segment BELOW it in the same quarter — the diverging-stack sign encoding, not just "the chart renders"', async () => {
+    mocked.getBalanceGrid.mockResolvedValue(DELTA_SIGN_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const chart = screen.getByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })
+    const baseline = within(chart).getByTestId('delta-chart-zero-baseline')
+    const zeroY = Number(baseline.getAttribute('y1'))
+    expect(zeroY).toBe(Number(baseline.getAttribute('y2')))
+
+    // Chronological index 1 = 2024 Q2: cat-pos delta +100 -> its segment
+    // stacks UPWARD from the baseline (smaller pixel-y = higher on screen;
+    // SVG y grows downward), so its bottom edge sits AT the baseline and its
+    // top edge sits ABOVE it.
+    const posSeg = within(chart).getByTestId('delta-bar-segment-1-cat-pos')
+    const posY = Number(posSeg.getAttribute('y'))
+    const posHeight = Number(posSeg.getAttribute('height'))
+    expect(posY).toBeLessThan(zeroY)
+    expect(posY + posHeight).toBeCloseTo(zeroY, 0)
+
+    // Same quarter, cat-neg delta -50 -> its segment stacks DOWNWARD from the
+    // SAME baseline (independent running total, per the component's
+    // docstring — never continuing cat-pos's cumulative stack), so its top
+    // edge sits AT the baseline and its bottom edge sits BELOW it.
+    const negSeg = within(chart).getByTestId('delta-bar-segment-1-cat-neg')
+    const negY = Number(negSeg.getAttribute('y'))
+    const negHeight = Number(negSeg.getAttribute('height'))
+    expect(negY).toBeCloseTo(zeroY, 0)
+    expect(negY + negHeight).toBeGreaterThan(zeroY)
+
+    // Both segments actually render, on opposite sides of the same baseline,
+    // for every quarter with a resolvable delta (Q2-Q4; Q1 is
+    // hasPreviousData:false for both categories).
+    for (const qi of [1, 2, 3]) {
+      const p = within(chart).getByTestId(`delta-bar-segment-${qi}-cat-pos`)
+      const n = within(chart).getByTestId(`delta-bar-segment-${qi}-cat-neg`)
+      expect(Number(p.getAttribute('y')) + Number(p.getAttribute('height'))).toBeCloseTo(zeroY, 0)
+      expect(Number(n.getAttribute('y'))).toBeCloseTo(zeroY, 0)
+    }
+    expect(within(chart).queryByTestId('delta-bar-segment-0-cat-pos')).not.toBeInTheDocument()
+    expect(within(chart).queryByTestId('delta-bar-segment-0-cat-neg')).not.toBeInTheDocument()
   })
 })
 
 // ---------------------------------------------------------------------------
-// Stacked bar overlay (Change 1)
+// Feature 1 — 12-quarter Grand-Total moving average overlay on the Category
+// Delta Trend chart
 // ---------------------------------------------------------------------------
 
-describe('TrackingDashboardPage — Category Trend chart stacked bars (Change 1)', () => {
+describe('TrackingDashboardPage — Category Delta Trend chart 12-quarter Grand-Total moving average (Feature 1)', () => {
+  it('renders a legend entry with a real text label, an updated chart aria-label, and an MA line with its own testid/color distinct from every category/sign color', async () => {
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    // aria-label updated to mention the new moving-average overlay.
+    const chart = screen.getByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })
+    expect(chart).toBeInTheDocument()
+
+    // Legend entry — a real visible text label, not just a color swatch —
+    // and deliberately NOT counted inside the category `role="list"` (see
+    // the existing "1 category -> 1 listitem" assertion elsewhere in this
+    // file, which must keep passing unchanged).
+    const maLegend = screen.getByTestId('chart-legend-ma')
+    expect(maLegend).toHaveTextContent('12Q Avg (Grand Total)')
+    const categoryLegend = screen.getByRole('list', { name: 'Category delta trend chart legend' })
+    expect(within(categoryLegend).queryByText('12Q Avg (Grand Total)')).not.toBeInTheDocument()
+
+    // MA line — own testid, own color, never a `CATEGORY_LINE_COLORS` slot
+    // nor the sign colors reserved for Increase/Decrease.
+    const maLine = within(chart).getByTestId('delta-chart-ma-line')
+    const maColor = maLine.getAttribute('stroke')
+    const categoryColors = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767']
+    expect(categoryColors).not.toContain(maColor)
+    expect(maColor).not.toBe('#22C55E') // DELTA_POSITIVE_COLOR
+    expect(maColor).not.toBe('#EF4444') // DELTA_NEGATIVE_COLOR
+  })
+
+  it('computes the trailing-12-quarter average correctly at the last (fully-populated) quarter, hand-checked: (10+20+..+110)/11 = 60', async () => {
+    mocked.getBalanceGrid.mockResolvedValue(MA_12Q_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const chart = screen.getByRole('img', { name: /Category delta trend stacked bar chart/ })
+    const maLine = within(chart).getByTestId('delta-chart-ma-line')
+    const points = parsePathPoints(maLine.getAttribute('d') ?? '')
+
+    // 2024 Q1 (the very first chronological quarter) is always
+    // `hasPreviousData:false` -> its own one-quarter window has zero
+    // qualifying values -> a genuine gap, so the path's FIRST plotted point
+    // is actually 2024 Q2, and its LAST point is 2026 Q4 — 11 points total
+    // for 12 chronological quarters.
+    expect(points).toHaveLength(11)
+
+    const lastPoint = points[points.length - 1]
+    expect(lastPoint.y).toBeCloseTo(deltaChartYOf(60), 1)
+  })
+
+  it('caps the trailing window at exactly 12 quarters — an older outlier quarter falls OUT of the window once 12 newer quarters exist, hand-checked: (10+20+..+120)/12 = 65', async () => {
+    mocked.getBalanceGrid.mockResolvedValue(MA_TRAILING_CAP_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const chart = screen.getByRole('img', { name: /Category delta trend stacked bar chart/ })
+    const maLine = within(chart).getByTestId('delta-chart-ma-line')
+    const points = parsePathPoints(maLine.getAttribute('d') ?? '')
+
+    // 2027 Q3/Q4 are trimmed off entirely (both series blank) by the page's
+    // own trailing-quarter trim, so the LAST remaining chronological quarter
+    // is 2027 Q2 — its trailing-12 window is `[2024 Q3 .. 2027 Q2]`, which
+    // does NOT include 2024 Q2's 99,999 outlier (that quarter has fallen
+    // outside the 12-quarter window, not merely hasPreviousData-excluded).
+    // 2024 Q1 is still the leading gap (hasPreviousData:false), so 13 of the
+    // 14 remaining chronological quarters plot.
+    expect(points).toHaveLength(13)
+
+    const lastPoint = points[points.length - 1]
+    // If the 99,999 outlier had wrongly stayed in the window, this value
+    // would be enormous instead of 65 — a strong, unambiguous failure signal.
+    expect(lastPoint.y).toBeCloseTo(deltaChartYOf(65), 1)
+  })
+
+  it('uses an expanding window (not a fixed 12) when fewer than 12 quarters of history exist, hand-checked: (100+200+300)/3 = 200', async () => {
+    mocked.getBalanceGrid.mockResolvedValue(MA_SHORT_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const chart = screen.getByRole('img', { name: /Category delta trend stacked bar chart/ })
+    const maLine = within(chart).getByTestId('delta-chart-ma-line')
+    const points = parsePathPoints(maLine.getAttribute('d') ?? '')
+
+    // Only 4 chronological quarters exist at all; Q1 is the leading gap, so
+    // 3 points plot (Q2, Q3, Q4).
+    expect(points).toHaveLength(3)
+    const lastPoint = points[points.length - 1]
+    expect(lastPoint.y).toBeCloseTo(deltaChartYOf(200), 1)
+  })
+
+  it('excludes a window member with hasPreviousData:false from the average — never coerced to 0 or its own (non-null) deltaAmount', async () => {
+    mocked.getBalanceGrid.mockResolvedValue(MA_EXCLUDE_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const chart = screen.getByRole('img', { name: /Category delta trend stacked bar chart/ })
+    const maLine = within(chart).getByTestId('delta-chart-ma-line')
+    const points = parsePathPoints(maLine.getAttribute('d') ?? '')
+
+    // Q1 AND Q2 are both hasPreviousData:false -> both gaps -> only Q3, Q4 plot.
+    expect(points).toHaveLength(2)
+    const lastPoint = points[points.length - 1]
+    // (100+300)/2 = 200 — if Q2's deltaAmount:40 were wrongly included, this
+    // would be (40+100+300)/3 = 146.67; if Q1/Q2 were wrongly treated as 0,
+    // it would be 100 or 133.33 — either wrong result fails this assertion.
+    expect(lastPoint.y).toBeCloseTo(deltaChartYOf(200), 1)
+  })
+
+  it('renders a window with zero qualifying values as a genuine gap (absent from the path), never a fabricated zero', async () => {
+    mocked.getBalanceGrid.mockResolvedValue(MA_EXCLUDE_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const chart = screen.getByRole('img', { name: /Category delta trend stacked bar chart/ })
+    const maLine = within(chart).getByTestId('delta-chart-ma-line')
+    const d = maLine.getAttribute('d') ?? ''
+
+    // Q2's own window is `[Q1, Q2]`, both `hasPreviousData:false` -> zero
+    // qualifying values -> `null` -> the path's first drawn point ('M') must
+    // be Q3, not Q1 or Q2 — i.e. exactly 2 points total, not 4 and not 3.
+    expect((d.match(/[ML]/g) ?? []).length).toBe(2)
+  })
+
+  it('excludes a hasPreviousData:false quarter MIXED IN the middle of the window (qualifying quarters both before and after it) from every average it falls inside, while still plotting a real point AT that quarter from its own window\'s other qualifying members', async () => {
+    mocked.getBalanceGrid.mockResolvedValue(MA_MIDWINDOW_EXCLUDE_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const chart = screen.getByRole('img', { name: /Category delta trend stacked bar chart/ })
+    const maLine = within(chart).getByTestId('delta-chart-ma-line')
+    const points = parsePathPoints(maLine.getAttribute('d') ?? '')
+
+    // Chronological: [2024 Q1(gap, leading), Q2, Q3(mid-window exclude), Q4,
+    // 2025 Q1, Q2, Q3, Q4] = 8 quarters. Only 2024 Q1 is a genuine gap (its
+    // own one-quarter window has zero qualifying members) — 2024 Q3's point
+    // still plots (window [Q1,Q2,Q3] has Q2's 100 to average), so 7 of 8
+    // quarters plot, not 6.
+    expect(points).toHaveLength(7)
+
+    // points[0] = 2024 Q2 (window [Q1,Q2] -> avg 100).
+    // points[1] = 2024 Q3 itself: window [Q1,Q2,Q3] -> only Q2's 100
+    // qualifies (Q1 excluded as always, Q3 excluded by its own
+    // hasPreviousData:false) -> avg must be exactly 100, NOT
+    // (100+99999)/2 = 50049.5 (which is what a bug that wrongly included
+    // Q3's own poisonous 99,999 would produce).
+    expect(points[1].y).toBeCloseTo(deltaChartYOf(100), 1)
+
+    // Last point = 2025 Q4: window is all 8 quarters. Qualifying members are
+    // 2024 Q2(100), Q4(200), 2025 Q1(300), Q2(400), Q3(500), Q4(600) — six
+    // values, sum 2100, avg 350. If Q3's 99,999 had leaked into this later
+    // average too, the result would be enormously higher instead.
+    const lastPoint = points[points.length - 1]
+    expect(lastPoint.y).toBeCloseTo(deltaChartYOf(350), 1)
+  })
+
+  it('renders a genuine INTERIOR gap — a null point strictly in the middle of otherwise-populated data — as two disconnected path segments, not merely "starts late" like every other gap fixture in this file', async () => {
+    mocked.getBalanceGrid.mockResolvedValue(MA_MIDSTREAM_GAP_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const chart = screen.getByRole('img', { name: /Category delta trend stacked bar chart/ })
+    const maLine = within(chart).getByTestId('delta-chart-ma-line')
+    const d = maLine.getAttribute('d') ?? ''
+
+    // TWO disconnected segments -> TWO 'M' (moveto) commands, proving the
+    // path actually breaks mid-stream at 2027 Q3, not just starts late (the
+    // shape every other gap fixture in this file produces).
+    expect((d.match(/M/g) ?? []).length).toBe(2)
+
+    const points = parsePathPoints(d)
+    // 20 chronological quarters, 2 gaps (2024 Q1 leading, 2027 Q3 interior)
+    // -> 18 plotted points: 13 before the interior gap (2024 Q2 .. 2027 Q2),
+    // 5 after it (2027 Q4 .. 2028 Q4).
+    expect(points).toHaveLength(18)
+
+    // The point immediately BEFORE the gap (2027 Q2, points[12]) — its
+    // window still reaches back to 2024 Q3's qualifying 200 (the run hasn't
+    // yet aged it out), so it must read exactly 200 — not a fabricated 0
+    // and not a leaked average of the run's poisonous 99,999.
+    expect(points[12].y).toBeCloseTo(deltaChartYOf(200), 1)
+
+    // The point immediately AFTER the gap (2027 Q4, points[13]) — every
+    // quarter in the 12-quarter run is now outside its window, so only its
+    // OWN 500 qualifies, proving the average resumes fresh rather than
+    // carrying forward any stale pre-gap value.
+    expect(points[13].y).toBeCloseTo(deltaChartYOf(500), 1)
+  })
+
+  it('includes the moving average in the hover tooltip alongside the category rows', async () => {
+    mocked.getBalanceGrid.mockResolvedValue(MA_12Q_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+
+    const chart = screen.getByRole('img', { name: /Category delta trend stacked bar chart/ })
+    const svg = chart.querySelector('svg')!
+    fireEvent.mouseMove(svg, { clientX: 200, clientY: 100 })
+
+    expect(within(chart).getByText('12Q Avg (Grand Total)')).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Category Breakdown chart's stacked bars — content UNCHANGED by the
+// LEFT/RIGHT swap (this chart simply moved from the RIGHT slot to the LEFT
+// slot); still reads `.balance`, never `.deltaAmount`. Assertions are scoped
+// via `within(breakdownChart)` (rather than an ambient `document.querySelector`)
+// so they can never be satisfied by the unrelated Delta Trend chart, which
+// now shares the page and (for bar-column/segment testids) a similar-looking
+// but namespaced-differently DOM shape (`chart-bar-*` here vs `delta-bar-*`
+// on the Delta Trend chart).
+// ---------------------------------------------------------------------------
+
+describe('TrackingDashboardPage — Category Breakdown chart stacked bars', () => {
   it('stacks bar segments, assigns colors, and orders the legend by ascending orderIndex — NEVER the API array order', async () => {
     mocked.getBalanceGrid.mockResolvedValue(STACK_ORDER_GRID)
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
+    const breakdownChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
+
     // Fixture provides categories as [cat-high (orderIndex 5), cat-low
     // (orderIndex 1)] — the defensive sort must reorder to [cat-low, cat-high].
-    const legend = screen.getByRole('list', { name: 'Category trend chart legend' })
+    // The legend also carries the Non-Property Total / Grand Total overlay
+    // entries after the two categories (4 items total) — this test only
+    // cares about the category ordering, so it checks those two positions
+    // directly rather than hardcoding the two aggregate entries' full text
+    // (which embeds a millions-format value irrelevant here).
+    const legend = screen.getByRole('list', { name: 'Category stacked bar chart legend' })
     const legendLabels = within(legend).getAllByRole('listitem').map(li => li.textContent)
-    expect(legendLabels).toEqual(['LowOrder', 'HighOrder', 'Grand Total'])
+    expect(legendLabels[0]).toBe('LowOrder')
+    expect(legendLabels[1]).toBe('HighOrder')
+    expect(legendLabels).toHaveLength(4)
 
     // Color assignment follows the same sorted order: slot 1 (blue) goes to
     // the lowest orderIndex, slot 2 (orange) to the next — not array order.
-    const lowLine = document.querySelector('[data-testid="chart-line-cat-low"]') as SVGPathElement
-    const highLine = document.querySelector('[data-testid="chart-line-cat-high"]') as SVGPathElement
-    expect(lowLine.getAttribute('stroke')).toBe('#3987e5')
-    expect(highLine.getAttribute('stroke')).toBe('#d95926')
+    // Checked directly on the bar segments' own `fill` (the actual visual
+    // encoding), not a legend swatch.
+    const lowSeg = within(breakdownChart).getByTestId('chart-bar-segment-0-cat-low')
+    const highSeg = within(breakdownChart).getByTestId('chart-bar-segment-0-cat-high')
+    expect(lowSeg.getAttribute('fill')).toBe('#3987e5')
+    expect(highSeg.getAttribute('fill')).toBe('#d95926')
 
     // Q1 (bar-column 0): both categories present. cat-low (orderIndex 1)
     // must form the BOTTOM segment (larger/lower pixel-y, closer to the
     // baseline) and cat-high (orderIndex 5) the TOP segment (smaller
     // pixel-y) — this is the assertion that would FAIL if the stack were
     // left in array-arrival order or reversed.
-    const lowSeg = document.querySelector('[data-testid="chart-bar-segment-0-cat-low"]') as SVGRectElement
-    const highSeg = document.querySelector('[data-testid="chart-bar-segment-0-cat-high"]') as SVGRectElement
-    expect(lowSeg).toBeInTheDocument()
-    expect(highSeg).toBeInTheDocument()
     expect(Number(highSeg.getAttribute('y'))).toBeLessThan(Number(lowSeg.getAttribute('y')))
   })
 
@@ -1168,10 +1897,12 @@ describe('TrackingDashboardPage — Category Trend chart stacked bars (Change 1)
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
+    const breakdownChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
+
     // Q4 (bar-column 3): cat-high is hasData:false there — no rect at all.
-    expect(document.querySelector('[data-testid="chart-bar-segment-3-cat-high"]')).not.toBeInTheDocument()
+    expect(within(breakdownChart).queryByTestId('chart-bar-segment-3-cat-high')).not.toBeInTheDocument()
     // cat-low IS present that quarter and must still render normally.
-    expect(document.querySelector('[data-testid="chart-bar-segment-3-cat-low"]')).toBeInTheDocument()
+    expect(within(breakdownChart).getByTestId('chart-bar-segment-3-cat-low')).toBeInTheDocument()
   })
 
   it('renders no bar at all for a quarter where every category is hasData:false, even if Grand Total has data (documented minimal edge-case treatment)', async () => {
@@ -1179,15 +1910,16 @@ describe('TrackingDashboardPage — Category Trend chart stacked bars (Change 1)
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
+    const breakdownChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
+
     // Q1 (bar-column 0): the only category is hasData:false, Grand Total is
     // hasData:true — no segment is fabricated for the (non-existent)
     // category data.
-    const column0 = document.querySelector('[data-testid="chart-bar-column-0"]') as SVGGElement
-    expect(column0).toBeInTheDocument()
+    const column0 = within(breakdownChart).getByTestId('chart-bar-column-0')
     expect(column0.querySelectorAll('rect')).toHaveLength(0)
 
     // Q2 (bar-column 1): normal quarter — the category's own segment renders.
-    expect(document.querySelector('[data-testid="chart-bar-segment-1-cat-a"]')).toBeInTheDocument()
+    expect(within(breakdownChart).getByTestId('chart-bar-segment-1-cat-a')).toBeInTheDocument()
   })
 
   it('rescales the y-axis to fit the tallest STACKED bar total, not just the max of any single line (category or Grand Total)', async () => {
@@ -1195,13 +1927,14 @@ describe('TrackingDashboardPage — Category Trend chart stacked bars (Change 1)
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
+    const breakdownChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
+
     // cat-a maxes at 200, cat-b at 300, Grand Total's own (understated) line
     // maxes at 200 — every individual line's max is well under the true
     // stacked total of 500. If the y-domain were still sized off
     // `allValues` alone (the pre-fix behavior), this stacked segment would
     // be plotted ABOVE the chart's padding-top boundary (y < 20, clipped).
-    const topSegment = document.querySelector('[data-testid="chart-bar-segment-0-cat-b"]') as SVGRectElement
-    expect(topSegment).toBeInTheDocument()
+    const topSegment = within(breakdownChart).getByTestId('chart-bar-segment-0-cat-b')
     // TREND_CHART_PAD.top is 20 in page.tsx — the plot area's top boundary.
     expect(Number(topSegment.getAttribute('y'))).toBeGreaterThanOrEqual(20)
   })
@@ -1358,45 +2091,60 @@ describe('TrackingDashboardPage — Non-Property Total row bolding (Gate 1 requi
 })
 
 // ---------------------------------------------------------------------------
-// Two-chart side-by-side split layout (Gate 1 requirement 2)
+// Two-chart side-by-side split layout — LEFT/RIGHT swap: "Category
+// Breakdown" moved from the RIGHT slot to the LEFT slot; the redefined
+// "Category Delta Trend" (formerly "Category Trend", a balance line chart)
+// now occupies the RIGHT slot.
 // ---------------------------------------------------------------------------
 
-describe('TrackingDashboardPage — two-chart split layout (Gate 1 requirement 2)', () => {
-  it('renders the Category Trend lines chart and the Category Stacked Bar chart side by side, inside one responsive grid wrapper', async () => {
+describe('TrackingDashboardPage — two-chart split layout (LEFT/RIGHT swap)', () => {
+  it('renders the Category Breakdown chart on the LEFT and the Category Delta Trend chart on the RIGHT, inside one responsive grid wrapper', async () => {
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
-    const linesChart = screen.getByRole('img', { name: 'Category trend lines chart' })
-    const barChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
-    expect(linesChart).toBeInTheDocument()
-    expect(barChart).toBeInTheDocument()
+    const breakdownChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
+    const deltaChart = screen.getByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })
+    expect(breakdownChart).toBeInTheDocument()
+    expect(deltaChart).toBeInTheDocument()
 
     // Both charts' own `.card` containers share one immediate grid wrapper
     // (the `grid grid-cols-1 lg:grid-cols-2 gap-4` pattern already used by
     // action-plan/purchase/[id]/page.tsx and weekly-scan/[id]/dashboard/page.tsx).
-    const linesCard = linesChart.closest('.card') as HTMLElement
-    const barCard = barChart.closest('.card') as HTMLElement
-    const wrapper = linesCard.parentElement!
+    const breakdownCard = breakdownChart.closest('.card') as HTMLElement
+    const deltaCard = deltaChart.closest('.card') as HTMLElement
+    const wrapper = breakdownCard.parentElement!
     expect(wrapper).toHaveClass('grid', 'grid-cols-1', 'lg:grid-cols-2', 'gap-4')
-    expect(wrapper).toContainElement(barCard)
+    expect(wrapper).toContainElement(deltaCard)
+
+    // LEFT-before-RIGHT in DOM order proves the actual position swap, not
+    // just that both charts exist somewhere on the page.
+    const cards = Array.from(wrapper.children)
+    expect(cards.indexOf(breakdownCard)).toBeLessThan(cards.indexOf(deltaCard))
   })
 
-  it('keeps the LEFT chart\'s lines-only content and the RIGHT chart\'s bars-only content fully separated', async () => {
+  it('keeps the LEFT (Breakdown) chart\'s aggregate overlay lines and the RIGHT (Delta Trend) chart\'s signed category bars fully separated', async () => {
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
-    const linesChart = screen.getByRole('img', { name: 'Category trend lines chart' })
-    const barChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
+    const breakdownChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
+    const deltaChart = screen.getByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })
 
-    // Category/Grand-Total LINES live only on the LEFT chart.
-    expect(linesChart.querySelector('[data-testid="chart-line-cat-1"]')).toBeInTheDocument()
-    expect(linesChart.querySelector('[data-testid="chart-line-__grand-total__"]')).toBeInTheDocument()
-    expect(barChart.querySelector('[data-testid="chart-line-cat-1"]')).not.toBeInTheDocument()
-    expect(barChart.querySelector('[data-testid="chart-line-__grand-total__"]')).not.toBeInTheDocument()
+    // The two aggregate overlay lines (Non-Property Total, Grand Total) live
+    // only on the LEFT (Breakdown) chart — the RIGHT chart plots no
+    // aggregate line at all, only per-category delta bars.
+    expect(breakdownChart.querySelector('[data-testid="chart-line-non-property-total"]')).toBeInTheDocument()
+    expect(breakdownChart.querySelector('[data-testid="chart-line-grand-total-overlay"]')).toBeInTheDocument()
+    expect(deltaChart.querySelector('[data-testid="chart-line-non-property-total"]')).not.toBeInTheDocument()
+    expect(deltaChart.querySelector('[data-testid="chart-line-grand-total-overlay"]')).not.toBeInTheDocument()
 
-    // Stacked BARS live only on the RIGHT chart.
-    expect(barChart.querySelectorAll('[data-testid^="chart-bar-column-"]').length).toBeGreaterThan(0)
-    expect(linesChart.querySelectorAll('[data-testid^="chart-bar-column-"]').length).toBe(0)
+    // The two charts' bar layers use distinct testid namespaces
+    // (`chart-bar-*` on the LEFT/Breakdown chart, `delta-bar-*` on the
+    // RIGHT/Delta Trend chart) specifically so they can never collide now
+    // that both charts render bars.
+    expect(breakdownChart.querySelectorAll('[data-testid^="chart-bar-column-"]').length).toBeGreaterThan(0)
+    expect(deltaChart.querySelectorAll('[data-testid^="chart-bar-column-"]').length).toBe(0)
+    expect(deltaChart.querySelectorAll('[data-testid^="delta-bar-column-"]').length).toBeGreaterThan(0)
+    expect(breakdownChart.querySelectorAll('[data-testid^="delta-bar-column-"]').length).toBe(0)
   })
 })
 
@@ -1517,40 +2265,43 @@ describe('TrackingDashboardPage — Category Stacked Bar chart aggregate overlay
 // Trailing trim (Gate 1 requirement 4)
 // ---------------------------------------------------------------------------
 
-describe('TrackingDashboardPage — chart trailing quarter trim (Gate 1 requirement 4)', () => {
+describe('TrackingDashboardPage — chart trailing quarter trim (shared `chartQuarters` array)', () => {
   it('trims trailing quarters with no data in ANY series, ending the x-axis at the last quarter that actually has data, on BOTH charts', async () => {
     mocked.getBalanceGrid.mockResolvedValue(TRAILING_GAP_GRID)
     render(<TrackingDashboardPage />)
     await waitForGrid()
 
-    const linesChart = screen.getByRole('img', { name: 'Category trend lines chart' })
-    const barChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
+    const breakdownChart = screen.getByRole('img', { name: 'Category stacked bar chart' })
+    const deltaChart = screen.getByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })
 
     // 2025 Q3/Q4 (both cat-a and Grand Total hasData:false there) must not
     // be labeled on either chart's x-axis.
-    expect(within(linesChart).queryByText('Q3 2025')).not.toBeInTheDocument()
-    expect(within(linesChart).queryByText('Q4 2025')).not.toBeInTheDocument()
-    expect(within(barChart).queryByText('Q3 2025')).not.toBeInTheDocument()
-    expect(within(barChart).queryByText('Q4 2025')).not.toBeInTheDocument()
+    expect(within(breakdownChart).queryByText('Q3 2025')).not.toBeInTheDocument()
+    expect(within(breakdownChart).queryByText('Q4 2025')).not.toBeInTheDocument()
+    expect(within(deltaChart).queryByText('Q3 2025')).not.toBeInTheDocument()
+    expect(within(deltaChart).queryByText('Q4 2025')).not.toBeInTheDocument()
     // 2025 Q2 — the last quarter with real data — remains the final label.
-    expect(within(linesChart).getByText('Q2 2025')).toBeInTheDocument()
+    expect(within(breakdownChart).getByText('Q2 2025')).toBeInTheDocument()
+    expect(within(deltaChart).getByText('Q2 2025')).toBeInTheDocument()
 
-    // Genuine DATA trim (not just a label trim): 8 chronological quarters
-    // (2024 Q1-4, 2025 Q1-2 with data + 2025 Q3-4 blank) trimmed down to 6
-    // plotted points, one continuous subpath (no interior gaps in what's left).
-    const catPath = within(linesChart).getByTestId('chart-line-cat-a')
-    const catD = catPath.getAttribute('d') ?? ''
-    expect((catD.match(/M/g) ?? []).length).toBe(1)
-    expect((catD.match(/[ML]/g) ?? []).length).toBe(6)
+    // The LEFT (Breakdown) chart's bar layer: exactly 6 bar-columns
+    // (2024 Q1-4, 2025 Q1-2), never 8 — genuine data trim, not just a label
+    // trim.
+    expect(within(breakdownChart).getAllByTestId(/^chart-bar-column-/)).toHaveLength(6)
+    expect(within(breakdownChart).queryByTestId('chart-bar-column-6')).not.toBeInTheDocument()
+    expect(within(breakdownChart).queryByTestId('chart-bar-column-7')).not.toBeInTheDocument()
 
-    const grandTotalPath = within(linesChart).getByTestId('chart-line-__grand-total__')
-    expect(((grandTotalPath.getAttribute('d') ?? '').match(/[ML]/g) ?? []).length).toBe(6)
-
-    // The RIGHT chart's bar layer reads from the SAME (already-trimmed)
-    // shared `quarters` array — exactly 6 bar-columns, never 8.
-    expect(within(barChart).getAllByTestId(/^chart-bar-column-/)).toHaveLength(6)
-    expect(within(barChart).queryByTestId('chart-bar-column-6')).not.toBeInTheDocument()
-    expect(within(barChart).queryByTestId('chart-bar-column-7')).not.toBeInTheDocument()
+    // The RIGHT (Delta Trend) chart's bar layer reads from the SAME
+    // (already-trimmed) shared `quarters` array — exactly 6 bar-columns too.
+    // Within those 6, cat-a's delta is unresolvable (hasPreviousData:false)
+    // only at the first one (2024 Q1) — present at the other 5.
+    expect(within(deltaChart).getAllByTestId(/^delta-bar-column-/)).toHaveLength(6)
+    expect(within(deltaChart).queryByTestId('delta-bar-column-6')).not.toBeInTheDocument()
+    expect(within(deltaChart).queryByTestId('delta-bar-column-7')).not.toBeInTheDocument()
+    expect(within(deltaChart).queryByTestId('delta-bar-segment-0-cat-a')).not.toBeInTheDocument()
+    for (let qi = 1; qi <= 5; qi++) {
+      expect(within(deltaChart).getByTestId(`delta-bar-segment-${qi}-cat-a`)).toBeInTheDocument()
+    }
   })
 })
 
@@ -1863,10 +2614,242 @@ describe('TrackingDashboardPage — Original Investment vs Profit section', () =
 
     // The per-year balance tables and charts are unaffected.
     expect(getYearTable(2024)).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Category trend lines chart' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Category delta trend stacked bar chart with 12-quarter grand-total moving average' })).toBeInTheDocument()
 
     const section = getRollupSection()
     expect(await within(section).findByText(/Failed to load the original-investment rollup/i)).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Feature 2 — expandable per-item charts on the rollup table
+// ---------------------------------------------------------------------------
+
+describe('TrackingDashboardPage — Original Investment vs Profit expandable per-item charts (Feature 2)', () => {
+  it('starts every row collapsed; toggling one row does not affect another; multiple rows can be expanded simultaneously', async () => {
+    const user = userEvent.setup()
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(EXPAND_ROLLUP)
+    mocked.getBalanceGrid.mockResolvedValue(EXPAND_GRID)
+    mocked.getRunningTotal.mockImplementation((itemId: string) =>
+      Promise.resolve(itemId === 'exp-item-1' ? EXPAND_ITEM_1_RUNNING_TOTAL : EXPAND_ITEM_2_RUNNING_TOTAL),
+    )
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+    const section = getRollupSection()
+    await within(section).findByText('Growth Fund')
+
+    // Default-collapsed — neither row's charts exist yet.
+    expect(within(section).queryByRole('img', { name: 'Item original investment vs profit stacked bar chart' })).not.toBeInTheDocument()
+
+    const btn1 = within(section).getByRole('button', { name: 'Expand charts for Growth Fund' })
+    const btn2 = within(section).getByRole('button', { name: 'Expand charts for Bond Ladder' })
+    expect(btn1).toHaveAttribute('aria-expanded', 'false')
+    expect(btn2).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(btn1)
+    await waitFor(() => expect(btn1).toHaveAttribute('aria-expanded', 'true'))
+    expect(await within(section).findAllByRole('img', { name: 'Item original investment vs profit stacked bar chart' })).toHaveLength(1)
+    // The second row is untouched by the first row's expansion.
+    expect(btn2).toHaveAttribute('aria-expanded', 'false')
+
+    // Expanding the second row too -> BOTH sets of charts visible at once.
+    await user.click(btn2)
+    await waitFor(() => {
+      expect(within(section).getAllByRole('img', { name: 'Item original investment vs profit stacked bar chart' })).toHaveLength(2)
+    })
+
+    // Collapsing the first row leaves the second one expanded, untouched.
+    await user.click(btn1)
+    await waitFor(() => expect(btn1).toHaveAttribute('aria-expanded', 'false'))
+    expect(within(section).getAllByRole('img', { name: 'Item original investment vs profit stacked bar chart' })).toHaveLength(1)
+    expect(btn2).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('calls getRunningTotal exactly once per item on first expand (lazy, not for every row upfront), and does not re-call it on collapse + re-expand within staleTime', async () => {
+    const user = userEvent.setup()
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(EXPAND_ROLLUP)
+    mocked.getBalanceGrid.mockResolvedValue(EXPAND_GRID)
+    mocked.getRunningTotal.mockResolvedValue(EXPAND_ITEM_1_RUNNING_TOTAL)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+    const section = getRollupSection()
+    await within(section).findByText('Growth Fund')
+
+    // Not called upfront, before any row is expanded.
+    expect(mocked.getRunningTotal).not.toHaveBeenCalled()
+
+    const btn1 = within(section).getByRole('button', { name: 'Expand charts for Growth Fund' })
+    await user.click(btn1)
+    // Wait for the fetch to fully SETTLE (chart rendered, query at
+    // `success` status) before collapsing — collapsing while the request is
+    // still in flight would abandon it with no cached success data yet,
+    // which would legitimately trigger a genuine second fetch on
+    // re-expand; that's a different scenario from the one this test cares
+    // about (a completed, cached fetch surviving a toggle).
+    await within(section).findAllByRole('img', { name: 'Item original investment vs profit stacked bar chart' })
+    expect(mocked.getRunningTotal).toHaveBeenCalledTimes(1)
+    expect(mocked.getRunningTotal).toHaveBeenCalledWith('exp-item-1')
+
+    // Collapse, then re-expand within `staleTime` (10s) -> served from the
+    // React Query cache, no re-fetch.
+    await user.click(btn1)
+    await waitFor(() => expect(btn1).toHaveAttribute('aria-expanded', 'false'))
+    await user.click(btn1)
+    await waitFor(() => expect(btn1).toHaveAttribute('aria-expanded', 'true'))
+    await within(section).findAllByRole('img', { name: 'Item original investment vs profit stacked bar chart' })
+
+    expect(mocked.getRunningTotal).toHaveBeenCalledTimes(1)
+  })
+
+  it('derives original-investment-to-date and profit-to-date correctly across boundary/gap/out-of-order scenarios (see EXPAND_ITEM_1_RUNNING_TOTAL\'s own comment for the full breakdown), verified via Chart B\'s exact plotted pixel positions', async () => {
+    const user = userEvent.setup()
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(EXPAND_ROLLUP)
+    mocked.getBalanceGrid.mockResolvedValue(EXPAND_GRID)
+    mocked.getRunningTotal.mockResolvedValue(EXPAND_ITEM_1_RUNNING_TOTAL)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+    const section = getRollupSection()
+    await within(section).findByText('Growth Fund')
+
+    await user.click(within(section).getByRole('button', { name: 'Expand charts for Growth Fund' }))
+    const profitLine = await within(section).findByTestId('item-profit-line')
+
+    // Hand-computed profitToDate = currentValue - originalInvestmentToDate
+    // at every chronological quarter:
+    //   2024 Q1: currentValue=1800, OID=null (zero qualifying entries)  -> null (gap)
+    //   2024 Q2: currentValue=2000, OID=1500 (e-b, exactly on boundary) -> 500
+    //   2024 Q3: currentValue=2100, OID=1500 (e-c not yet qualifying)   -> 600
+    //   2024 Q4: currentValue=2200, OID=1800 (e-c now qualifies)        -> 400
+    //   2025 Q1: currentValue=null (hasData:false)                     -> null (gap)
+    //   2025 Q2: currentValue=2300, OID=1800                           -> 500
+    //   2025 Q3: currentValue=2400, OID=1800                           -> 600
+    //   2025 Q4: currentValue=2500, OID=1800                           -> 700
+    const values = [500, 600, 400, 500, 600, 700]
+    const points = parsePathPoints(profitLine.getAttribute('d') ?? '')
+    // 8 chronological quarters, 2 gaps (2024 Q1 and 2025 Q1) -> 6 plotted points.
+    expect(points).toHaveLength(6)
+    values.forEach((v, i) => {
+      expect(points[i].y).toBeCloseTo(itemProfitLineYOf(values, v), 1)
+    })
+  })
+
+  it('breaks a same-entryDate tie between qualifying ledger entries by the LATER createdAt, not by array/insertion order (Gate 3 regression)', async () => {
+    const user = userEvent.setup()
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(EXPAND_ROLLUP)
+    mocked.getBalanceGrid.mockResolvedValue(EXPAND_GRID)
+    mocked.getRunningTotal.mockResolvedValue(EXPAND_ITEM_TIEBREAK_RUNNING_TOTAL)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+    const section = getRollupSection()
+    await within(section).findByText('Growth Fund')
+
+    await user.click(within(section).getByRole('button', { name: 'Expand charts for Growth Fund' }))
+    const profitLine = await within(section).findByTestId('item-profit-line')
+
+    // Both ledger entries qualify from 2024 Q2 (06-30) onward. The STALE,
+    // first-in-array entry has runningTotal=500 (entered earlier that day);
+    // the correct, later-createdAt entry has runningTotal=800. Every
+    // profitToDate figure from Q2 onward must reflect OID=800, NOT 500 —
+    // otherwise every quarter understates profit by exactly 300 (the delta
+    // between the two candidate OIDs), which is the bug this test guards.
+    //   2024 Q1: currentValue=1800, OID=null (no entry yet)  -> null (gap)
+    //   2024 Q2: currentValue=2000, OID=800 (NOT 500)         -> 1200
+    //   2024 Q3: currentValue=2100, OID=800                   -> 1300
+    //   2024 Q4: currentValue=2200, OID=800                   -> 1400
+    //   2025 Q1: currentValue=null (hasData:false)             -> null (gap)
+    //   2025 Q2: currentValue=2300, OID=800                   -> 1500
+    //   2025 Q3: currentValue=2400, OID=800                   -> 1600
+    //   2025 Q4: currentValue=2500, OID=800                   -> 1700
+    const values = [1200, 1300, 1400, 1500, 1600, 1700]
+    const points = parsePathPoints(profitLine.getAttribute('d') ?? '')
+    expect(points).toHaveLength(6)
+    values.forEach((v, i) => {
+      expect(points[i].y).toBeCloseTo(itemProfitLineYOf(values, v), 1)
+    })
+  })
+
+  it('Chart A renders a stacked bar only where both original-investment and profit are resolvable, and still plots the current-value overlay line independently wherever the current value alone is present', async () => {
+    const user = userEvent.setup()
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(EXPAND_ROLLUP)
+    mocked.getBalanceGrid.mockResolvedValue(EXPAND_GRID)
+    mocked.getRunningTotal.mockResolvedValue(EXPAND_ITEM_1_RUNNING_TOTAL)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+    const section = getRollupSection()
+    await within(section).findByText('Growth Fund')
+
+    await user.click(within(section).getByRole('button', { name: 'Expand charts for Growth Fund' }))
+    const stackedChart = await within(section).findByRole('img', { name: 'Item original investment vs profit stacked bar chart' })
+
+    // Chronological: [2024 Q1, Q2, Q3, Q4, 2025 Q1, Q2, Q3, Q4] = indices 0-7.
+    // No bar at idx0 (OID null — zero qualifying entries yet, even though
+    // the item's own balance of 1800 IS recorded that quarter) or idx4
+    // (current value itself missing that quarter, even though OID=1800 is
+    // resolvable) — present at every other index.
+    const absentIdxs = [0, 4]
+    const presentIdxs = [1, 2, 3, 5, 6, 7]
+    absentIdxs.forEach(qi => {
+      expect(within(stackedChart).queryByTestId(`item-bar-segment-${qi}-original-investment`)).not.toBeInTheDocument()
+      expect(within(stackedChart).queryByTestId(`item-bar-segment-${qi}-profit`)).not.toBeInTheDocument()
+    })
+    presentIdxs.forEach(qi => {
+      expect(within(stackedChart).getByTestId(`item-bar-segment-${qi}-original-investment`)).toBeInTheDocument()
+      expect(within(stackedChart).getByTestId(`item-bar-segment-${qi}-profit`)).toBeInTheDocument()
+    })
+
+    // The current-value overlay LINE is driven purely by the item's own
+    // `currentValues` (independent of OID/profit) — it plots a point at
+    // idx0 (currentValue=1800, even though no bar exists there) but NOT at
+    // idx4 (currentValue itself is missing there): 7 of 8 quarters plot.
+    const lineEl = within(stackedChart).getByTestId('item-current-value-line')
+    const linePoints = parsePathPoints(lineEl.getAttribute('d') ?? '')
+    expect(linePoints).toHaveLength(7)
+  })
+
+  it('renders no expand control and fetches nothing for a not-covered row (regression — existing empty-state treatment unchanged)', async () => {
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(EXPAND_ROLLUP)
+    mocked.getBalanceGrid.mockResolvedValue(EXPAND_GRID)
+    render(<TrackingDashboardPage />)
+    await waitForGrid()
+    const section = getRollupSection()
+    // Scoped to the `<table>` specifically — "Uncovered Item" ALSO appears
+    // in the coverage badge's excluded-names `<details>` disclosure (same
+    // ambiguity the existing "Condo Bangkok" rollup test above already
+    // works around the same way).
+    const table = await within(section).findByRole('table')
+    await within(table).findByText('Uncovered Item')
+
+    const uncoveredRow = within(table).getByText('Uncovered Item').closest('tr')!
+    expect(within(uncoveredRow).queryByRole('button')).not.toBeInTheDocument()
+    const cells = within(uncoveredRow).getAllByRole('cell')
+    expect(cells.slice(3).map(c => c.textContent)).toEqual(['—', '—', '—', '—'])
+    expect(mocked.getRunningTotal).not.toHaveBeenCalled()
+  })
+
+  it('shows a "Loading balances…" placeholder — never a crash or wrong data — when a row is expanded before the independent balance-grid query has resolved', async () => {
+    const user = userEvent.setup()
+    mocked.getOriginalInvestmentRollup.mockResolvedValue(EXPAND_ROLLUP)
+    // The balance-grid query deliberately never resolves in this test —
+    // simulates the rollup query settling first (the documented race).
+    mocked.getBalanceGrid.mockImplementation(() => new Promise(() => {}))
+    mocked.getRunningTotal.mockResolvedValue(EXPAND_ITEM_1_RUNNING_TOTAL)
+    render(<TrackingDashboardPage />)
+
+    // No `waitForGrid()` here (the grid query never resolves in this test)
+    // — wait for the rollup section's own heading instead, which is
+    // reachable via the independent `listSets`/rollup queries alone.
+    await screen.findByRole('heading', { name: 'Original Investment vs Profit' })
+    const section = getRollupSection()
+    await within(section).findByText('Growth Fund')
+
+    await user.click(within(section).getByRole('button', { name: 'Expand charts for Growth Fund' }))
+
+    expect(await within(section).findByText('Loading balances…')).toBeInTheDocument()
+    // This component's own fetch is independent of the balance-grid query's
+    // state — it still fires even while `grid` is unresolved.
+    await waitFor(() => expect(mocked.getRunningTotal).toHaveBeenCalledWith('exp-item-1'))
+    // No chart renders while `cells` is unavailable — never wrong data.
+    expect(within(section).queryByRole('img', { name: 'Item original investment vs profit stacked bar chart' })).not.toBeInTheDocument()
   })
 })
 

@@ -6,7 +6,7 @@ import axios from 'axios'
 import toast from 'react-hot-toast'
 import {
   Table2, Loader2, AlertCircle, ChevronDown, ChevronRight, Layers, ListTree,
-  Maximize2, Minimize2, LineChart, BarChart3, Target, Pencil, Mail,
+  Maximize2, Minimize2, ArrowUpDown, BarChart3, Target, Pencil, Mail,
 } from 'lucide-react'
 import { cn, formatNumber } from '@/lib/utils'
 import { extractApiError } from '@/services/api'
@@ -15,7 +15,9 @@ import {
   type BalanceCell,
   type DashboardBalanceGridOut,
   type DashboardCategoryRow,
+  type DashboardItemRow,
   type DashboardYearColumn,
+  type Entry,
   type OriginalInvestmentCoverage,
   type OriginalInvestmentItemRow,
   type OriginalInvestmentRollup,
@@ -666,19 +668,18 @@ function YearTable({
   )
 }
 
-// ── Category trend chart (requirement 4) ────────────────────────────────────
+// ── Category charts (requirement 4; redefined — see CategoryDeltaChart) ────
 //
-// Hand-rolled inline SVG line chart — the SAME mechanism as the only other
-// chart in this codebase (analytics/daily-performance/page.tsx): a `useMemo`
-// -built `ChartData`-equivalent, `xOf`/`yOf` scale functions, a manual path
+// Hand-rolled inline SVG charts — the SAME mechanism as the only other chart
+// in this codebase (analytics/daily-performance/page.tsx): a `useMemo`-built
+// `ChartData`-equivalent, `xOf`/`yOf` scale functions, a manual path/rect
 // builder, y-axis gridlines+ticks, x-axis labels thinned via `labelStep`, a
 // legend row, and a hover-tracking tooltip via `onMouseMove`. No chart
 // library is introduced (none exists in this codebase's package.json).
 //
-// Renders exactly ONCE per page load — one line per Category (from
-// `subtotal`, already summed-per-category-per-quarter) plus one Grand Total
-// line — across the FULL chronological range of quarters, unaffected by the
-// Detail/Sub-category/Summary/year-collapse toggles.
+// Both charts render exactly ONCE per page load across the FULL chronological
+// range of quarters, unaffected by the Detail/Sub-category/Summary/
+// year-collapse toggles.
 
 const TREND_CHART_H = 260
 const TREND_CHART_PAD = { top: 20, right: 20, bottom: 36, left: 68 } as const
@@ -726,6 +727,38 @@ const GRAND_TOTAL_LINE_COLOR = '#E2E8F0'
 // (`2,4` vs Grand Total's `6,3`) so the two aggregate lines never read as
 // the same dash style at a glance.
 const NON_PROPERTY_TOTAL_LINE_COLOR = '#06B6D4'
+
+// Sign colors for `CategoryDeltaChart`'s tooltip amount text and its
+// Increase/Decrease legend hint (see the chart's own docstring below) — the
+// EXACT hex values this app's `--gain`/`--loss` CSS custom properties
+// resolve to (globals.css), reused verbatim rather than inventing new colors
+// for the "positive vs negative delta" distinction. Hardcoded hex (not a
+// Tailwind class / `var(--gain)`) for the same reason every other color
+// constant on this page is: these values feed raw SVG `fill` attributes, not
+// `className`.
+const DELTA_POSITIVE_COLOR = '#22C55E' // matches --gain
+const DELTA_NEGATIVE_COLOR = '#EF4444' // matches --loss
+
+// ── Item expand-charts colors (Feature 2) ────────────────────────────────────
+// Chart A's bottom "original investment" bar segment: a neutral gray reusing
+// this app's `--ink-muted` hex verbatim — the same "reuse the CSS custom
+// property's value, never invent a new hex" rule every other color constant
+// on this page follows. Original investment (cost basis) has no inherent
+// sign, so it deliberately does NOT borrow the gain/loss palette the way the
+// segment above it does.
+const ORIGINAL_INVESTMENT_COLOR = '#64748B' // matches --ink-muted
+
+// Chart B's single profit-trend line reuses `GRAND_TOTAL_LINE_COLOR` (this
+// app's neutral `--ink-primary`-ish tone, see its own comment above) rather
+// than inventing a new hex — inside one item's own expand-chart pair there is
+// no competing category/aggregate palette to disambiguate from, so the same
+// "neutral, not a category" signal already established for Grand Total reads
+// correctly here too. Sign (gain vs loss) is carried by the zero baseline and
+// the hover tooltip's text color — the exact `DELTA_POSITIVE_COLOR`/
+// `DELTA_NEGATIVE_COLOR` convention `CategoryDeltaChart` already uses — never
+// by the line's own hue (profit can go negative, so a single fixed color
+// would misstate a loss quarter as a gain).
+const ITEM_PROFIT_LINE_COLOR = GRAND_TOTAL_LINE_COLOR
 
 // ── Stacked bar overlay (Change 1) ──────────────────────────────────────────
 // Per the `dataviz` skill (consulted before writing this): bars and lines
@@ -812,8 +845,8 @@ interface TrendSeries {
 }
 
 /**
- * One x-axis tick, shared verbatim between `CategoryLinesChart` and
- * `CategoryStackedBarChart` (Gate 2: ONE `quarters` array computed once at
+ * One x-axis tick, shared verbatim between `CategoryStackedBarChart` and
+ * `CategoryDeltaChart` (Gate 2: ONE `quarters` array computed once at
  * the page level, passed to both, so their x-axis ranges can never drift
  * apart). `cellIdx` is the ORIGINAL (non-reversed) `yearIdx*4 + quarterIdx`
  * position every cells/subtotal/grandTotal/propertyBreakdown array is
@@ -845,227 +878,13 @@ function clampTooltipX(px: number, tooltipW: number, containerWidth: number, mar
 }
 
 /**
- * LEFT chart (Gate 1 requirement 2 / Gate 2) — category trend lines +
- * Grand Total line ONLY, no bars. Its y-domain is fully independent of the
- * RIGHT chart's stacked-bar y-domain (Gate 2), computed solely from this
- * chart's own line values, exactly as the pre-split combined chart's
- * line-only domain logic already worked.
- */
-function CategoryLinesChart({
-  quarters, categories, grandTotal,
-}: {
-  quarters: ChartQuarter[]
-  categories: DashboardCategoryRow[]
-  grandTotal: BalanceCell[]
-}) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [containerWidth, setContainerWidth] = useState(800)
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    setContainerWidth(el.clientWidth)
-    const observer = new ResizeObserver(entries => {
-      for (const entry of entries) setContainerWidth(Math.floor(entry.contentRect.width))
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
-
-  const chartData = useMemo(() => {
-    if (quarters.length === 0) return null
-    const innerW = containerWidth - TREND_CHART_PAD.left - TREND_CHART_PAD.right
-    const innerH = TREND_CHART_H - TREND_CHART_PAD.top - TREND_CHART_PAD.bottom
-
-    const xOf = (i: number): number =>
-      TREND_CHART_PAD.left + (quarters.length > 1 ? (i / (quarters.length - 1)) * innerW : innerW / 2)
-
-    // Stack order is MANDATORY and explicit — sorted by `orderIndex`
-    // ascending, never just the array order the API happens to send (even
-    // though the backend currently already sends categories pre-sorted by
-    // order_index, this must not be relied on implicitly). This exact
-    // sorted order drives line color assignment and the legend, and is kept
-    // identical to the RIGHT chart's own sort so a category's color/position
-    // never differs between the two charts.
-    const sortedCategories = [...categories].sort((a, b) => a.orderIndex - b.orderIndex)
-
-    const seriesDefs = [
-      ...sortedCategories.map((cat, i) => ({
-        id: cat.id,
-        label: cat.name,
-        color: CATEGORY_LINE_COLORS[i % CATEGORY_LINE_COLORS.length],
-        dashed: false,
-        strokeWidth: 1.5,
-        cells: cat.subtotal,
-      })),
-      {
-        id: '__grand-total__',
-        label: 'Grand Total',
-        color: GRAND_TOTAL_LINE_COLOR,
-        dashed: true,
-        strokeWidth: 2.5,
-        cells: grandTotal,
-      },
-    ]
-
-    // Raw per-quarter values, `null` for any quarter without data — never a
-    // fabricated 0, matching this codebase's established convention.
-    const rawSeries = seriesDefs.map(def => ({
-      ...def,
-      values: quarters.map(q => {
-        const cell = def.cells[q.cellIdx]
-        if (!cell || !cell.hasData) return null
-        return toFiniteOrNull(cell.balance)
-      }),
-    }))
-
-    const allValues = rawSeries.flatMap(s => s.values.filter((v): v is number => v !== null))
-    const dataMin = Math.min(0, ...(allValues.length ? allValues : [0]))
-    const dataMax = allValues.length ? Math.max(...allValues) : 1
-    const range = Math.max(dataMax - dataMin, 1)
-    const yMin = dataMin - range * 0.05
-    const yMax = dataMax + range * 0.1
-    const yRange = Math.max(yMax - yMin, 1)
-
-    const yOf = (v: number): number => TREND_CHART_PAD.top + innerH - ((v - yMin) / yRange) * innerH
-
-    const seriesPoints: TrendSeries[] = rawSeries.map(s => ({
-      id: s.id,
-      label: s.label,
-      color: s.color,
-      dashed: s.dashed,
-      strokeWidth: s.strokeWidth,
-      points: s.values.map((v, i) => ({ x: xOf(i), y: v === null ? null : yOf(v), value: v })),
-    }))
-
-    const yTicks = computeYTicks(yMin, yRange)
-    const xLabelIdxs = computeXLabelIdxs(quarters.length)
-
-    return { innerW, innerH, xOf, yOf, seriesPoints, yTicks, xLabelIdxs }
-  }, [quarters, categories, grandTotal, containerWidth])
-
-  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!chartData || quarters.length === 0) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const mouseX = e.clientX - rect.left - TREND_CHART_PAD.left
-    const step = quarters.length > 1 ? chartData.innerW / (quarters.length - 1) : chartData.innerW
-    const idx = Math.max(0, Math.min(quarters.length - 1, Math.round(mouseX / step)))
-    setHoverIdx(idx)
-  }
-  const handleMouseLeave = () => setHoverIdx(null)
-
-  if (quarters.length === 0 || !chartData) return null
-
-  return (
-    <div className="card p-4 space-y-3">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-sm font-semibold text-ink-primary flex items-center gap-2">
-          <LineChart className="w-4 h-4 text-brand-400" /> Category Trend
-        </h2>
-        <div className="flex items-center gap-3 text-xs text-ink-muted flex-wrap" role="list" aria-label="Category trend chart legend">
-          {chartData.seriesPoints.map(s => (
-            <span key={s.id} className="flex items-center gap-1.5" role="listitem">
-              <span
-                className="inline-block w-3 rounded-full"
-                style={{ height: s.dashed ? '3px' : '2px', backgroundColor: s.color }}
-                aria-hidden="true"
-              />
-              <span className={cn(s.dashed && 'font-semibold text-ink-primary')}>{s.label}</span>
-            </span>
-          ))}
-        </div>
-      </div>
-      <div
-        ref={containerRef}
-        className="w-full relative"
-        style={{ height: `${TREND_CHART_H}px` }}
-        role="img"
-        aria-label="Category trend lines chart"
-      >
-        <svg
-          width={containerWidth}
-          height={TREND_CHART_H}
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
-          style={{ display: 'block', cursor: 'crosshair' }}
-        >
-          {chartData.yTicks.map((tick, i) => {
-            const y = chartData.yOf(tick)
-            return (
-              <g key={i}>
-                <line x1={TREND_CHART_PAD.left} y1={y} x2={containerWidth - TREND_CHART_PAD.right} y2={y} stroke="currentColor" strokeOpacity={0.07} strokeWidth={1} />
-                <text x={TREND_CHART_PAD.left - 6} y={y} textAnchor="end" dominantBaseline="middle" fontSize={10} fill="currentColor" opacity={0.45}>
-                  {formatAxisNumber(tick)}
-                </text>
-              </g>
-            )
-          })}
-          {chartData.xLabelIdxs.map(i => (
-            <text key={i} x={chartData.xOf(i)} y={TREND_CHART_H - TREND_CHART_PAD.bottom + 16} textAnchor="middle" fontSize={10} fill="currentColor" opacity={0.45}>
-              {quarters[i].label}
-            </text>
-          ))}
-          {chartData.seriesPoints.map(s => (
-            <path
-              key={s.id}
-              data-testid={`chart-line-${s.id}`}
-              d={buildLinePathWithGaps(s.points)}
-              fill="none"
-              stroke={s.color}
-              strokeWidth={s.strokeWidth}
-              strokeDasharray={s.dashed ? '6,3' : undefined}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-          ))}
-          {hoverIdx !== null && (() => {
-            const tooltipW = 190
-            const tooltipH = 20 + chartData.seriesPoints.length * 16
-            const px = chartData.xOf(hoverIdx)
-            const tooltipX = clampTooltipX(px, tooltipW, containerWidth)
-            const tooltipY = TREND_CHART_PAD.top + 2
-            return (
-              <g>
-                <line x1={px} y1={TREND_CHART_PAD.top} x2={px} y2={TREND_CHART_PAD.top + chartData.innerH} stroke="currentColor" strokeOpacity={0.22} strokeWidth={1} strokeDasharray="4,3" />
-                {chartData.seriesPoints.map(s => {
-                  const pt = s.points[hoverIdx]
-                  if (pt.y === null) return null
-                  return <circle key={s.id} cx={pt.x} cy={pt.y} r={3.5} fill={s.color} />
-                })}
-                <rect x={tooltipX} y={tooltipY} width={tooltipW} height={tooltipH} rx={5} ry={5} fill="#1a1d23" fillOpacity={0.97} stroke="currentColor" strokeOpacity={0.12} strokeWidth={1} />
-                <text x={tooltipX + 10} y={tooltipY + 16} fontSize={11} fontWeight={600} fill="currentColor" opacity={0.85}>{quarters[hoverIdx].label}</text>
-                {chartData.seriesPoints.map((s, i) => {
-                  const pt = s.points[hoverIdx]
-                  const rowY = tooltipY + 16 + (i + 1) * 16
-                  return (
-                    <g key={s.id}>
-                      <circle cx={tooltipX + 14} cy={rowY - 4} r={3} fill={s.color} />
-                      <text x={tooltipX + 24} y={rowY} fontSize={10} fill={s.color}>
-                        {pt.value === null ? 'No data' : fmtBalance(pt.value)}
-                      </text>
-                      <text x={tooltipX + 100} y={rowY} fontSize={10} fill="currentColor" opacity={0.42}>
-                        {s.label}
-                      </text>
-                    </g>
-                  )
-                })}
-              </g>
-            )
-          })()}
-        </svg>
-      </div>
-    </div>
-  )
-}
-
-/**
- * RIGHT chart (Gate 1 requirements 2+3 / Gate 2) — the stacked bars ONLY,
- * plus two aggregate overlay lines read directly from their own data
- * (Non-Property Total, Grand Total) — never derived from bar segment
+ * LEFT chart (unchanged content, moved from the RIGHT slot — see the
+ * redefined `CategoryDeltaChart` below, now in the RIGHT slot) — the stacked
+ * bars ONLY, plus two aggregate overlay lines read directly from their own
+ * data (Non-Property Total, Grand Total) — never derived from bar segment
  * geometry. Its y-domain fits all THREE of: the stacked category total, the
- * Grand Total line, and the Non-Property Total line (Gate 2) — none of the
- * three is guaranteed by the data model to bound the other two.
+ * Grand Total line, and the Non-Property Total line — none of the three is
+ * guaranteed by the data model to bound the other two.
  */
 function CategoryStackedBarChart({
   quarters, categories, grandTotal, nonPropertyTotal,
@@ -1463,6 +1282,403 @@ function CategoryStackedBarChart({
   )
 }
 
+/**
+ * RIGHT chart (redefined — was "Category Trend", a per-category BALANCE line
+ * chart; is now "Category Delta Trend", a per-category DELTA stacked bar
+ * chart). Renamed because the old name/shape no longer describes what's
+ * plotted: this reads `BalanceCell.deltaAmount` — the SAME field `DeltaTd`
+ * already renders in every per-year table and the same per-cell objects the
+ * LEFT chart above already iterates over (`cat.subtotal[q.cellIdx]`), just a
+ * different field within them — never a value recomputed here.
+ *
+ * A signed, DIVERGING stacked bar: for a given quarter, every category whose
+ * delta is positive stacks UPWARD from a zero baseline; every category whose
+ * delta is negative stacks DOWNWARD from that same baseline. Sign is carried
+ * by POSITION (which side of the baseline a segment falls on), not by color —
+ * each segment keeps its category's own `CATEGORY_LINE_COLORS` hue (the same
+ * "color follows the entity" rule the LEFT chart's balance stack already
+ * follows), so a category is recognizable across both charts regardless of
+ * which side of zero it lands on in any given quarter. The zero baseline
+ * itself is drawn as a bolder line so the sign boundary is unambiguous even
+ * without a hover. `DELTA_POSITIVE_COLOR`/`DELTA_NEGATIVE_COLOR` (this app's
+ * own `--gain`/`--loss` hex values) are reserved for the hover tooltip's
+ * amount text and the Increase/Decrease legend hint — the one place sign
+ * genuinely needs its own color, distinct from category identity.
+ *
+ * A quarter contributes NO segment for a category when `hasPreviousData` is
+ * false, or when `deltaAmount` is `null` (the current balance itself is
+ * missing so no delta could be computed), or when the delta is exactly `0`
+ * — never a fabricated zero-height bar, mirroring the "absent, not zero"
+ * convention already used by every other chart/cell on this page.
+ *
+ * Its y-domain is independent of the LEFT chart's (a delta is typically a
+ * much smaller magnitude than a balance, and is genuinely bipolar — sharing
+ * the LEFT chart's balance-only, floor-at-0 domain would flatten every bar
+ * here near zero and clip any large negative quarter), and is padded
+ * symmetrically on both the positive and negative side (unlike the LEFT
+ * chart's balance stack, which only ever needs top padding since it never
+ * goes below 0).
+ *
+ * Feature 1 (12-quarter Grand-Total moving average): an additional overlay
+ * LINE — not a bar — plotted on the exact same y-scale as the delta bars
+ * above (it reads the same measure, `BalanceCell.deltaAmount`, just off the
+ * `grandTotal` array instead of a per-category `subtotal`). See the
+ * `maSeries` computation inside `chartData` below for the trailing-window
+ * average algorithm itself.
+ */
+function CategoryDeltaChart({
+  quarters, categories, grandTotal,
+}: {
+  quarters: ChartQuarter[]
+  categories: DashboardCategoryRow[]
+  /** Same array `GrandTotalRows`/the LEFT chart's Grand Total line already read — powers the 12-quarter moving-average overlay (Feature 1) below. */
+  grandTotal: BalanceCell[]
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(800)
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    setContainerWidth(el.clientWidth)
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) setContainerWidth(Math.floor(entry.contentRect.width))
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const chartData = useMemo(() => {
+    if (quarters.length === 0) return null
+    const innerW = containerWidth - TREND_CHART_PAD.left - TREND_CHART_PAD.right
+    const innerH = TREND_CHART_H - TREND_CHART_PAD.top - TREND_CHART_PAD.bottom
+
+    const xOf = (i: number): number =>
+      TREND_CHART_PAD.left + (quarters.length > 1 ? (i / (quarters.length - 1)) * innerW : innerW / 2)
+
+    // Same defensive sort as the LEFT chart — never rely on API array order
+    // — kept identical so a category's color always matches its LEFT chart
+    // segment color.
+    const sortedCategories = [...categories].sort((a, b) => a.orderIndex - b.orderIndex)
+
+    // Per-quarter positive/negative running totals — the y-domain must fit
+    // BOTH the tallest positive stack and the deepest negative stack, unlike
+    // the LEFT chart's balance stack which never goes below 0.
+    const positiveTotalsByQuarter = quarters.map(q =>
+      sortedCategories.reduce((sum, cat) => {
+        const cell = cat.subtotal[q.cellIdx]
+        if (!cell?.hasPreviousData) return sum
+        const v = toFiniteOrNull(cell.deltaAmount)
+        return v !== null && v > 0 ? sum + v : sum
+      }, 0),
+    )
+    const negativeTotalsByQuarter = quarters.map(q =>
+      sortedCategories.reduce((sum, cat) => {
+        const cell = cat.subtotal[q.cellIdx]
+        if (!cell?.hasPreviousData) return sum
+        const v = toFiniteOrNull(cell.deltaAmount)
+        return v !== null && v < 0 ? sum + v : sum
+      }, 0),
+    )
+
+    const domainValues = [...positiveTotalsByQuarter, ...negativeTotalsByQuarter, 0]
+    const dataMin = Math.min(...domainValues)
+    const dataMax = Math.max(...domainValues)
+    const range = Math.max(dataMax - dataMin, 1)
+    // Symmetric padding on both sides (see docstring above) — a genuinely
+    // bipolar measure, unlike the LEFT chart's floor-at-0 balance stack.
+    const yMin = dataMin - range * 0.08
+    const yMax = dataMax + range * 0.08
+    const yRange = Math.max(yMax - yMin, 1)
+
+    const yOf = (v: number): number => TREND_CHART_PAD.top + innerH - ((v - yMin) / yRange) * innerH
+
+    const spacing = quarters.length > 1 ? innerW / (quarters.length - 1) : innerW
+    const barWidth = Math.max(BAR_MIN_WIDTH, Math.min(BAR_MAX_WIDTH, spacing * 0.55))
+
+    // Diverging stack: positive-delta categories stack UP from the zero
+    // baseline, negative-delta categories stack DOWN from it — built as two
+    // independent running totals (not one signed cumulative sum), so a
+    // positive segment from one category and a negative segment from
+    // another never overlap or stack across the zero line.
+    const barColumns: BarColumn[] = quarters.map((q, i) => {
+      let cumPos = 0
+      let cumNeg = 0
+      const positiveSegs: BarSegment[] = []
+      const negativeSegs: BarSegment[] = []
+      sortedCategories.forEach((cat, ci) => {
+        const cell = cat.subtotal[q.cellIdx]
+        if (!cell?.hasPreviousData) return
+        const value = toFiniteOrNull(cell.deltaAmount)
+        if (value === null || value === 0) return
+        const color = CATEGORY_LINE_COLORS[ci % CATEGORY_LINE_COLORS.length]
+        if (value > 0) {
+          const yBefore = yOf(cumPos)
+          cumPos += value
+          const yAfter = yOf(cumPos)
+          positiveSegs.push({ categoryId: cat.id, color, yTop: yAfter, yBottom: yBefore, value })
+        } else {
+          const yBefore = yOf(cumNeg)
+          cumNeg += value
+          const yAfter = yOf(cumNeg)
+          negativeSegs.push({ categoryId: cat.id, color, yTop: yBefore, yBottom: yAfter, value })
+        }
+      })
+      // 2px surface-gap between adjacent segments WITHIN each half of the
+      // stack only (never across the zero baseline — the positive and
+      // negative halves are two independent stacks, not one continuous run).
+      for (let s = 0; s < positiveSegs.length - 1; s++) {
+        positiveSegs[s].yTop += BAR_SEGMENT_GAP / 2
+        positiveSegs[s + 1].yBottom -= BAR_SEGMENT_GAP / 2
+      }
+      for (let s = 0; s < negativeSegs.length - 1; s++) {
+        negativeSegs[s].yBottom -= BAR_SEGMENT_GAP / 2
+        negativeSegs[s + 1].yTop += BAR_SEGMENT_GAP / 2
+      }
+      return { x: xOf(i), segments: [...positiveSegs, ...negativeSegs] }
+    })
+
+    // Tooltip-only per-category series — no line is drawn, the bars ARE the
+    // encoding — the exact same pattern as the LEFT chart's own
+    // `categoryTooltipSeries`, just carrying the DELTA value instead of balance.
+    const categoryTooltipSeries: TrendSeries[] = sortedCategories.map((cat, i) => ({
+      id: cat.id,
+      label: cat.name,
+      color: CATEGORY_LINE_COLORS[i % CATEGORY_LINE_COLORS.length],
+      dashed: false,
+      strokeWidth: 0,
+      points: quarters.map((q, qi) => {
+        const cell = cat.subtotal[q.cellIdx]
+        const v = cell?.hasPreviousData ? toFiniteOrNull(cell.deltaAmount) : null
+        return { x: xOf(qi), y: null, value: v }
+      }),
+    }))
+
+    // ── 12-quarter Grand-Total moving average overlay (Feature 1) ──────────
+    // A single aggregate LINE plotted on the SAME y-scale as the delta bars
+    // above (it plots the same measure — delta amount — never a second
+    // dual-axis scale). Trailing window, inclusive of the current quarter,
+    // capped at 12 points — an EXPANDING window for the first 11
+    // chronological quarters (fewer than 12 available yet), never a
+    // fixed-size window waiting to "fill up" before it starts plotting.
+    // Gated on `hasPreviousData` (never `hasData`) per window member,
+    // exactly like `categoryTooltipSeries` above — a quarter with no
+    // resolvable delta contributes NOTHING to the average, it is never
+    // coerced to 0. A window with zero qualifying members (e.g. the very
+    // first chartable quarter, whose own one-quarter window is always
+    // `hasPreviousData:false`) is a genuine GAP (`null`), never a
+    // fabricated zero, per `buildLinePathWithGaps`'s existing contract.
+    const maPoints: TrendPoint[] = quarters.map((q, i) => {
+      const windowStart = Math.max(0, i - 11)
+      const values: number[] = []
+      for (let k = windowStart; k <= i; k++) {
+        const cell = grandTotal[quarters[k].cellIdx]
+        if (cell?.hasPreviousData) {
+          const v = toFiniteOrNull(cell.deltaAmount)
+          if (v !== null) values.push(v)
+        }
+      }
+      const avg = values.length === 0 ? null : values.reduce((a, b) => a + b, 0) / values.length
+      return { x: xOf(i), y: avg === null ? null : yOf(avg), value: avg }
+    })
+    // Reuses `GRAND_TOTAL_LINE_COLOR` — this app's established "this is an
+    // aggregate line, not a category" signal (see the LEFT chart's own Grand
+    // Total overlay) — with the SAME `6,3` dash pattern the LEFT chart's
+    // Grand Total line uses, so the two read as the same kind of aggregate
+    // signal across both charts, while staying visually distinct from this
+    // chart's own delta bars (different mark type: line vs bar) and from the
+    // LEFT chart's own lines (different chart, no risk of confusion).
+    const maSeries: TrendSeries = {
+      id: 'delta-ma-grand-total',
+      label: '12Q Avg (Grand Total)',
+      color: GRAND_TOTAL_LINE_COLOR,
+      dashed: true,
+      strokeWidth: 2,
+      points: maPoints,
+    }
+
+    const yTicks = computeYTicks(yMin, yRange)
+    const xLabelIdxs = computeXLabelIdxs(quarters.length)
+    const zeroY = yOf(0)
+
+    return {
+      innerW, innerH, xOf, yOf, barColumns, barWidth, yTicks, xLabelIdxs,
+      sortedCategories, categoryTooltipSeries, zeroY, maSeries,
+    }
+  }, [quarters, categories, grandTotal, containerWidth])
+
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!chartData || quarters.length === 0) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left - TREND_CHART_PAD.left
+    const step = quarters.length > 1 ? chartData.innerW / (quarters.length - 1) : chartData.innerW
+    const idx = Math.max(0, Math.min(quarters.length - 1, Math.round(mouseX / step)))
+    setHoverIdx(idx)
+  }
+  const handleMouseLeave = () => setHoverIdx(null)
+
+  if (quarters.length === 0 || !chartData) return null
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2 className="text-sm font-semibold text-ink-primary flex items-center gap-2">
+          <ArrowUpDown className="w-4 h-4 text-brand-400" /> Category Delta Trend
+        </h2>
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-3 text-xs text-ink-muted flex-wrap" role="list" aria-label="Category delta trend chart legend">
+            {chartData.sortedCategories.map((cat, i) => (
+              <span key={cat.id} className="flex items-center gap-1.5" role="listitem">
+                <span
+                  className="inline-block w-3 h-3 rounded-sm"
+                  style={{ backgroundColor: CATEGORY_LINE_COLORS[i % CATEGORY_LINE_COLORS.length] }}
+                  aria-hidden="true"
+                />
+                <span>{cat.name}</span>
+              </span>
+            ))}
+          </div>
+          {/* 12-quarter Grand-Total moving average legend entry (Feature 1)
+              — deliberately OUTSIDE the category `role="list"` above: it is
+              a plotted series like the categories, but it is NOT itself a
+              category (it's an aggregate, the same conceptual bucket as
+              Grand Total/Non-Property Total on the LEFT chart), so it
+              should not count as a "category legend item" for anything that
+              iterates that list. Carries a real visible text label, not
+              just a color swatch, per WCAG "never color alone". */}
+          <div className="flex items-center gap-1.5 text-[10px] text-ink-muted" data-testid="chart-legend-ma">
+            <span
+              className="inline-block w-3 rounded-full"
+              style={{ height: '3px', backgroundColor: GRAND_TOTAL_LINE_COLOR }}
+              aria-hidden="true"
+            />
+            <span className="font-medium text-ink-secondary">12Q Avg (Grand Total)</span>
+          </div>
+          {/* Sign-convention hint, explaining the zero-baseline mechanic —
+              deliberately OUTSIDE the category `role="list"` above, since
+              these two chips describe an axis convention, not a plotted
+              entity, so they should not count as "legend items". */}
+          <div className="flex items-center gap-2 text-[10px] text-ink-muted">
+            <span className="flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: DELTA_POSITIVE_COLOR }} aria-hidden="true" />
+              Increase
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: DELTA_NEGATIVE_COLOR }} aria-hidden="true" />
+              Decrease
+            </span>
+          </div>
+        </div>
+      </div>
+      <div
+        ref={containerRef}
+        className="w-full relative"
+        style={{ height: `${TREND_CHART_H}px` }}
+        role="img"
+        aria-label="Category delta trend stacked bar chart with 12-quarter grand-total moving average"
+      >
+        <svg
+          width={containerWidth}
+          height={TREND_CHART_H}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          style={{ display: 'block', cursor: 'crosshair' }}
+        >
+          {chartData.yTicks.map((tick, i) => {
+            const y = chartData.yOf(tick)
+            return (
+              <g key={i}>
+                <line x1={TREND_CHART_PAD.left} y1={y} x2={containerWidth - TREND_CHART_PAD.right} y2={y} stroke="currentColor" strokeOpacity={0.07} strokeWidth={1} />
+                <text x={TREND_CHART_PAD.left - 6} y={y} textAnchor="end" dominantBaseline="middle" fontSize={10} fill="currentColor" opacity={0.45}>
+                  {formatAxisNumber(tick)}
+                </text>
+              </g>
+            )
+          })}
+          {/* The zero baseline — bolder than the regular gridlines above so
+              it reads as the sign boundary a positive segment stacks above
+              and a negative segment stacks below. */}
+          <line
+            data-testid="delta-chart-zero-baseline"
+            x1={TREND_CHART_PAD.left}
+            y1={chartData.zeroY}
+            x2={containerWidth - TREND_CHART_PAD.right}
+            y2={chartData.zeroY}
+            stroke="currentColor"
+            strokeOpacity={0.35}
+            strokeWidth={1.5}
+          />
+          {chartData.xLabelIdxs.map(i => (
+            <text key={i} x={chartData.xOf(i)} y={TREND_CHART_H - TREND_CHART_PAD.bottom + 16} textAnchor="middle" fontSize={10} fill="currentColor" opacity={0.45}>
+              {quarters[i].label}
+            </text>
+          ))}
+          {chartData.barColumns.map((col, qi) => (
+            <g key={`delta-bar-${quarters[qi].cellIdx}`} data-testid={`delta-bar-column-${qi}`}>
+              {col.segments.map(seg => (
+                <rect
+                  key={seg.categoryId}
+                  data-testid={`delta-bar-segment-${qi}-${seg.categoryId}`}
+                  x={col.x - chartData.barWidth / 2}
+                  y={seg.yTop}
+                  width={chartData.barWidth}
+                  height={Math.max(0, seg.yBottom - seg.yTop)}
+                  fill={seg.color}
+                  fillOpacity={BAR_FILL_OPACITY}
+                />
+              ))}
+            </g>
+          ))}
+          {/* 12-quarter Grand-Total moving average overlay (Feature 1) —
+              rendered on top of the bars, on the exact same x/y scales. */}
+          <path
+            data-testid="delta-chart-ma-line"
+            d={buildLinePathWithGaps(chartData.maSeries.points)}
+            fill="none"
+            stroke={chartData.maSeries.color}
+            strokeWidth={chartData.maSeries.strokeWidth}
+            strokeDasharray="6,3"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          {hoverIdx !== null && (() => {
+            const tooltipRows = [...chartData.categoryTooltipSeries, chartData.maSeries]
+            const tooltipW = 190
+            const tooltipH = 20 + tooltipRows.length * 16
+            const px = chartData.xOf(hoverIdx)
+            const tooltipX = clampTooltipX(px, tooltipW, containerWidth)
+            const tooltipY = TREND_CHART_PAD.top + 2
+            return (
+              <g>
+                <line x1={px} y1={TREND_CHART_PAD.top} x2={px} y2={TREND_CHART_PAD.top + chartData.innerH} stroke="currentColor" strokeOpacity={0.22} strokeWidth={1} strokeDasharray="4,3" />
+                <rect x={tooltipX} y={tooltipY} width={tooltipW} height={tooltipH} rx={5} ry={5} fill="#1a1d23" fillOpacity={0.97} stroke="currentColor" strokeOpacity={0.12} strokeWidth={1} />
+                <text x={tooltipX + 10} y={tooltipY + 16} fontSize={11} fontWeight={600} fill="currentColor" opacity={0.85}>{quarters[hoverIdx].label}</text>
+                {tooltipRows.map((s, i) => {
+                  const pt = s.points[hoverIdx]
+                  const rowY = tooltipY + 16 + (i + 1) * 16
+                  const signColor = pt.value === null ? 'currentColor' : pt.value >= 0 ? DELTA_POSITIVE_COLOR : DELTA_NEGATIVE_COLOR
+                  return (
+                    <g key={s.id}>
+                      <circle cx={tooltipX + 14} cy={rowY - 4} r={3} fill={s.color} />
+                      <text x={tooltipX + 24} y={rowY} fontSize={10} fill={signColor} opacity={pt.value === null ? 0.42 : 1}>
+                        {pt.value === null ? 'No data' : fmtAmount(pt.value)}
+                      </text>
+                      <text x={tooltipX + 100} y={rowY} fontSize={10} fill="currentColor" opacity={0.42}>
+                        {s.label}
+                      </text>
+                    </g>
+                  )
+                })}
+              </g>
+            )
+          })()}
+        </svg>
+      </div>
+    </div>
+  )
+}
+
 // ── Original Investment vs Profit section ──────────────────────────────────────
 //
 // A standalone card near the top of the page — its OWN React Query, fully
@@ -1472,6 +1688,557 @@ function CategoryStackedBarChart({
 // four numeric columns render an em dash "—", NEVER a fabricated 0 cost
 // basis / "0%" / "100%". `profitPercent` comes straight from the server
 // (rounded for display only) — never derived client-side.
+//
+// Feature 2 (expandable per-item charts): each COVERED row can be expanded
+// to lazily fetch that item's own ledger (`getRunningTotal`) and chart its
+// "original investment vs profit" evolution QUARTER BY QUARTER (the rollup
+// above only ever shows the CURRENT snapshot). See `ItemExpandCharts`,
+// `ItemStackedProfitChart`, `ItemProfitLineChart`, and the shared
+// `deriveItemQuarterSeries` helper below.
+
+/** One end-of-quarter cutoff date, `yyyy-MM-dd` — matches `Entry.entryDate`'s own format exactly (a plain date, no time component; verified against `items/[itemId]/page.tsx`'s date-input usage and this app's own entry fixtures), so a straight string comparison against it is both correct and timezone-safe. */
+function quarterEndDate(year: number, quarter: number): string {
+  return quarter === 1 ? `${year}-03-31`
+    : quarter === 2 ? `${year}-06-30`
+    : quarter === 3 ? `${year}-09-30`
+    : `${year}-12-31`
+}
+
+/** One item's derived per-`chartQuarters`-entry series — computed ONCE by this shared helper so the algorithm lives in exactly one place, even though `ItemStackedProfitChart` and `ItemProfitLineChart` each need a different slice of it (see their own docstrings for why both call sites exist). */
+interface ItemQuarterSeries {
+  /** The item's OWN balance at that quarter, straight off its `BalanceCell` — `null` when that quarter's slot is `hasData:false`. */
+  currentValues: (number | null)[]
+  /** Cumulative ledger total AS OF that quarter's own end-date — `null` when the item has zero qualifying ledger entries by then (never 0). */
+  originalInvestmentToDate: (number | null)[]
+  /** `currentValues[i] - originalInvestmentToDate[i]`, only when BOTH are non-null. */
+  profitToDate: (number | null)[]
+}
+
+/**
+ * Derives, for every entry in `chartQuarters`, the item's own current
+ * balance, its cumulative "original investment to date", and the resulting
+ * profit-to-date — the exact algorithm from the Feature 2 design, verbatim:
+ *
+ *  - `currentValue[i]` = the item's own `BalanceCell.balance` at that
+ *    quarter when `hasData`, else `null`.
+ *  - `originalInvestmentToDate[i]` = the `runningTotal` (server-computed,
+ *    NEVER re-summed here) of whichever ledger entry has the greatest
+ *    `entryDate` that is still `<=` that quarter's own end-date — `null`
+ *    when no entry qualifies yet (not 0). When multiple qualifying entries
+ *    share the same max `entryDate`, the one with the greatest `createdAt`
+ *    wins, since that is the entry whose `runningTotal` reflects the true
+ *    final cumulative total for that date.
+ *  - `profitToDate[i]` = `currentValue[i] - originalInvestmentToDate[i]`
+ *    only when both are present, else `null`.
+ *
+ * `entries` is explicitly NOT assumed sorted — the `.reduce` below finds
+ * the true max-`(entryDate, createdAt)` qualifying entry regardless of
+ * array order. In practice the backend (`GET .../running-total`) already
+ * returns `RunningTotal.entries` sorted `entry_date ASC, created_at ASC`
+ * (see `tracking_items.py`), so the last qualifying array element is
+ * already the correct pick — but this code keys the tie-break explicitly
+ * on `(entryDate, createdAt)` rather than relying on array order, so it
+ * stays correct even if that server-side sort ever changes.
+ */
+function deriveItemQuarterSeries(
+  chartQuarters: ChartQuarter[],
+  cells: BalanceCell[],
+  entries: (Entry & { runningTotal: number })[],
+): ItemQuarterSeries {
+  const currentValues: (number | null)[] = []
+  const originalInvestmentToDate: (number | null)[] = []
+  const profitToDate: (number | null)[] = []
+
+  for (const q of chartQuarters) {
+    const cell = cells[q.cellIdx]
+    const currentValue = cell?.hasData ? toFiniteOrNull(cell.balance) : null
+    currentValues.push(currentValue)
+
+    const threshold = cell ? quarterEndDate(cell.year, cell.quarter) : null
+    const qualifying = threshold ? entries.filter(e => e.entryDate <= threshold) : []
+    const oid = qualifying.length === 0
+      ? null
+      : qualifying.reduce((best, e) =>
+          e.entryDate > best.entryDate || (e.entryDate === best.entryDate && e.createdAt > best.createdAt)
+            ? e
+            : best
+        ).runningTotal
+    originalInvestmentToDate.push(oid)
+
+    profitToDate.push(currentValue !== null && oid !== null ? currentValue - oid : null)
+  }
+
+  return { currentValues, originalInvestmentToDate, profitToDate }
+}
+
+/**
+ * Chart A of the expand-row pair: a two-segment stacked bar per quarter —
+ * bottom segment = original-investment-to-date, top segment = profit-to-date
+ * (so the stack's top edge equals `currentValue[i]` whenever both segments
+ * are present) — PLUS an overlaid line of the item's own current value (read
+ * straight off its own `cells`, never derived from the stack) so a viewer
+ * can visually cross-check bar-top vs line; the two should track each other
+ * whenever both are present.
+ *
+ * Segment colors: the bottom (original-investment) segment uses
+ * `ORIGINAL_INVESTMENT_COLOR`, a neutral "cost basis" gray — original
+ * investment has no inherent sign. The top (profit) segment is SIGN-AWARE —
+ * `DELTA_POSITIVE_COLOR`/`DELTA_NEGATIVE_COLOR` per segment, mirroring the
+ * exact convention `RollupNumericCells`/`fmtAmount` already use to color a
+ * Profit figure elsewhere on this page — profit CAN be negative, so a single
+ * fixed "profit color" would misstate a loss quarter as a gain.
+ *
+ * A quarter renders NO bar when either segment is `null` (absent, never a
+ * fabricated partial bar) — but the current-value LINE point still renders
+ * independently if it alone is present, since the line is a separate mark
+ * driven by its own (possibly-present) value.
+ */
+function ItemStackedProfitChart({
+  chartQuarters, cells, entries,
+}: {
+  chartQuarters: ChartQuarter[]
+  cells: BalanceCell[]
+  entries: (Entry & { runningTotal: number })[]
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(800)
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    setContainerWidth(el.clientWidth)
+    // Named `resizeEntries` (not `entries`) to avoid shadowing this
+    // component's own `entries` prop (the item's ledger entries).
+    const observer = new ResizeObserver(resizeEntries => {
+      for (const entry of resizeEntries) setContainerWidth(Math.floor(entry.contentRect.width))
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const chartData = useMemo(() => {
+    if (chartQuarters.length === 0) return null
+    const innerW = containerWidth - TREND_CHART_PAD.left - TREND_CHART_PAD.right
+    const innerH = TREND_CHART_H - TREND_CHART_PAD.top - TREND_CHART_PAD.bottom
+    const xOf = (i: number): number =>
+      TREND_CHART_PAD.left + (chartQuarters.length > 1 ? (i / (chartQuarters.length - 1)) * innerW : innerW / 2)
+
+    const { currentValues, originalInvestmentToDate, profitToDate } = deriveItemQuarterSeries(chartQuarters, cells, entries)
+
+    const domainValues = [
+      ...currentValues.filter((v): v is number => v !== null),
+      ...originalInvestmentToDate.filter((v): v is number => v !== null),
+    ]
+    const dataMin = Math.min(0, ...(domainValues.length ? domainValues : [0]))
+    const dataMax = domainValues.length ? Math.max(...domainValues) : 1
+    const range = Math.max(dataMax - dataMin, 1)
+    const yMin = dataMin - range * 0.05
+    const yMax = dataMax + range * 0.1
+    const yRange = Math.max(yMax - yMin, 1)
+    const yOf = (v: number): number => TREND_CHART_PAD.top + innerH - ((v - yMin) / yRange) * innerH
+
+    const spacing = chartQuarters.length > 1 ? innerW / (chartQuarters.length - 1) : innerW
+    const barWidth = Math.max(BAR_MIN_WIDTH, Math.min(BAR_MAX_WIDTH, spacing * 0.55))
+
+    // A bar renders ONLY when both segments are resolvable (see docstring) —
+    // never a fabricated partial bar for a quarter missing just one side.
+    const barColumns: BarColumn[] = chartQuarters.map((q, i) => {
+      const oid = originalInvestmentToDate[i]
+      const profit = profitToDate[i]
+      const segments: BarSegment[] = []
+      if (oid !== null && profit !== null) {
+        const yZero = yOf(0)
+        const yOid = yOf(oid)
+        const yTotal = yOf(oid + profit)
+        segments.push({
+          categoryId: 'original-investment',
+          color: ORIGINAL_INVESTMENT_COLOR,
+          yTop: Math.min(yZero, yOid),
+          yBottom: Math.max(yZero, yOid),
+          value: oid,
+        })
+        segments.push({
+          categoryId: 'profit',
+          color: profit >= 0 ? DELTA_POSITIVE_COLOR : DELTA_NEGATIVE_COLOR,
+          yTop: Math.min(yOid, yTotal),
+          yBottom: Math.max(yOid, yTotal),
+          value: profit,
+        })
+        // 2px surface-gap between the two segments — the same convention
+        // every other stacked bar on this page uses (see `BAR_SEGMENT_GAP`).
+        segments[0].yTop += BAR_SEGMENT_GAP / 2
+        segments[1].yBottom -= BAR_SEGMENT_GAP / 2
+      }
+      return { x: xOf(i), segments }
+    })
+
+    const currentValueLine: TrendPoint[] = currentValues.map((v, i) => ({
+      x: xOf(i), y: v === null ? null : yOf(v), value: v,
+    }))
+
+    const yTicks = computeYTicks(yMin, yRange)
+    const xLabelIdxs = computeXLabelIdxs(chartQuarters.length)
+
+    return {
+      innerW, innerH, xOf, yOf, barColumns, barWidth, yTicks, xLabelIdxs, currentValueLine,
+      originalInvestmentToDate, profitToDate,
+    }
+  }, [chartQuarters, cells, entries, containerWidth])
+
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!chartData || chartQuarters.length === 0) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left - TREND_CHART_PAD.left
+    const step = chartQuarters.length > 1 ? chartData.innerW / (chartQuarters.length - 1) : chartData.innerW
+    const idx = Math.max(0, Math.min(chartQuarters.length - 1, Math.round(mouseX / step)))
+    setHoverIdx(idx)
+  }
+  const handleMouseLeave = () => setHoverIdx(null)
+
+  if (chartQuarters.length === 0 || !chartData) return null
+
+  return (
+    <div className="card p-3 space-y-2">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-xs font-semibold text-ink-primary">Original Investment vs Profit (by quarter)</h3>
+        <div className="flex items-center gap-3 text-[10px] text-ink-muted flex-wrap" role="list" aria-label="Item stacked profit chart legend">
+          <span className="flex items-center gap-1.5" role="listitem">
+            <span className="inline-block w-3 h-3 rounded-sm" style={{ backgroundColor: ORIGINAL_INVESTMENT_COLOR }} aria-hidden="true" />
+            <span>Original investment</span>
+          </span>
+          <span className="flex items-center gap-1.5" role="listitem">
+            <span className="inline-block w-3 h-3 rounded-sm" style={{ backgroundColor: DELTA_POSITIVE_COLOR }} aria-hidden="true" />
+            <span>Profit</span>
+          </span>
+          <span className="flex items-center gap-1.5" role="listitem">
+            <span className="inline-block w-3 rounded-full" style={{ height: '3px', backgroundColor: 'currentColor' }} aria-hidden="true" />
+            <span>Current value</span>
+          </span>
+        </div>
+      </div>
+      <div
+        ref={containerRef}
+        className="w-full relative"
+        style={{ height: `${TREND_CHART_H}px` }}
+        role="img"
+        aria-label="Item original investment vs profit stacked bar chart"
+      >
+        <svg
+          width={containerWidth}
+          height={TREND_CHART_H}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          style={{ display: 'block', cursor: 'crosshair' }}
+        >
+          {chartData.yTicks.map((tick, i) => {
+            const y = chartData.yOf(tick)
+            return (
+              <g key={i}>
+                <line x1={TREND_CHART_PAD.left} y1={y} x2={containerWidth - TREND_CHART_PAD.right} y2={y} stroke="currentColor" strokeOpacity={0.07} strokeWidth={1} />
+                <text x={TREND_CHART_PAD.left - 6} y={y} textAnchor="end" dominantBaseline="middle" fontSize={10} fill="currentColor" opacity={0.45}>
+                  {formatAxisNumber(tick)}
+                </text>
+              </g>
+            )
+          })}
+          {chartData.xLabelIdxs.map(i => (
+            <text key={i} x={chartData.xOf(i)} y={TREND_CHART_H - TREND_CHART_PAD.bottom + 16} textAnchor="middle" fontSize={10} fill="currentColor" opacity={0.45}>
+              {chartQuarters[i].label}
+            </text>
+          ))}
+          {chartData.barColumns.map((col, qi) => (
+            <g key={`item-bar-${chartQuarters[qi].cellIdx}`} data-testid={`item-bar-column-${qi}`}>
+              {col.segments.map(seg => (
+                <rect
+                  key={seg.categoryId}
+                  data-testid={`item-bar-segment-${qi}-${seg.categoryId}`}
+                  x={col.x - chartData.barWidth / 2}
+                  y={seg.yTop}
+                  width={chartData.barWidth}
+                  height={Math.max(0, seg.yBottom - seg.yTop)}
+                  fill={seg.color}
+                  fillOpacity={BAR_FILL_OPACITY}
+                />
+              ))}
+            </g>
+          ))}
+          <path
+            data-testid="item-current-value-line"
+            d={buildLinePathWithGaps(chartData.currentValueLine)}
+            fill="none"
+            stroke="currentColor"
+            strokeOpacity={0.85}
+            strokeWidth={2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          {hoverIdx !== null && (() => {
+            const tooltipRows: TrendSeries[] = [
+              { id: 'current-value', label: 'Current value', color: '#E2E8F0', dashed: false, strokeWidth: 0, points: chartData.currentValueLine },
+              {
+                id: 'original-investment', label: 'Original investment', color: ORIGINAL_INVESTMENT_COLOR, dashed: false, strokeWidth: 0,
+                points: chartData.originalInvestmentToDate.map((v, i) => ({ x: chartData.xOf(i), y: null, value: v })),
+              },
+              {
+                id: 'profit', label: 'Profit', color: DELTA_POSITIVE_COLOR, dashed: false, strokeWidth: 0,
+                points: chartData.profitToDate.map((v, i) => ({ x: chartData.xOf(i), y: null, value: v })),
+              },
+            ]
+            const tooltipW = 190
+            const tooltipH = 20 + tooltipRows.length * 16
+            const px = chartData.xOf(hoverIdx)
+            const tooltipX = clampTooltipX(px, tooltipW, containerWidth)
+            const tooltipY = TREND_CHART_PAD.top + 2
+            return (
+              <g>
+                <line x1={px} y1={TREND_CHART_PAD.top} x2={px} y2={TREND_CHART_PAD.top + chartData.innerH} stroke="currentColor" strokeOpacity={0.22} strokeWidth={1} strokeDasharray="4,3" />
+                <rect x={tooltipX} y={tooltipY} width={tooltipW} height={tooltipH} rx={5} ry={5} fill="#1a1d23" fillOpacity={0.97} stroke="currentColor" strokeOpacity={0.12} strokeWidth={1} />
+                <text x={tooltipX + 10} y={tooltipY + 16} fontSize={11} fontWeight={600} fill="currentColor" opacity={0.85}>{chartQuarters[hoverIdx].label}</text>
+                {tooltipRows.map((s, i) => {
+                  const pt = s.points[hoverIdx]
+                  const rowY = tooltipY + 16 + (i + 1) * 16
+                  return (
+                    <g key={s.id}>
+                      <circle cx={tooltipX + 14} cy={rowY - 4} r={3} fill={s.color} />
+                      <text x={tooltipX + 24} y={rowY} fontSize={10} fill="currentColor" opacity={pt.value === null ? 0.42 : 0.85}>
+                        {pt.value === null ? 'No data' : fmtBalance(pt.value)}
+                      </text>
+                      <text x={tooltipX + 100} y={rowY} fontSize={10} fill="currentColor" opacity={0.42}>
+                        {s.label}
+                      </text>
+                    </g>
+                  )
+                })}
+              </g>
+            )
+          })()}
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Chart B of the expand-row pair: a simple, single-line chart of
+ * `profitToDate` ONLY — reuses the series `ItemExpandCharts` already derived
+ * (via `deriveItemQuarterSeries`) rather than recomputing it here. Gaps
+ * (null quarters) render as genuine breaks via `buildLinePathWithGaps`, same
+ * as every other line on this page.
+ */
+function ItemProfitLineChart({
+  chartQuarters, profitToDate,
+}: {
+  chartQuarters: ChartQuarter[]
+  profitToDate: (number | null)[]
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(800)
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    setContainerWidth(el.clientWidth)
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) setContainerWidth(Math.floor(entry.contentRect.width))
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const chartData = useMemo(() => {
+    if (chartQuarters.length === 0) return null
+    const innerW = containerWidth - TREND_CHART_PAD.left - TREND_CHART_PAD.right
+    const innerH = TREND_CHART_H - TREND_CHART_PAD.top - TREND_CHART_PAD.bottom
+    const xOf = (i: number): number =>
+      TREND_CHART_PAD.left + (chartQuarters.length > 1 ? (i / (chartQuarters.length - 1)) * innerW : innerW / 2)
+
+    const values = profitToDate.filter((v): v is number => v !== null)
+    const dataMin = values.length ? Math.min(0, ...values) : 0
+    const dataMax = values.length ? Math.max(0, ...values) : 1
+    const range = Math.max(dataMax - dataMin, 1)
+    const yMin = dataMin - range * 0.08
+    const yMax = dataMax + range * 0.08
+    const yRange = Math.max(yMax - yMin, 1)
+    const yOf = (v: number): number => TREND_CHART_PAD.top + innerH - ((v - yMin) / yRange) * innerH
+
+    const points: TrendPoint[] = profitToDate.map((v, i) => ({
+      x: xOf(i), y: v === null ? null : yOf(v), value: v,
+    }))
+
+    const yTicks = computeYTicks(yMin, yRange)
+    const xLabelIdxs = computeXLabelIdxs(chartQuarters.length)
+    const zeroY = yOf(0)
+
+    return { innerW, innerH, xOf, yOf, points, yTicks, xLabelIdxs, zeroY }
+  }, [chartQuarters, profitToDate, containerWidth])
+
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!chartData || chartQuarters.length === 0) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left - TREND_CHART_PAD.left
+    const step = chartQuarters.length > 1 ? chartData.innerW / (chartQuarters.length - 1) : chartData.innerW
+    const idx = Math.max(0, Math.min(chartQuarters.length - 1, Math.round(mouseX / step)))
+    setHoverIdx(idx)
+  }
+  const handleMouseLeave = () => setHoverIdx(null)
+
+  if (chartQuarters.length === 0 || !chartData) return null
+
+  return (
+    <div className="card p-3 space-y-2">
+      <h3 className="text-xs font-semibold text-ink-primary">Profit vs Original (trend)</h3>
+      <div
+        ref={containerRef}
+        className="w-full relative"
+        style={{ height: `${TREND_CHART_H}px` }}
+        role="img"
+        aria-label="Item profit trend line chart"
+      >
+        <svg
+          width={containerWidth}
+          height={TREND_CHART_H}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          style={{ display: 'block', cursor: 'crosshair' }}
+        >
+          {chartData.yTicks.map((tick, i) => {
+            const y = chartData.yOf(tick)
+            return (
+              <g key={i}>
+                <line x1={TREND_CHART_PAD.left} y1={y} x2={containerWidth - TREND_CHART_PAD.right} y2={y} stroke="currentColor" strokeOpacity={0.07} strokeWidth={1} />
+                <text x={TREND_CHART_PAD.left - 6} y={y} textAnchor="end" dominantBaseline="middle" fontSize={10} fill="currentColor" opacity={0.45}>
+                  {formatAxisNumber(tick)}
+                </text>
+              </g>
+            )
+          })}
+          <line
+            data-testid="item-profit-line-zero-baseline"
+            x1={TREND_CHART_PAD.left}
+            y1={chartData.zeroY}
+            x2={containerWidth - TREND_CHART_PAD.right}
+            y2={chartData.zeroY}
+            stroke="currentColor"
+            strokeOpacity={0.35}
+            strokeWidth={1.5}
+          />
+          {chartData.xLabelIdxs.map(i => (
+            <text key={i} x={chartData.xOf(i)} y={TREND_CHART_H - TREND_CHART_PAD.bottom + 16} textAnchor="middle" fontSize={10} fill="currentColor" opacity={0.45}>
+              {chartQuarters[i].label}
+            </text>
+          ))}
+          <path
+            data-testid="item-profit-line"
+            d={buildLinePathWithGaps(chartData.points)}
+            fill="none"
+            stroke={ITEM_PROFIT_LINE_COLOR}
+            strokeWidth={2.5}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          {hoverIdx !== null && (() => {
+            const pt = chartData.points[hoverIdx]
+            const tooltipW = 130
+            const tooltipH = 36
+            const px = chartData.xOf(hoverIdx)
+            const tooltipX = clampTooltipX(px, tooltipW, containerWidth)
+            const tooltipY = TREND_CHART_PAD.top + 2
+            const signColor = pt.value === null ? 'currentColor' : pt.value >= 0 ? DELTA_POSITIVE_COLOR : DELTA_NEGATIVE_COLOR
+            return (
+              <g>
+                <line x1={px} y1={TREND_CHART_PAD.top} x2={px} y2={TREND_CHART_PAD.top + chartData.innerH} stroke="currentColor" strokeOpacity={0.22} strokeWidth={1} strokeDasharray="4,3" />
+                {pt.y !== null && <circle cx={pt.x} cy={pt.y} r={3.5} fill={ITEM_PROFIT_LINE_COLOR} />}
+                <rect x={tooltipX} y={tooltipY} width={tooltipW} height={tooltipH} rx={5} ry={5} fill="#1a1d23" fillOpacity={0.97} stroke="currentColor" strokeOpacity={0.12} strokeWidth={1} />
+                <text x={tooltipX + 10} y={tooltipY + 16} fontSize={11} fontWeight={600} fill="currentColor" opacity={0.85}>{chartQuarters[hoverIdx].label}</text>
+                <text x={tooltipX + 10} y={tooltipY + 30} fontSize={10} fill={signColor} opacity={pt.value === null ? 0.42 : 1}>
+                  {pt.value === null ? 'No data' : fmtAmount(pt.value)}
+                </text>
+              </g>
+            )
+          })()}
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Rendered for every COVERED row (see `OriginalInvestmentSection`) but kept
+ * visually `hidden` by the parent until that row is actually expanded — it
+ * stays MOUNTED the whole time (never unmounts on collapse) so the
+ * `getRunningTotal` query keeps a live observer at all times, and therefore
+ * is never garbage-collected out of the QueryClient cache on collapse (a
+ * component that unmounts entirely on collapse would lose its cached result
+ * the instant `gcTime` elapses — 0 in this app's own test `QueryClient`,
+ * see `test-utils.tsx`, but a real risk in production too if `gcTime` were
+ * ever tuned down). `enabled: isExpanded` is what actually gates the
+ * FETCH — never mounting, never a bare `useQuery({...})` with no gate —
+ * so `getRunningTotal` still only ever fires on first expand, never for
+ * every row upfront, while a later collapse + re-expand within `staleTime`
+ * reads the still-live cached result instead of re-fetching.
+ */
+function ItemExpandCharts({
+  itemId, cells, chartQuarters, isExpanded,
+}: {
+  itemId: string
+  /** This item's own `BalanceCell[]` from the (independently-queried) balance grid — `undefined` while that query hasn't resolved yet; the grid and rollup queries can settle in either order. */
+  cells: BalanceCell[] | undefined
+  chartQuarters: ChartQuarter[]
+  /** Whether this row is CURRENTLY expanded — gates the `getRunningTotal` fetch itself (see this component's own docstring for why that's a better lazy-fetch gate than conditional mounting). */
+  isExpanded: boolean
+}) {
+  const { data: runningTotal, isLoading, isError } = useQuery({
+    queryKey: ['tracking-running-total', itemId],
+    queryFn: () => trackingService.getRunningTotal(itemId),
+    enabled: isExpanded,
+    staleTime: 10_000,
+  })
+
+  // While collapsed the parent already hides this row visually (`hidden`,
+  // see `OriginalInvestmentSection`) — this early return just avoids
+  // rendering a disabled query's transient "no data yet" state as a
+  // misleading error before the row has ever been expanded once.
+  if (!isExpanded) return null
+
+  if (!cells) {
+    return (
+      <div className="flex items-center gap-2 text-ink-muted text-xs py-3">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading balances…
+      </div>
+    )
+  }
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-ink-muted text-xs py-3">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading entry history…
+      </div>
+    )
+  }
+  if (isError || !runningTotal) {
+    return (
+      <div className="flex items-center gap-2 text-loss text-xs py-3">
+        <AlertCircle className="w-3.5 h-3.5" /> Failed to load entry history for this item.
+      </div>
+    )
+  }
+
+  // `profitToDate` is derived here ONCE and passed straight to
+  // `ItemProfitLineChart` (which must NOT recompute it). `ItemStackedProfitChart`
+  // independently derives the SAME series via the same `deriveItemQuarterSeries`
+  // helper from its own `cells`/`entries` props (its documented signature) —
+  // the algorithm itself still lives in exactly one place even though it's
+  // invoked from two call sites.
+  const { profitToDate } = deriveItemQuarterSeries(chartQuarters, cells, runningTotal.entries)
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <ItemStackedProfitChart chartQuarters={chartQuarters} cells={cells} entries={runningTotal.entries} />
+      <ItemProfitLineChart chartQuarters={chartQuarters} profitToDate={profitToDate} />
+    </div>
+  )
+}
 
 /** Coverage line + an optional `<details>` disclosure of the excluded item names. */
 function CoverageBadge({ coverage }: { coverage: OriginalInvestmentCoverage }) {
@@ -1540,13 +2307,43 @@ function RollupNumericCells({ row }: { row: OriginalInvestmentItemRow }) {
   )
 }
 
-function OriginalInvestmentSection({ setId }: { setId: string }) {
+function OriginalInvestmentSection({
+  setId, grid, chartQuarters,
+}: {
+  setId: string
+  /** The page's OWN balance-grid query result — an INDEPENDENT query from this section's own rollup query below, so it may resolve at a different time (or not yet at all) when a row is expanded; see `ItemExpandCharts`' own "Loading balances…" placeholder for how that race is handled. */
+  grid: DashboardBalanceGridOut | undefined
+  chartQuarters: ChartQuarter[]
+}) {
   const { data: rollup, isLoading, isError } = useQuery({
     queryKey: ['tracking-original-investment', setId],
     queryFn: () => trackingService.getOriginalInvestmentRollup(setId),
     enabled: !!setId,
     staleTime: 10_000,
   })
+
+  // Flattened lookup of every tracking item's OWN `BalanceCell[]` from the
+  // balance grid, keyed by item id — used only to feed each expanded row's
+  // charts (Feature 2); otherwise this section stays fully independent of
+  // `grid`, per its own module-header docstring above.
+  const itemsById = useMemo(() => {
+    const map = new Map<string, DashboardItemRow>()
+    grid?.categories.forEach(cat =>
+      cat.subCategories.forEach(sub =>
+        sub.items.forEach(item => map.set(item.id, item)),
+      ),
+    )
+    return map
+  }, [grid])
+
+  // Per-row expand/collapse state for the lazy per-item charts (Feature 2).
+  // NOTE the semantics inversion vs. every other `useToggleSet` on this page
+  // (`collapsedYears`/`collapsedCategories`/`collapsedSubCategories`, all of
+  // which track COLLAPSED ids, default-expanded): this one tracks EXPANDED
+  // ids instead, default-COLLAPSED — these charts are lazy/heavy (each
+  // expand triggers its own `getRunningTotal` fetch), so starting every row
+  // pre-expanded would defeat the entire point of lazy-loading them.
+  const expandedItemIds = useToggleSet<string>()
 
   return (
     <div className="card p-4 space-y-3">
@@ -1583,19 +2380,64 @@ function OriginalInvestmentSection({ setId }: { setId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {rollup.items.map(row => (
-                  <tr key={row.itemId} className="border-b border-border/40">
-                    <td
-                      className="px-3 py-1.5 text-ink-primary max-w-[16rem] truncate"
-                      title={row.itemName}
-                    >
-                      {row.itemName}
-                    </td>
-                    <td className="px-3 py-1.5 text-ink-secondary">{row.categoryName}</td>
-                    <td className="px-3 py-1.5 text-ink-secondary">{row.subCategoryName}</td>
-                    <RollupNumericCells row={row} />
-                  </tr>
-                ))}
+                {rollup.items.map(row => {
+                  // Only COVERED rows get an expand control — a not-covered
+                  // row has no computable profit figure to chart at all
+                  // (see `RollupNumericCells`), so it keeps its exact
+                  // current rendering, untouched.
+                  const expanded = row.isCovered && expandedItemIds.has(row.itemId)
+                  return (
+                    <Fragment key={row.itemId}>
+                      <tr className="border-b border-border/40">
+                        <td
+                          className="px-3 py-1.5 text-ink-primary max-w-[16rem] truncate"
+                          title={row.itemName}
+                        >
+                          {row.isCovered && (
+                            <button
+                              type="button"
+                              onClick={() => expandedItemIds.toggle(row.itemId)}
+                              aria-expanded={expanded}
+                              aria-label={`${expanded ? 'Collapse' : 'Expand'} charts for ${row.itemName}`}
+                              className="inline-flex items-center justify-center w-4 h-4 mr-1 -ml-0.5 align-text-bottom text-ink-muted hover:text-brand-400 transition-colors shrink-0"
+                            >
+                              {expanded
+                                ? <ChevronDown className="w-3.5 h-3.5" />
+                                : <ChevronRight className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                          {row.itemName}
+                        </td>
+                        <td className="px-3 py-1.5 text-ink-secondary">{row.categoryName}</td>
+                        <td className="px-3 py-1.5 text-ink-secondary">{row.subCategoryName}</td>
+                        <RollupNumericCells row={row} />
+                      </tr>
+                      {/* Rendered UNCONDITIONALLY for every covered row (not
+                          gated by `expanded`) — only visually `hidden` when
+                          collapsed. This keeps `ItemExpandCharts` (and its
+                          `getRunningTotal` query) mounted permanently once
+                          the rollup itself has loaded, which is what makes
+                          the query's own `enabled: isExpanded` gate (rather
+                          than mount/unmount) the thing that decides whether
+                          it has ever fetched — see that component's own
+                          docstring for why this avoids losing the cached
+                          result to `QueryClient` garbage collection on every
+                          collapse. */}
+                      {row.isCovered && (
+                        <tr hidden={!expanded} className="border-b border-border/40 bg-surface-elevated/20">
+                          <td colSpan={7} className="px-3 py-3">
+                            <ItemExpandCharts
+                              itemId={row.itemId}
+                              cells={itemsById.get(row.itemId)?.cells}
+                              chartQuarters={chartQuarters}
+                              isExpanded={expanded}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-border bg-surface-elevated/40 font-semibold">
@@ -1746,7 +2588,7 @@ export default function TrackingDashboardPage() {
 
   // ── Shared chart quarters (Gate 2) ─────────────────────────────────────────
   // ONE `quarters` array, computed once here at the page level and passed as
-  // a prop to BOTH `CategoryLinesChart` and `CategoryStackedBarChart` — so
+  // a prop to BOTH `CategoryStackedBarChart` and `CategoryDeltaChart` — so
   // their x-axis ranges can never independently drift apart. Chronological
   // (oldest -> newest) order for the x-axis ONLY — the REVERSE of `years`'s
   // descending order that every per-year `YearTable` uses verbatim. Each
@@ -1962,8 +2804,13 @@ export default function TrackingDashboardPage() {
       </div>
 
       {/* Standalone "Original Investment vs Profit" rollup — its own query,
-          independent of the balance-grid state machine below. */}
-      {selectedSetId && <OriginalInvestmentSection setId={selectedSetId} />}
+          independent of the balance-grid state machine below. `grid` and
+          `chartQuarters` are passed through only to power each covered
+          row's lazy per-item expand-charts (Feature 2) — the rollup itself
+          stays on its own independent query. */}
+      {selectedSetId && (
+        <OriginalInvestmentSection setId={selectedSetId} grid={grid} chartQuarters={chartQuarters} />
+      )}
 
       {/* Category trend chart + per-year balance tables (Grand Total now lives
           inside each YearTable — see requirement 3) */}
@@ -1984,22 +2831,25 @@ export default function TrackingDashboardPage() {
           <>
             {/* Renders exactly once per page load — full chronological
                 history, unaffected by any Detail/Sub-category/Summary/year
-                collapse toggle below. Split into two side-by-side charts
-                (Gate 1 requirement 2): LEFT = category trend lines, RIGHT =
-                stacked bars + the two aggregate overlay lines — both share
-                the SAME `chartQuarters` array computed above so their x-axis
-                ranges can never drift apart. */}
+                collapse toggle below. Two side-by-side charts: LEFT =
+                "Category Breakdown" (balance stacked bars + the two
+                aggregate overlay lines — unchanged, moved here from the
+                RIGHT slot), RIGHT = "Category Delta Trend" (redefined from a
+                per-category balance line chart into a signed, diverging
+                delta stacked bar chart — see `CategoryDeltaChart`'s
+                docstring) — both share the SAME `chartQuarters` array
+                computed above so their x-axis ranges can never drift apart. */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <CategoryLinesChart
-                quarters={chartQuarters}
-                categories={grid.categories}
-                grandTotal={grid.grandTotal}
-              />
               <CategoryStackedBarChart
                 quarters={chartQuarters}
                 categories={grid.categories}
                 grandTotal={grid.grandTotal}
                 nonPropertyTotal={grid.propertyBreakdown.nonPropertyTotal}
+              />
+              <CategoryDeltaChart
+                quarters={chartQuarters}
+                categories={grid.categories}
+                grandTotal={grid.grandTotal}
               />
             </div>
 
