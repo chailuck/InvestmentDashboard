@@ -203,7 +203,7 @@ const STRATEGY_ABBR: Record<string, string> = {
   'OTHERS': 'OTHER',
 }
 
-function PurchasePlanWidget() {
+export function PurchasePlanWidget() {
   const [expanded, setExpanded] = useState(true)
   const [modalSymbol, setModalSymbol] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -328,10 +328,17 @@ function PurchasePlanWidget() {
       ) : (
         <div className="space-y-1.5 pl-1">
           {items.map((item, i) => {
-            const hasSL  = item.sl != null
-            const hasTP  = item.tp != null
             const hasBuy = item.buy_price != null
             const hasCur = item.current_price != null
+
+            // Fall back to ±15% of entry price when SL/TP is missing, independently per side.
+            // Only assume when buy_price exists — there's nothing to derive from otherwise.
+            const effectiveSl = item.sl ?? (hasBuy ? item.buy_price! * 0.85 : null)
+            const effectiveTp = item.tp ?? (hasBuy ? item.buy_price! * 1.15 : null)
+            const slIsAssumed = item.sl == null && effectiveSl != null
+            const tpIsAssumed = item.tp == null && effectiveTp != null
+            const hasEffSl = effectiveSl != null
+            const hasEffTp = effectiveTp != null
 
             return (
               <div key={i} className="text-[10px]">
@@ -362,21 +369,26 @@ function PurchasePlanWidget() {
                   )}
                 </div>
                 {/* Line 2: SL ← [★ ——▶ current] → TP */}
-                {(hasTP || hasSL) && hasCur && (() => {
-                  const range = hasTP && hasSL ? item.tp! - item.sl! : 0
+                {(hasEffTp || hasEffSl) && hasCur && (() => {
+                  const range = hasEffTp && hasEffSl ? effectiveTp! - effectiveSl! : 0
                   const hasRange = range > 0
                   const curPct = hasRange
-                    ? Math.max(0, Math.min(100, ((item.current_price! - item.sl!) / range) * 100))
+                    ? Math.max(0, Math.min(100, ((item.current_price! - effectiveSl!) / range) * 100))
                     : null
                   const buyPct = hasRange && hasBuy
-                    ? Math.max(0, Math.min(100, ((item.buy_price! - item.sl!) / range) * 100))
+                    ? Math.max(0, Math.min(100, ((item.buy_price! - effectiveSl!) / range) * 100))
                     : null
                   const isAboveBuy = hasBuy ? item.current_price! >= item.buy_price! : null
                   const arrowColor = isAboveBuy === null ? '#6b7280' : isAboveBuy ? '#10b981' : '#ef4444'
                   return (
                     <div className="flex items-center gap-0.5 mt-0.5">
-                      {hasSL && (
-                        <span className="text-[9px] text-loss tabular-nums shrink-0">{item.sl!.toFixed(1)}</span>
+                      {hasEffSl && (
+                        <span
+                          className={cn('text-[9px] tabular-nums shrink-0', slIsAssumed ? 'text-loss/60' : 'text-loss')}
+                          title={slIsAssumed ? 'Assumed: 15% below entry (no SL set)' : undefined}
+                        >
+                          {slIsAssumed ? '~' : ''}{effectiveSl!.toFixed(1)}
+                        </span>
                       )}
                       <span className="text-[9px] text-ink-disabled shrink-0 px-0.5">←</span>
                       {curPct !== null && buyPct !== null ? (
@@ -421,8 +433,13 @@ function PurchasePlanWidget() {
                         </span>
                       )}
                       <span className="text-[9px] text-ink-disabled shrink-0 px-0.5">→</span>
-                      {hasTP && (
-                        <span className="text-[9px] text-gain tabular-nums shrink-0">{item.tp!.toFixed(1)}</span>
+                      {hasEffTp && (
+                        <span
+                          className={cn('text-[9px] tabular-nums shrink-0', tpIsAssumed ? 'text-gain/60' : 'text-gain')}
+                          title={tpIsAssumed ? 'Assumed: 15% above entry (no TP set)' : undefined}
+                        >
+                          {tpIsAssumed ? '~' : ''}{effectiveTp!.toFixed(1)}
+                        </span>
                       )}
                     </div>
                   )
